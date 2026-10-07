@@ -150,30 +150,69 @@ The binary URL above is the drop-in for an installer that today fetches
 
 ## What the build actually runs
 
-On the runner, as `fgdb-runner`:
+On the runner, as `fgdb-runner`, `build-oss.sh` runs:
 
 ```text
-./dev build oss geos
+bazel build //pkg/cmd/cockroach-oss:cockroach-oss //c-deps:libgeos
 ```
 
-with `.bazelrc.user` setting `--config=ci`, `--config=nolintonbuild`,
-`--//build/toolchains:nogo_disable_flag`, `--config=crosslinux`, `-c opt`,
-and
+That is the same shape as the v23.2.15 release tooling
+(`pkg/cmd/publish-provisional-artifacts` and
+`build/teamcity/cockroach/ci/builds/build_impl.sh`): bazel is invoked
+directly, with the targets on the command line. `./dev build oss geos`
+is the workstation command. On a clean checkout `./dev` exits until
+`dev doctor` has written `bin/.dev-status`. Doctor on Linux asks which
+config to append to `.bazelrc.user` and can add more lines
+(`lintonbuild`, a test tmpdir). The release job does not run it.
+`--interactive=false` does not make that autofix safe: the Linux path
+refuses to edit the file unless interactive mode is on.
+
+`.bazelrc.user` still supplies `--config=ci`, `--config=nolintonbuild`,
+`--//build/toolchains:nogo_disable_flag`, `--config=crosslinuxbase`,
+`-c opt`, and one quoted stamp option:
 
 ```text
---workspace_status_command=./build/bazelutil/stamp.sh x86_64-pc-linux-gnu fgl-oss release
+build '--workspace_status_command=./build/bazelutil/stamp.sh x86_64-pc-linux-gnu fgl-oss release'
 ```
 
-`./dev build --cross` is not used. That path starts the private
-`us-east1-docker.pkg.dev/crl-ci-images/cockroach/bazel` image, which this
-fork cannot pull. `--config=crosslinux` uses the public crosstool tarball
-instead, on the host.
+The quotes are required. Bazel splits unquoted spaces in `.bazelrc` into
+separate arguments, and the leftover words become build targets. An
+unquoted line is why the first lab build tried to build `//:fgl-oss`.
+`stamp.sh` reads the channel from that argument list. It does not read
+the `BUILD_CHANNEL` environment variable. The three arguments are the
+target triple, the channel (`fgl-oss`), and the build type (`release`).
+Upstream v23.2.15 release builds use the same shape in
+`pkg/cmd/publish-provisional-artifacts`: one single-quoted
+`--workspace_status_command=./build/bazelutil/stamp.sh <triple> <channel> release`,
+then `-c opt`, `--config=ci`, and `--config=crosslinuxbase`. This fork
+keeps the channel `fgl-oss` and does not pass `--config=force_build_cdeps`.
+
+`crosslinuxbase` is the release config. It selects the public
+linux/amd64 crosstool and does not set its own stamp command.
+`--config=crosslinux` is the development form of that config: it adds a
+stamp command that only passes the triple, which would leave the channel
+as `unknown` and the build type as `development`.
+
+`./dev` is not used, including `./dev build --cross`. That `--cross` path
+starts the private `us-east1-docker.pkg.dev/crl-ci-images/cockroach/bazel`
+image, which this fork cannot pull.
+
+`//pkg/ui/distoss` is a Bazel dependency of `cockroach-oss`. The UI is
+built with that target. There is no separate Node or `dev ui` step.
+Submodules come from the workflow checkout (`submodules: recursive`),
+not from `dev doctor`.
 
 libgeos comes from the public prebuilt c-dep archive
 (`storage.googleapis.com/public-bazel-artifacts/c-deps/...`), not from
 `--config=force_build_cdeps`. Forcing a from-source c-dep build needs the
 private builder image or a host toolchain this tree was not tested with
-(Ubuntu 26.04).
+(Ubuntu 26.04). After the build, the script copies
+`output_base/external/archived_cdep_libgeos_linux/lib/libgeos.so` and
+`libgeos_c.so` to `src/lib/`. The binary is copied from
+`_bazel/bin/pkg/cmd/cockroach-oss/cockroach-oss_/cockroach-oss` to
+`src/cockroach-oss`. Those are the paths `verify-oss-binary.sh` and
+`package-oss-tarball.sh` read. The image is built from the tarball, not
+from `bazel-bin`.
 
 After the link, the workflow:
 
@@ -195,7 +234,10 @@ In `.github/workflows/fgdb-oss-release.yml`:
 | `EXPECT_GO` | `go1.21.12` | version check |
 
 In `build/fgdb/write-bazelrc-user.sh`, `FGDB_EXTRA_BAZELRC` appends extra
-Bazel lines. CPU and RAM defaults are in the runner setup script.
+Bazel lines. Those lines must already be valid bazelrc: quote any value
+that contains a space. CPU and RAM defaults are in the runner setup script.
+The script refuses a channel, triple, cache path, or output path that
+contains a space or a quote, so those values cannot split into targets.
 
 ## Out of scope
 
