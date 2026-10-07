@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# FGL fork guard: update-crdb-releases-yaml already requires
+# github.repository == 'cockroachdb/cockroach'. The daily schedule still
+# creates a workflow run on this fork, but the job is skipped and does not
+# spend ubuntu-latest minutes.
 on:
   schedule:
      - cron: 0 0 * * *

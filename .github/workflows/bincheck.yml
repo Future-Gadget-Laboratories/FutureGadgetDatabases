@@ -1,3 +1,6 @@
+# FGL fork guard: upstream bincheck matches every v* tag, including v*-oss.
+# Jobs run only on cockroachdb/cockroach so this fork does not spend
+# ubuntu-latest or macos-latest minutes when an OSS release tag is pushed.
 name: bincheck
 
 on:
@@ -10,24 +13,28 @@ permissions:
 jobs:
 
   linux:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - run: cd build/release/bincheck && ./test-linux ${{ github.ref_name }} ${{ github.sha }}
 
   darwin-amd64:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v3
     - run: cd build/release/bincheck && ./test-macos-amd64 ${{ github.ref_name }} ${{ github.sha }}
 
   darwin-arm64:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: macos-latest-xlarge
     steps:
     - uses: actions/checkout@v3
     - run: cd build/release/bincheck && ./test-macos-arm64 ${{ github.ref_name }} ${{ github.sha }}
 
   windows:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: windows-latest
     steps:
     - run: git config --system core.longpaths true
