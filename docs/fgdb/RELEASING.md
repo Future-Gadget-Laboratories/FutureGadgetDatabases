@@ -107,10 +107,29 @@ ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2-oss
 `v23.2-oss` is a moving alias. `v23.2.15-oss` moves only when that release
 is rebuilt. `sha-<git sha>` is the immutable tag for one commit.
 
-The image is `registry.access.redhat.com/ubi9/ubi-minimal` plus the OSS
-binary, `libgeos` in `/usr/local/lib/cockroach`, and `licenses/`.
-`COCKROACH_CHANNEL=fgl-oss`. FIPS is off unless the image is rebuilt with
-`--build-arg fips_enabled=1`.
+The image is UBI 9 minimal build `9.8-1791279563` (manifest list
+`sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae`,
+pinned in `build/deploy-oss/Dockerfile`) plus the OSS binary, `libgeos` in
+`/usr/local/lib/cockroach`, and `licenses/`. `COCKROACH_CHANNEL=fgl-oss`.
+FIPS is off unless the image is rebuilt with `--build-arg fips_enabled=1`.
+The comment at the top of the Dockerfile says how to bump the base image.
+
+### The process runs as root
+
+The image does not set a `USER`. The process is root, which is what the
+upstream CockroachDB image does. Helm charts and existing volumes expect
+the database files in `/cockroach/cockroach-data` to be owned by root.
+
+To run as another user, prepare the volume so that user can already write
+the data directory, then set `securityContext.runAsUser` and `runAsGroup`
+on the pod. The image does not change ownership when it starts. If the
+directory is still owned by root, the other user cannot open it.
+
+```yaml
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+```
 
 ### CipherBank pin
 
@@ -138,7 +157,8 @@ On the runner, as `fgdb-runner`:
 ```
 
 with `.bazelrc.user` setting `--config=ci`, `--config=nolintonbuild`,
-`--config=crosslinux`, `-c opt`, and
+`--//build/toolchains:nogo_disable_flag`, `--config=crosslinux`, `-c opt`,
+and
 
 ```text
 --workspace_status_command=./build/bazelutil/stamp.sh x86_64-pc-linux-gnu fgl-oss release
