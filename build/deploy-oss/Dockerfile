@@ -5,17 +5,17 @@
 # Cockroach's private mirror (us-east1-docker.pkg.dev/crl-docker-sync/...)
 # is not used.
 #
-# Pin a specific UBI 9 minimal build. Do not switch this back to the
-# floating tags "latest" or "9.8"; those move when Red Hat publishes again.
-# Checked 2026-10-07: tag 9.8-1791279563 was the newest 9.8 build, and the
-# floating tags "9.8" and "latest" pointed at this same manifest list.
+# Pin by digest only. Do not put a tag on the FROM line, and do not use
+# the floating tags "latest" or "9.8"; those move when Red Hat publishes
+# again. Checked 2026-10-07: this digest is UBI 9 minimal 9.8-1791279563.
+# The floating tags "9.8" and "latest" pointed at it that day.
 # To bump: list tags at
 #   https://registry.access.redhat.com/v2/ubi9/ubi-minimal/tags/list
 # pick the newest 9.<minor>-<build> tag, request that tag's manifest list
 # (Accept: application/vnd.docker.distribution.manifest.list.v2+json),
-# and replace both the tag and the sha256 below with the
-# Docker-Content-Digest header. The sha256 on this line is the manifest
-# list, not the linux/amd64 blob.
+# and replace only the sha256 below with the Docker-Content-Digest header.
+# Write the human-readable tag in this comment, not on the FROM line.
+# The sha256 is the manifest list, not the linux/amd64 blob.
 #
 # Build context (see build/fgdb/stage-image-context.sh):
 #   cockroach.sh
@@ -34,7 +34,7 @@
 # pod securityContext runAsUser and runAsGroup to that user's ids. This
 # image does not change ownership of the data directory on startup.
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8-1791279563@sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae
 
 ARG fips_enabled=0
 ARG image_version=v23.2.15-oss
