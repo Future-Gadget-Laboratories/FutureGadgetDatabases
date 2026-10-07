@@ -1,120 +1,110 @@
-<p align="center">
-  <img src='docs/media/cockroach_db.png?raw=true' width='70%'>
-</p>
+# FutureGadgetDatabases
 
----
+FutureGadgetDatabases (FGDb) is a distributed SQL database that you can run yourself.
 
-CockroachDB is a cloud-native distributed SQL database designed to build,
-scale, and manage modern, data-intensive applications. 
+**Distributed** means the data is split across processes. Each piece is copied to more than one process. One process can stop, and the database can keep answering.
 
-- [What is CockroachDB?](#what-is-cockroachdb)
-- [Docs](#docs)
-- [Starting with Cockroach Cloud](#starting-with-cockroachcloud)
-- [Starting with CockroachDB](#starting-with-cockroachdb)
-- [Client Drivers](#client-drivers)
-- [Deployment](#deployment)
-- [Need Help?](#need-help)
-- [Contributing](#contributing)
-- [Design](#design)
-- [Comparison with Other Databases](#comparison-with-other-databases)
-- [See Also](#see-also)
+**SQL** is the language you use to create tables and ask questions. FGDb speaks the PostgreSQL wire protocol on port 26257. Many PostgreSQL clients can connect. Not every PostgreSQL feature exists. For the feature list at this version, use the CockroachDB v23.2 docs linked below. Those docs describe the code this tree started from.
 
-## What is CockroachDB?
+Future Gadget Laboratories maintains this repository. Cockroach Labs wrote CockroachDB v23.2.15, which is the code this tree started from. The two projects are separate. The `cockroach` command in this pin still prints the CockroachDB name. That is the program name in the imported source. A later cleanup may change names. It has not happened yet.
 
-CockroachDB is a distributed SQL database built on a transactional and
-strongly-consistent key-value store. It **scales** horizontally;
-**survives** disk, machine, rack, and even datacenter failures with
-minimal latency disruption and no manual intervention; supports
-**strongly-consistent** ACID transactions; and provides a familiar
-**SQL** API for structuring, manipulating, and querying data.
+CipherBank is a design partner and a supported consumer. FGDb is a public database project with its own docs, license rules, and release pins.
 
-For more details, see our [FAQ](https://cockroachlabs.com/docs/stable/frequently-asked-questions.html) or [architecture document](
-https://www.cockroachlabs.com/docs/stable/architecture/overview.html).
+## What you can run today
 
-<p align="center">
-  <a href='https://www.youtube.com/watch?v=VgXiMcbGwzQ'> <img src='docs/media/explainer-video-preview.png' width='70%'> </a>
-</p>
+The version pin is **v23.2.15**.
 
-## Docs
+| Piece | Value |
+| --- | --- |
+| Upstream tree | [cockroachdb/cockroach](https://github.com/cockroachdb/cockroach) tag `v23.2.15`, commit `3497fb02dce0beb6fc2bbf76c1ed7ad69cc31344` |
+| Import commit in this repo | `a72022ff42bbceb6f0865b3b07e6fd6a9e94a6e1` |
+| Binary we ship | `cockroach-oss` (CCL-free). Bazel target `//pkg/cmd/cockroach-oss:cockroach-oss` |
+| Release tag, when published | `v23.2.15-oss` |
+| Image name, when published | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss` |
 
-For guidance on installation, development, deployment, and administration, see our [User Documentation](https://cockroachlabs.com/docs/stable/).
+**CCL** means the CockroachDB Community License. It covers enterprise features under `pkg/ccl`. CCL has no date when it becomes Apache-2.0. The official Docker Hub image `cockroachdb/cockroach:v23.2.15` includes that code. FGDb's release builds the open-source binary instead.
 
-## Starting with CockroachCloud
+The GitHub Release and the image are produced by the workflow in [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md). Until that release exists, the download URLs in [docs/fgdb/releases.md](docs/fgdb/releases.md) are the planned names. They are not a promise that the files are already on the server. This document does not invent an image digest. Pin a digest after the release notes publish one.
 
-We can run CockroachDB for you, so you don't have to run your own cluster.
+## License, in short
 
-See our online documentation: [Quickstart with CockroachCloud](https://www.cockroachlabs.com/docs/cockroachcloud/quickstart.html)
+The core of v23.2.0 through v23.2.15 was under the Business Source License 1.1 (BSL). The BSL **Change Date** is 2026-10-01. On that date the Change License takes over. The Change License is Apache License 2.0. The text is in [licenses/BSL.txt](licenses/BSL.txt) and [licenses/APL.txt](licenses/APL.txt).
 
-## Starting with CockroachDB
+That conversion covers files that were under the BSL. It does not cover CCL files. It does not cover later patches. v23.2.16 and every newer CockroachDB line we have checked are under the CockroachDB Software License (CSL). CSL is proprietary. This project does not copy CSL code or Cockroach Enterprise code.
 
-1. Install CockroachDB:  [using a pre-built executable](https://www.cockroachlabs.com/docs/stable/install-cockroachdb.html) or [build it from source](https://www.cockroachlabs.com/docs/v21.1/install-cockroachdb-linux#build-from-source).
-2. [Start a local cluster](https://www.cockroachlabs.com/docs/stable/start-a-local-cluster.html) and connect to it via the [built-in SQL client](https://www.cockroachlabs.com/docs/stable/use-the-built-in-sql-client.html).
-3. [Learn more about CockroachDB SQL](https://www.cockroachlabs.com/docs/stable/learn-cockroachdb-sql.html).
-4. Use a PostgreSQL-compatible driver or ORM to [build an app with CockroachDB](https://www.cockroachlabs.com/docs/stable/hello-world-example-apps.html).
-5. [Explore core features](https://www.cockroachlabs.com/docs/stable/demo-data-replication.html), such as data replication, automatic rebalancing, and fault tolerance and recovery.
+Read [docs/fgdb/license.md](docs/fgdb/license.md) before you ship a binary. The root [LICENSE](LICENSE) file is the notice imported with v23.2.15. [NOTICE](NOTICE) explains how to read it after the Change Date.
 
-## Client Drivers
+## Try it
 
-CockroachDB supports the PostgreSQL wire protocol, so you can use any available PostgreSQL client drivers to connect from various languages.
+A full build is heavy. A cold compile wants on the order of 32 GB of RAM, a large disk cache, and a few hours. If release `v23.2.15-oss` is already published, use the tarball in [docs/fgdb/releases.md](docs/fgdb/releases.md). Otherwise build the open-source target:
 
-- For recommended drivers that we've tested, see [Install Client Drivers](https://www.cockroachlabs.com/docs/stable/install-client-drivers.html).
-- For tutorials using these drivers, as well as supported ORMs, see [Example Apps](https://www.cockroachlabs.com/docs/stable/example-apps.html).
+```bash
+./dev doctor
+./dev build oss geos
+./artifacts/cockroach-oss version
+```
 
-## Deployment
+The `Distribution` line should say `OSS`. If it does not, you built the wrong target. `./dev build` without `oss` produces a binary that links CCL code. That is not the binary this project ships.
 
-- [CockroachCloud](https://www.cockroachlabs.com/docs/cockroachcloud/quickstart) - Steps to create a [free CockroachCloud cluster](https://cockroachlabs.cloud/signup?referralId=githubquickstart) on your preferred Cloud platform.
-- [Manual](https://www.cockroachlabs.com/docs/stable/manual-deployment.html) - Steps to deploy a CockroachDB cluster manually on multiple machines.
-- [Cloud](https://www.cockroachlabs.com/docs/stable/cloud-deployment.html) - Guides for deploying CockroachDB on various cloud platforms.
-- [Orchestration](https://www.cockroachlabs.com/docs/stable/orchestration.html) - Guides for running CockroachDB with popular open-source orchestration systems.
+Then start one node on your own computer. `--insecure` means no encryption and no login. Use it only for a local lab. Run this from the repository root:
 
-## Need Help?
+```bash
+mkdir -p "$HOME/fgdb-lab"
+./artifacts/cockroach-oss start-single-node \
+  --insecure \
+  --store="$HOME/fgdb-lab/lab-single" \
+  --listen-addr=localhost:26257 \
+  --http-addr=localhost:8080
+```
 
-- [CockroachDB Community Slack](https://go.crdb.dev/p/slack) - Join our slack to connect with our engineers and other users running CockroachDB.
-- [CockroachDB Forum](https://forum.cockroachlabs.com/) and [Stack Overflow](https://stackoverflow.com/questions/tagged/cockroachdb) - Ask questions, find answers, and help other users.
-- [Troubleshooting documentation](https://www.cockroachlabs.com/docs/stable/troubleshooting-overview.html) - Learn how to troubleshoot common errors, cluster setup, and SQL query behavior.
-- For filing bugs, suggesting improvements, or requesting new features, help us out by [opening an issue](https://github.com/cockroachdb/cockroach/issues/new).
+In a second terminal, from the same repository root:
 
-## Building from source
+```bash
+./artifacts/cockroach-oss sql --insecure --host=localhost:26257
+```
 
-See [our wiki](https://wiki.crdb.io/wiki/spaces/CRDB/pages/181338446/Getting+and+building+from+source) for more details.
+[docs/fgdb/getting-started.md](docs/fgdb/getting-started.md) has the full lab, a three-node example, and a small schema. [docs/fgdb/operations.md](docs/fgdb/operations.md) shows how to turn telemetry off, what the license enforcer does in this tree, and what happens when you kill one node.
 
-## Contributing
+The admin web UI is the DB Console at <http://localhost:8080>. The open-source build serves the open-source UI (`pkg/ui/distoss`). Screens that need CCL code are absent from this binary.
 
-We welcome your contributions! If you're looking for issues to work on, try looking at the [good first issue list](https://github.com/cockroachdb/cockroach/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22). We do our best to tag issues suitable for new external contributors with that label, so it's a great way to find something you can help with!
+## Docs written for this project
 
-See [our wiki](https://wiki.crdb.io/wiki/spaces/CRDB/pages/73204033/Contributing+to+CockroachDB) for more details.
+These pages were written by Future Gadget Laboratories. They are marked in the page banner.
 
-Engineering discussions take place on our public mailing list, [cockroach-db@googlegroups.com](https://groups.google.com/forum/#!forum/cockroach-db). Also please join our [Community Slack](https://go.crdb.dev/p/slack) (there's a dedicated #contributors channel!) to ask questions, discuss your ideas, and connect with other contributors.
+| Page | Read it when you want to |
+| --- | --- |
+| [Product brief](docs/fgdb/PROJECT.md) | Paste a short description into chat or a design note |
+| [Getting started](docs/fgdb/getting-started.md) | Build `cockroach-oss` and run one node, then three |
+| [Architecture](docs/fgdb/architecture.md) | See how a query, a range, and a crash fit together |
+| [License](docs/fgdb/license.md) | Decide what you are allowed to ship |
+| [Releases and pins](docs/fgdb/releases.md) | Download a binary or pin an image by digest |
+| [Operations](docs/fgdb/operations.md) | Turn telemetry off, use certificates, practice a crash |
+| [Contributing](CONTRIBUTING.md) | Send a fix |
+| [Security](SECURITY.md) | Report a vulnerability in private |
+| [Support](SUPPORT.md) | See what help this project does and does not offer |
+| [Governance](GOVERNANCE.md) | See who accepts changes |
+| [Roadmap](docs/fgdb/roadmap.md) | See the v23.2.15 pin, the cleanroom process, and later naming work |
+| [Cleanroom](docs/fgdb/CLEANROOM.md) | See how newer behavior is rewritten without copying proprietary code |
+| [Cleanroom sources](docs/fgdb/SOURCES.md) | Read the public sources for that process |
+| [Agent rules](docs/agent/CLEANROOM-ENFORCEMENT.md) | See when to refuse contaminated work |
+| [Release procedure](docs/fgdb/RELEASING.md) | Publish `v23.2.15-oss` (maintainers) |
+| [Build machine](docs/fgdb/RUNNER.md) | Set up the machine that builds the release (maintainers) |
 
-## Design
+Imported Cockroach Labs writing is still in the tree. The old root README is [docs/upstream/cockroach-v23.2.15-readme.md](docs/upstream/cockroach-v23.2.15-readme.md). The design note is [docs/design.md](docs/design.md). It still says RocksDB in places. This tree stores data with Pebble. Prefer [docs/fgdb/architecture.md](docs/fgdb/architecture.md) for a current sketch, and the [CockroachDB v23.2 architecture overview](https://www.cockroachlabs.com/docs/v23.2/architecture/overview.html) for the long upstream version. The "stable" docs on that site describe newer CockroachDB releases. Those releases are outside this pin.
 
-For an in-depth discussion of the CockroachDB architecture, see our
-[Architecture
-Guide](https://www.cockroachlabs.com/docs/stable/architecture/overview.html).
-For the original design motivation, see our [design
-doc](https://github.com/cockroachdb/cockroach/blob/master/docs/design.md).
+## Roadmap
 
-## Licensing
+1. Stay on the Apache-2.0 core at v23.2.15 and publish CCL-free `cockroach-oss` builds.
+2. Add newer behavior later through the cleanroom process in [docs/fgdb/CLEANROOM.md](docs/fgdb/CLEANROOM.md). One group writes down observable behavior. A different group implements that behavior without seeing proprietary source.
+3. Clean up names so the project reads as FGDb in more places.
 
-Current CockroachDB code is released under a combination of two licenses, the [Business Source License (BSL)](https://www.cockroachlabs.com/docs/stable/licensing-faqs.html#bsl) and the [Cockroach Community License (CCL)](https://www.cockroachlabs.com/docs/stable/licensing-faqs.html#ccl).
+Details: [docs/fgdb/roadmap.md](docs/fgdb/roadmap.md).
 
-When contributing to a CockroachDB feature, you can find the relevant license in the comments at the top of each file.
+## Project files
 
-For more information, see the [Licensing FAQs](https://www.cockroachlabs.com/docs/stable/licensing-faqs.html).
-
-## Comparison with Other Databases
-
-To see how key features of CockroachDB stack up against other databases,
-check out [CockroachDB in Comparison](https://www.cockroachlabs.com/docs/stable/cockroachdb-in-comparison.html).
-
-## See Also
-
-- [Tech Talks](https://www.cockroachlabs.com/community/tech-talks/) (by CockroachDB founders, engineers, and customers!)
-- [CockroachDB User Documentation](https://cockroachlabs.com/docs/stable/)
-- [The CockroachDB Blog](https://www.cockroachlabs.com/blog/)
-- Key design documents
-  - [Serializable, Lockless, Distributed: Isolation in CockroachDB](https://www.cockroachlabs.com/blog/serializable-lockless-distributed-isolation-cockroachdb/)
-  - [Consensus, Made Thrive](https://www.cockroachlabs.com/blog/consensus-made-thrive/)
-  - [Trust, But Verify: How CockroachDB Checks Replication](https://www.cockroachlabs.com/blog/trust-but-verify-cockroachdb-checks-replication/)
-  - [Living Without Atomic Clocks](https://www.cockroachlabs.com/blog/living-without-atomic-clocks/)
-  - [The CockroachDB Architecture Document](https://github.com/cockroachdb/cockroach/blob/master/docs/design.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1)
+- [SECURITY.md](SECURITY.md)
+- [SUPPORT.md](SUPPORT.md)
+- [GOVERNANCE.md](GOVERNANCE.md)
+- [NOTICE](NOTICE)

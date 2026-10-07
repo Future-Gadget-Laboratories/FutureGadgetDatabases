@@ -1,48 +1,48 @@
 ---
-name: 'Bug or crash report'
+name: Bug
+about: Wrong result, crash, stuck node, or lost availability
 title: ''
-about: 'Report unexpected behavior to help us improve'
-labels: 'C-bug'
-assignees: ''
+labels: bug, reliability
 ---
 
-**Describe the problem**
+**What broke**
 
-Please describe the issue you observed, and any steps we can take to reproduce it:
+Say what you expected and what the cluster did. If data was wrong, missing, or unavailable, say that first.
 
-**To Reproduce**
+**Steps**
 
-What did you do? Describe in your own words.
+1. How the cluster was started (one node or more, `--insecure` or certificates).
+2. The SQL or the command you ran.
+3. What you saw.
 
-If possible, provide steps to reproduce the behavior:
+Paste a small schema when the bug is in a query. Example:
 
-1. Set up CockroachDB cluster ...
-2. Send SQL ... / CLI command ...
-3. Look at UI / log file / client app ...
-4. See error
+```sql
+CREATE TABLE lab.sensors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name STRING NOT NULL,
+  reading FLOAT
+);
+```
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**Version**
 
-**Additional data / screenshots**
-If the problem is SQL-related, include a copy of the SQL query and the schema
-of the supporting tables.
+Paste `cockroach-oss version` (or `cockroach version` from the release tarball). The `Distribution` line should say `OSS`. If it does not, say so.
 
-If a node in your cluster encountered a fatal error, supply the contents of the
-log directories (at minimum of the affected node(s), but preferably all nodes).
+- Binary: local `./dev build oss`, or release `v23.2.15-oss`
+- OS:
+- Nodes:
 
-Note that log files can contain confidential information. Please continue
-creating this issue, but contact support@cockroachlabs.com to submit the log
-files in private.
+**Logs**
 
-If applicable, add screenshots to help explain your problem.
+Logs can contain SQL text and addresses. Paste only the lines that show the error. For a fatal error, say which node's `<store>/logs/` you looked at. Do not attach secrets or customer data. If the report is a vulnerability, close this issue and use a private advisory: https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/security/advisories/new
 
-**Environment:**
- - CockroachDB version [e.g. 2.0.x]
- - Server OS: [e.g. Linux/Distrib]
- - Client app [e.g. `cockroach sql`, JDBC, ...]
+**Reliability**
 
-**Additional context**
-What was the impact?
+Which of these happened?
 
-Add any other context about the problem here.
+- [ ] Wrong query result
+- [ ] Crash or restart loop
+- [ ] Range or node unavailable
+- [ ] Data lost after a restart
+- [ ] Other (describe above)
