@@ -1,3 +1,5 @@
+# FGL fork guard: upstream backport stale sweep. Skipped on this fork so the
+# weekday schedule does not consume ubuntu-latest minutes.
 name: Mark stale backport requests
 
 on:
@@ -7,6 +9,7 @@ on:
 
 jobs:
   stale:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: ubuntu-latest
     permissions:
       issues: write

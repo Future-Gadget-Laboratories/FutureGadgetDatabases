@@ -1,3 +1,6 @@
+# FGL fork guard: upstream coverage generation targets cockroachdb/cockroach
+# pull requests into master. This fork's default branch is main. The job is
+# skipped so a pull request cannot spend ubuntu-latest minutes here.
 name: PR code coverage (generate)
 on:
   pull_request:
@@ -6,6 +9,7 @@ on:
 
 jobs:
   code-cover-gen:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: ubuntu-latest
     env:
       PR: ${{ github.event.pull_request.number }}

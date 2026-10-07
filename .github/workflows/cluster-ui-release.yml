@@ -1,3 +1,6 @@
+# FGL fork guard: publish_cluster_ui already requires
+# github.repository == 'cockroachdb/cockroach', so a release-* push on this
+# fork skips the job and does not spend ubuntu-latest minutes.
 name: Publish Cluster UI Release
 on:
   workflow_dispatch:

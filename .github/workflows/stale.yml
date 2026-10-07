@@ -1,3 +1,5 @@
+# FGL fork guard: the scheduled stale sweep is an upstream CockroachDB
+# queue policy. Skipping the job avoids ubuntu-latest minutes on this fork.
 name: Mark stale issues and pull requests
 
 on:
@@ -7,6 +9,7 @@ on:
 
 jobs:
   stale:
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: ubuntu-latest
     permissions:
       issues: write

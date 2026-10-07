@@ -1,3 +1,5 @@
+# FGL fork guard: upstream project-board automation targets cockroachdb org
+# projects and a PAT this fork does not have. The job is skipped here.
 name: Add issues to project boards
 
 on:
@@ -7,6 +9,7 @@ on:
 jobs:
   add-to-project:
     name: Add issues to project boards
+    if: github.repository == 'cockroachdb/cockroach'
     runs-on: ubuntu-latest
     steps:
       # NOTE: when adding a new mapping, clone the following block, and fill in
