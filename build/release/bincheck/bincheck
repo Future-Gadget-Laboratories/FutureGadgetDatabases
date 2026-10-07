@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+export COCKROACH_INCONSISTENT_TIME_ZONES=true
+
+# Verify arguments.
+if [[ $# -ne 3 ]]
+then
+  echo "usage: $0 COCKROACH-BINARY EXPECTED-VERSION EXPECTED-SHA" >&2
+  exit 1
+fi
+
+readonly cockroach="$1"
+readonly version="$2"
+readonly sha="$3"
+readonly urlfile=cockroach-url
+readonly pidfile=/tmp/server_pid
+
+# Display build information.
+echo ""
+"$cockroach" version
+echo ""
+
+# Start a CockroachDB server, wait for it to become ready, and arrange for it to
+# be force-killed when the script exits.
+rm -f "$urlfile"
+
+# Generate encryption key.
+echo "Generating encryption key:"
+"$cockroach" gen encryption-key aes-128.key
+echo ""
+
+# Start node with encryption enabled.
+"$cockroach" start-single-node --listen-addr 127.0.0.1:26257 --insecure --listening-url-file="$urlfile" --enterprise-encryption=path=cockroach-data,key=aes-128.key,old-key=plain --pid-file="$pidfile" &
+
+trap "kill -9 $! || true" EXIT
+for i in {0..8}
+do
+  [[ -f "$urlfile" ]] && break
+  backoff=$((2 ** i))
+  echo "server not yet available; sleeping for $backoff seconds"
+  sleep $backoff
+done
+
+# Verify the output of a simple SQL query.
+"$cockroach" sql --insecure <<EOF
+  CREATE DATABASE bank;
+  CREATE TABLE bank.accounts (id INT PRIMARY KEY, balance DECIMAL);
+  INSERT INTO bank.accounts VALUES (1, 1000.50);
+EOF
+cat > expected <<EOF
+id	balance
+1	1000.50
+EOF
+"$cockroach" sql --insecure -e 'SELECT * FROM bank.accounts' > actual
+diff -u expected actual
+
+# Verify libgeos functionality on all platforms except MacOS ARM64 and Windows
+if [[ $(uname -sm) == "Darwin arm64" || $(uname -s) == "MINGW64_NT"* ]]; then
+  echo "Skipping libgeos tests"
+else
+  echo "Testing libgeos functionality"
+  cat > expected <<EOF
+is_valid
+t
+EOF
+  "$cockroach" sql --insecure -e 'SELECT ST_IsValid(ST_MakePoint(1, 1)) is_valid;' > actual
+  diff -u expected actual
+fi
+
+# Attempt a clean shutdown for good measure. We'll force-kill in the atexit
+# handler if this fails.
+kill -TERM $(cat "$pidfile") || true
+trap - EXIT
+
+# Verify reported version matches expected version.
+echo "$version" > expected
+"$cockroach" version | grep 'Build Tag' | cut -f2 -d: | tr -d ' ' > actual
+diff -u expected actual
+
+# Verify reported SHA matches expected SHA.
+echo "$sha" > expected
+"$cockroach" version | grep 'Build Commit ID' | cut -f2 -d: | tr -d ' ' > actual
+diff -u expected actual

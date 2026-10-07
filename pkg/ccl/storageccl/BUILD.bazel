@@ -1,0 +1,62 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storageccl",
+    srcs = [
+        "encryption.go",
+        "external_sst_reader.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/ccl/storageccl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/base",
+        "//pkg/cloud",
+        "//pkg/kv/kvpb",
+        "//pkg/settings",
+        "//pkg/storage",
+        "//pkg/util/ioctx",
+        "//pkg/util/mon",
+        "//pkg/util/retry",
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_cockroachdb_pebble//sstable",
+        "@com_github_cockroachdb_pebble//vfs",
+        "@org_golang_x_crypto//pbkdf2",
+    ],
+)
+
+go_test(
+    name = "storageccl_test",
+    size = "large",
+    srcs = [
+        "encryption_test.go",
+        "external_sst_reader_test.go",
+        "main_test.go",
+    ],
+    args = ["-test.timeout=895s"],
+    embed = [":storageccl"],
+    tags = ["ccl_test"],
+    deps = [
+        "//pkg/base",
+        "//pkg/blobs",
+        "//pkg/cloud",
+        "//pkg/cloud/nodelocal",
+        "//pkg/keys",
+        "//pkg/security/securityassets",
+        "//pkg/security/securitytest",
+        "//pkg/security/username",
+        "//pkg/server",
+        "//pkg/sql/isql",
+        "//pkg/storage",
+        "//pkg/testutils",
+        "//pkg/testutils/serverutils",
+        "//pkg/testutils/storageutils",
+        "//pkg/testutils/testcluster",
+        "//pkg/util/encoding",
+        "//pkg/util/humanizeutil",
+        "//pkg/util/ioctx",
+        "//pkg/util/leaktest",
+        "//pkg/util/log",
+        "//pkg/util/randutil",
+        "@com_github_stretchr_testify//require",
+    ],
+)

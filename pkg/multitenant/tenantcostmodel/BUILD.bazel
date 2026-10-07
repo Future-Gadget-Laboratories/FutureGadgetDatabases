@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tenantcostmodel",
+    srcs = [
+        "model.go",
+        "settings.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/multitenant/tenantcostmodel",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv/kvpb",
+        "//pkg/settings",
+        "//pkg/util/log",
+        "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "tenantcostmodel_test",
+    srcs = ["settings_test.go"],
+    args = ["-test.timeout=295s"],
+    embed = [":tenantcostmodel"],
+    deps = [
+        "//pkg/util/leaktest",
+        "@com_github_stretchr_testify//require",
+    ],
+)

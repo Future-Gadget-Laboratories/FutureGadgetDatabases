@@ -1,0 +1,71 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("//build:STRINGER.bzl", "stringer")
+
+go_library(
+    name = "schemachange",
+    srcs = [
+        "deck.go",
+        "error_code_set.go",
+        "error_screening.go",
+        "generate.go",
+        "operation_generator.go",
+        "optype.go",
+        "query_util.go",
+        "schemachange.go",
+        "type_resolver.go",
+        "watch_dog.go",
+        ":gen-optype-stringer",  # keep
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/workload/schemachange",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/clusterversion",
+        "//pkg/roachpb",
+        "//pkg/security/username",
+        "//pkg/sql/catalog/catpb",
+        "//pkg/sql/catalog/colinfo",
+        "//pkg/sql/lexbase",
+        "//pkg/sql/parser",
+        "//pkg/sql/pgwire/pgcode",
+        "//pkg/sql/pgwire/pgerror",
+        "//pkg/sql/randgen",
+        "//pkg/sql/schemachange",
+        "//pkg/sql/sem/catconstants",
+        "//pkg/sql/sem/tree",
+        "//pkg/sql/types",
+        "//pkg/util",
+        "//pkg/util/encoding",
+        "//pkg/util/randutil",
+        "//pkg/util/syncutil",
+        "//pkg/util/timeutil",
+        "//pkg/workload",
+        "//pkg/workload/histogram",
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_jackc_pgx_v5//pgconn",
+        "@com_github_jackc_pgx_v5//pgxpool",
+        "@com_github_lib_pq//oid",
+        "@com_github_spf13_pflag//:pflag",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+stringer(
+    name = "gen-optype-stringer",
+    src = "optype.go",
+    typ = "opType",
+)
+
+go_test(
+    name = "schemachange_test",
+    srcs = ["generate_test.go"],
+    args = ["-test.timeout=295s"],
+    embed = [":schemachange"],
+    deps = [
+        "//pkg/sql/pgwire/pgcode",
+        "//pkg/sql/sem/tree",
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
+    ],
+)

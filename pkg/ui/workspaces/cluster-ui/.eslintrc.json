@@ -1,0 +1,20 @@
+{
+  "root": true,
+  "extends": "@cockroachlabs/eslint-config",
+  "plugins": ["@cockroachlabs/eslint-plugin-crdb"],
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "rules": {
+    "@typescript-eslint/interface-name-prefix": "off",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-namespace": "off",
+    "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+    "@cockroachlabs/crdb/require-antd-style-import": "error",
+    // Instead of using console log methods directly, cluster-ui code should
+    // call the getLogger() method to provide the appropriate logger.
+    "no-console": "error",
+    "eqeqeq": ["error", "smart"]
+  }
+}

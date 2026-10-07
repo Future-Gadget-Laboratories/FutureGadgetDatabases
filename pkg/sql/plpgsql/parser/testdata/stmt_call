@@ -1,0 +1,9 @@
+feature-count
+DECLARE
+BEGIN
+  CALL fn(1);
+  DO $$ this is a code block $$;
+END
+----
+stmt_block: 1
+stmt_call: 2
