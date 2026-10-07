@@ -207,6 +207,9 @@ jobs:
           bash tooling/build/fgdb/write-bazelrc-user.sh "${PWD}/src"
 
       - name: Build oss and geos
+        # bazel, not ./dev. On a fresh checkout ./dev exits until
+        # `dev doctor` writes bin/.dev-status, and that command is
+        # interactive on Linux and would rewrite .bazelrc.user.
         run: |
           set -euo pipefail
           bash tooling/build/fgdb/build-oss.sh "${PWD}/src"

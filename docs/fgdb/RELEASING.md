@@ -150,13 +150,24 @@ The binary URL above is the drop-in for an installer that today fetches
 
 ## What the build actually runs
 
-On the runner, as `fgdb-runner`:
+On the runner, as `fgdb-runner`, `build-oss.sh` runs:
 
 ```text
-./dev build oss geos
+bazel build //pkg/cmd/cockroach-oss:cockroach-oss //c-deps:libgeos
 ```
 
-with `.bazelrc.user` setting `--config=ci`, `--config=nolintonbuild`,
+That is the same shape as the v23.2.15 release tooling
+(`pkg/cmd/publish-provisional-artifacts` and
+`build/teamcity/cockroach/ci/builds/build_impl.sh`): bazel is invoked
+directly, with the targets on the command line. `./dev build oss geos`
+is the workstation command. On a clean checkout `./dev` exits until
+`dev doctor` has written `bin/.dev-status`. Doctor on Linux asks which
+config to append to `.bazelrc.user` and can add more lines
+(`lintonbuild`, a test tmpdir). The release job does not run it.
+`--interactive=false` does not make that autofix safe: the Linux path
+refuses to edit the file unless interactive mode is on.
+
+`.bazelrc.user` still supplies `--config=ci`, `--config=nolintonbuild`,
 `--//build/toolchains:nogo_disable_flag`, `--config=crosslinuxbase`,
 `-c opt`, and one quoted stamp option:
 
@@ -182,15 +193,26 @@ linux/amd64 crosstool and does not set its own stamp command.
 stamp command that only passes the triple, which would leave the channel
 as `unknown` and the build type as `development`.
 
-`./dev build --cross` is not used. That path starts the private
-`us-east1-docker.pkg.dev/crl-ci-images/cockroach/bazel` image, which this
-fork cannot pull.
+`./dev` is not used, including `./dev build --cross`. That `--cross` path
+starts the private `us-east1-docker.pkg.dev/crl-ci-images/cockroach/bazel`
+image, which this fork cannot pull.
+
+`//pkg/ui/distoss` is a Bazel dependency of `cockroach-oss`. The UI is
+built with that target. There is no separate Node or `dev ui` step.
+Submodules come from the workflow checkout (`submodules: recursive`),
+not from `dev doctor`.
 
 libgeos comes from the public prebuilt c-dep archive
 (`storage.googleapis.com/public-bazel-artifacts/c-deps/...`), not from
 `--config=force_build_cdeps`. Forcing a from-source c-dep build needs the
 private builder image or a host toolchain this tree was not tested with
-(Ubuntu 26.04).
+(Ubuntu 26.04). After the build, the script copies
+`output_base/external/archived_cdep_libgeos_linux/lib/libgeos.so` and
+`libgeos_c.so` to `src/lib/`. The binary is copied from
+`_bazel/bin/pkg/cmd/cockroach-oss/cockroach-oss_/cockroach-oss` to
+`src/cockroach-oss`. Those are the paths `verify-oss-binary.sh` and
+`package-oss-tarball.sh` read. The image is built from the tarball, not
+from `bazel-bin`.
 
 After the link, the workflow:
 
