@@ -13,6 +13,10 @@
 # Knobs (edit here):
 #   IMAGE_REPOSITORY, BUILD_CHANNEL, PUSH_MINOR_ALIAS, EXPECT_GO
 # Bazel CPU/RAM and the disk cache come from /etc/fgdb/runner.env on the runner.
+#
+# Issue notifications are a different workflow, fgdb-issue-notify.yml.
+# That file only posts a short note when an issue is opened. It does not
+# build or publish a release.
 
 name: FGDB OSS release
 

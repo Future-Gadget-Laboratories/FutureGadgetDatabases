@@ -21,6 +21,7 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [../agent/CLEANROOM-ENFORCEMENT.md](../agent/CLEANROOM-ENFORCEMENT.md) | Rules for people and agents: refuse contaminated work and discard it |
 | [RELEASING.md](RELEASING.md) | How maintainers publish `v23.2.15-oss`, including the digest-pinned base image |
 | [RUNNER.md](RUNNER.md) | How maintainers set up the release build machine, including the local-disk Bazel cache |
+| [ISSUES.md](ISSUES.md) | The short Discord note sent when someone opens an issue |
 
 The release workflow and the runner script are not changed by this index. Follow [RELEASING.md](RELEASING.md) and [RUNNER.md](RUNNER.md) when you cut a release.
 

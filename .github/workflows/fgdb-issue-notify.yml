@@ -1,0 +1,111 @@
+# Post a short Discord note when someone opens or reopens an issue.
+# The webhook URL is the repository secret DISCORD_ISSUES_WEBHOOK.
+# Issue title and body are untrusted. They are passed in as environment
+# variables and encoded with jq. They are never pasted into this script.
+
+name: FGDB issue notify
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+
+permissions: {}
+
+jobs:
+  notify:
+    name: Post to Discord
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.repository.fork == false && github.event.issue.user.type != 'Bot'
+    steps:
+      - name: Post issue notification
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_ISSUES_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          URL: ${{ github.event.issue.html_url }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ', ') }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${WEBHOOK:-}" ]]; then
+            echo "DISCORD_ISSUES_WEBHOOK is unset. Not sending a notification."
+            exit 0
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required to build the Discord payload." >&2
+            exit 1
+          fi
+
+          filter=$(cat <<'JQ'
+          def clip($text; $limit):
+            if ($text | length) > $limit then $text[0:$limit] + "…" else $text end;
+          ($body | gsub("\r"; "")) as $flat
+          | clip($flat; 300) as $snippet
+          | clip($title; 240) as $short_title
+          | clip($labels; 200) as $short_labels
+          | {
+              allowed_mentions: {parse: []},
+              embeds: [
+                {
+                  title: "\($repo) #\($number) (\($action))",
+                  url: $url,
+                  description: (
+                    (if $short_title == "" then "(no title)" else $short_title end)
+                    + "\n"
+                    + $url
+                  ),
+                  fields: (
+                    [
+                      {
+                        name: "Author",
+                        value: (if $author == "" then "unknown" else $author end),
+                        inline: true
+                      }
+                    ]
+                    + (if $short_labels == "" then []
+                       else [{name: "Labels", value: $short_labels, inline: true}]
+                       end)
+                    + (if $snippet == "" then []
+                       else [{name: "Excerpt", value: $snippet, inline: false}]
+                       end)
+                  )
+                }
+              ]
+            }
+          JQ
+          )
+          payload=$(jq -n \
+            --arg repo "$REPO" \
+            --arg number "$NUMBER" \
+            --arg title "$TITLE" \
+            --arg body "$BODY" \
+            --arg author "$AUTHOR" \
+            --arg url "$URL" \
+            --arg labels "$LABELS" \
+            --arg action "$ACTION" \
+            "$filter")
+
+          resp=$(mktemp)
+          err=$(mktemp)
+          trap 'rm -f "$resp" "$err"' EXIT
+          set +e
+          code=$(curl --silent --output "$resp" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data-binary "$payload" \
+            --url "$WEBHOOK" 2>"$err")
+          curl_rc=$?
+          set -e
+          if [[ "$curl_rc" -ne 0 || "$code" -lt 200 || "$code" -ge 300 ]]; then
+            echo "Discord webhook request failed (HTTP ${code:-none})." >&2
+            if [[ -s "$resp" ]]; then
+              cat "$resp" >&2
+            fi
+            exit 1
+          fi
+          echo "Posted a notification for issue #${NUMBER}."
