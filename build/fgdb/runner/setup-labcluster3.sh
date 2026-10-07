@@ -3,8 +3,10 @@
 # Prepare labcluster3 as the FutureGadgetDatabases Actions runner.
 #
 # The runner is a dedicated user (fgdb-runner), in a systemd slice that leaves
-# CPU and RAM for slurmctld, slurmd, and Ollama. Bazel cache and the runner
-# work directory go on a filesystem with at least 150 GiB free.
+# CPU and RAM for slurmctld, slurmd, and Ollama. The Bazel cache, output base,
+# and runner work directory stay on a local disk with at least 150 GiB free.
+# When the root filesystem qualifies, they go in /var/cache/fgdb. Network
+# filesystems and backup mounts are never chosen.
 #
 # Idempotent. Prints the plan, then applies it. Pass --dry-run to stop after
 # the plan. A registration token is required only when the runner is not
@@ -168,32 +170,66 @@ avail_bytes() {
   df -B1 -P "$path" | awk 'NR == 2 { print $4 }'
 }
 
-# Pick the mount with the most free space. Prints "mount avail_bytes".
-pick_mount() {
-  local best_target="" best_avail=0
+# 0 when this mount must not hold the Bazel cache.
+# Network and backup disks are rejected even when they have the most free space.
+mount_unsuitable() {
+  local target=$1 fstype=$2
+  case "$fstype" in
+    tmpfs|devtmpfs|overlay|squashfs|efivarfs|proc|sysfs|cgroup2|autofs|nsfs|ramfs) return 0 ;;
+    nfs|nfs3|nfs4|nfsd|fuse.nfs|fuse.nfs4) return 0 ;;
+    cifs|smb|smb2|smb3|smbfs) return 0 ;;
+    sshfs|fuse.sshfs) return 0 ;;
+    glusterfs|fuse.glusterfs) return 0 ;;
+    ceph|cephfs|fuse.ceph|fuse.ceph-fuse) return 0 ;;
+    lustre|gpfs|afs|fuse.afs) return 0 ;;
+    davfs|fuse.davfs|s3fs|fuse.s3fs|fuse.rclone) return 0 ;;
+    moosefs|fuse.moosefs|orangefs|pvfs2|9p) return 0 ;;
+  esac
+  case "$target" in
+    /boot|/boot/*|/snap/*) return 0 ;;
+    /mnt/*backup*) return 0 ;;
+  esac
+  return 1
+}
+
+# Prints "cache_root free_bytes".
+# Prefer /var/cache/fgdb when the root filesystem is local and has >= 150 GiB.
+# Otherwise use the local filesystem with the most free space.
+choose_cache_root() {
+  local best_target="" best_avail=0 root_avail=-1
   local line target avail fstype
-  if command -v findmnt >/dev/null 2>&1; then
-    while IFS= read -r line; do
-      [[ "$line" =~ TARGET=\"([^\"]*)\"[[:space:]]AVAIL=\"([0-9]+)\"[[:space:]]FSTYPE=\"([^\"]*)\" ]] || continue
-      target=${BASH_REMATCH[1]}
-      avail=${BASH_REMATCH[2]}
-      fstype=${BASH_REMATCH[3]}
-      case "$fstype" in
-        tmpfs|devtmpfs|overlay|squashfs|efivarfs|proc|sysfs|cgroup2|autofs|nsfs|ramfs) continue ;;
-      esac
-      case "$target" in
-        /boot|/boot/*|/snap/*) continue ;;
-      esac
-      if (( avail > best_avail )); then
-        best_avail=$avail
-        best_target=$target
-      fi
-    done < <(findmnt -nbP -o TARGET,AVAIL,FSTYPE)
+  if ! command -v findmnt >/dev/null 2>&1; then
+    die "findmnt is required to choose a cache disk"
+  fi
+  while IFS= read -r line; do
+    [[ "$line" =~ TARGET=\"([^\"]*)\"[[:space:]]AVAIL=\"([0-9]+)\"[[:space:]]FSTYPE=\"([^\"]*)\" ]] || continue
+    target=${BASH_REMATCH[1]}
+    avail=${BASH_REMATCH[2]}
+    fstype=${BASH_REMATCH[3]}
+    if mount_unsuitable "$target" "$fstype"; then
+      continue
+    fi
+    if [[ "$target" == "/" && "$avail" -gt "$root_avail" ]]; then
+      root_avail=$avail
+    fi
+    if (( avail > best_avail )); then
+      best_avail=$avail
+      best_target=$target
+    fi
+  done < <(findmnt -nbP -o TARGET,AVAIL,FSTYPE)
+
+  if (( root_avail >= MIN_FREE_BYTES )); then
+    printf '%s %s\n' /var/cache/fgdb "$root_avail"
+    return
   fi
   if [[ -z "$best_target" ]]; then
-    die "could not find a filesystem (findmnt returned nothing usable)"
+    die "could not find a local filesystem for the Bazel cache. Network filesystems and /mnt/*backup* mounts are ignored. Pass --cache-dir to a local directory with at least 150 GiB free."
   fi
-  printf '%s %s\n' "$best_target" "$best_avail"
+  if [[ "$best_target" == "/" ]]; then
+    printf '%s %s\n' /var/cache/fgdb "$best_avail"
+  else
+    printf '%s %s\n' "${best_target%/}/fgdb" "$best_avail"
+  fi
 }
 
 host_short=$(hostname -s 2>/dev/null || hostname)
@@ -212,19 +248,22 @@ if [[ -n "$CACHE_DIR_OVERRIDE" ]]; then
   cache_root=$CACHE_DIR_OVERRIDE
   if [[ -d "$cache_root" ]]; then
     free_bytes=$(avail_bytes "$cache_root")
+    mount_probe=$cache_root
   else
     cache_parent=$(dirname "$cache_root")
     [[ -d "$cache_parent" ]] || die "cache parent ${cache_parent} does not exist"
     free_bytes=$(avail_bytes "$cache_parent")
+    mount_probe=$cache_parent
+  fi
+  mount_line=$(findmnt -nbP -T "$mount_probe" -o TARGET,FSTYPE) \
+    || die "findmnt could not describe ${mount_probe}"
+  [[ "$mount_line" =~ TARGET=\"([^\"]*)\"[[:space:]]FSTYPE=\"([^\"]*)\" ]] \
+    || die "could not parse findmnt output for ${mount_probe}"
+  if mount_unsuitable "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then
+    die "refusing ${cache_root}: ${BASH_REMATCH[2]} mounted at ${BASH_REMATCH[1]} is network or backup storage. The Bazel cache must be on a local disk."
   fi
 else
-  read -r mount_target mount_avail < <(pick_mount)
-  free_bytes=$mount_avail
-  if [[ "$mount_target" == "/" ]]; then
-    cache_root=/var/cache/fgdb
-  else
-    cache_root=${mount_target%/}/fgdb
-  fi
+  read -r cache_root free_bytes < <(choose_cache_root)
 fi
 
 if (( free_bytes < MIN_FREE_BYTES )); then

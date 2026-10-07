@@ -53,18 +53,38 @@ Do not remove the slice to get a green build.
 
 ## Bazel cache disk
 
-The script looks for a filesystem with at least 150 GiB free (skipping
-tmpfs, overlay, and `/boot`) and puts these directories there:
+The Bazel cache has to be on a local disk. Do not put it on a network share
+or a backup disk. Network storage is slow for this build, and a backup disk
+can fill up with files that were never meant to be kept.
+
+If you leave out `--cache-dir`, the script picks the directory:
+
+1. It uses `/var/cache/fgdb` when the root filesystem is a local disk and
+   has at least 150 GiB free. That is the normal choice. On labcluster3 the
+   cache is `/var/cache/fgdb`.
+2. If the root disk is smaller than that, it uses the local filesystem with
+   the most free space, under `<that mount>/fgdb`.
+3. It never picks a network filesystem, even when that disk has more free
+   space. Skipped types include `nfs`, `nfs4`, `cifs`, `smb3`, `sshfs`
+   (`fuse.sshfs`), `glusterfs`, and `ceph`, plus the same kind of remote
+   disk (`lustre`, `gpfs`, `afs`, `s3fs`, and similar). It also skips
+   `tmpfs`, `overlay`, and `/boot`.
+4. It skips a mount under `/mnt` whose path contains `backup`, even when
+   that filesystem looks local.
+
+These three directories are created inside the chosen path:
 
 - `bazel-disk-cache`
 - `bazel-output-base`
-- `runner-work` (the Actions checkout)
+- `runner-work` (where Actions checks out the code)
 
-On the root filesystem those paths live under `/var/cache/fgdb`. On any
-other mount they live under `<mount>/fgdb`. Pass `--cache-dir` to choose
-the directory yourself. 150 GiB is the minimum; a cold OSS build plus UI
-and the disk cache is more comfortable with extra room. `bazel clean
---expunge` against that output base is how to reclaim it later.
+150 GiB is the minimum. The first build, including the web UI and the disk
+cache, is more comfortable with extra room. To free that space later, run
+`bazel clean --expunge` against that output base.
+
+`--cache-dir` still has to point at a local directory with 150 GiB free.
+The script refuses the path when it sits on a network filesystem or on a
+`/mnt/*backup*` mount.
 
 ## Register the runner
 
