@@ -1,40 +1,98 @@
-## CockroachDB Projects
+# Contributing to FutureGadgetDatabases
 
-Suitable for | Project |  Resources
--------------|---------|------------
-For new developers | [Create a to-do app using CockroachDB and a language/ORM of your choice](https://github.com/cockroachdb/cockroachdb-todo-apps) | [How to contribute to the to-do apps repository](https://github.com/cockroachdb/cockroachdb-todo-apps#how-to-contribute-to-this-repository)
-For Go developers | Work on CockroachDB code: [List of good first issues](https://github.com/cockroachdb/cockroach/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) | [Your first CockroachDB PR](https://wiki.crdb.io/wiki/spaces/CRDB/pages/181633464/Your+first+CockroachDB+PR)
-For Kubernetes enthusiasts | Work on the Kubernetes Operator: [List of good first issues](https://github.com/cockroachdb/cockroach-operator/labels/good%20first%20issue) | [Your first CockroachDB PR](https://wiki.crdb.io/wiki/spaces/CRDB/pages/181633464/Your+first+CockroachDB+PR)
-For tech writers and docs enthusiasts | Help improve CockroachDB docs: [List of good first issues](https://github.com/cockroachdb/docs/issues?q=is%3Aopen+is%3Aissue+label%3Agood-first-issue) | [Docs contribution guide](https://github.com/cockroachdb/docs/wiki#using-github-desktop)
+Future Gadget Laboratories maintains this repository. Thank you for a careful change.
 
-## Contributor Guidelines
+A short "first evening" path is in [docs/fgdb/contributing.md](docs/fgdb/contributing.md). The rules are here.
 
-Our contributor guidelines are available on [the public wiki at **wiki.crdb.io**](https://wiki.crdb.io/wiki/spaces/CRDB/pages/73204033/Contributing+to+CockroachDB).
+People in the project follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1).
 
-At this location, we share our team guidelines and knowledge base
-regarding:
+## What this project accepts
 
-- repository layout
-- how to build from source
-- how to organize your code change
-- commenting guidelines
-- commit message guidelines
-- code style guidelines
-- how to write and run tests
-- how to write release notes
-- how to submit a change for review
-- how to use continuous integration (CI)
-- how to troubleshoot certain issues
+Docs, bug fixes, and tests for the v23.2.15 `cockroach-oss` line are welcome.
 
-as well as many other practical topics.
+**CCL** is the CockroachDB Community License. **CSL** is the CockroachDB Software License. CSL is proprietary. CCL does not become Apache-2.0.
 
-## Don’t Forget to Join our Community
-Join our [Community Slack](https://go.crdb.dev/p/slack) (there's a dedicated #contributors channel!) to ask questions, discuss your ideas, or connect with other contributors.
+A change is in bounds when it:
 
-Please follow the guidelines outlined in our [Code of Conduct](https://docs.google.com/document/d/1_BB3IrsAVglDNPy37Z6KQlii_c3fYETFlWMMBUpbY1M/edit#) to help us make the CockroachDB community a welcoming and helpful place for everyone.
+- explains how to build, run, or operate `cockroach-oss`
+- fixes a defect in the Apache-2.0 core at this pin
+- keeps the published binary free of `pkg/ccl` and `pkg/ui/distccl`
 
-## Code of Conduct
+A change is out of bounds when it:
 
-As a contributor, you can help us keep our community open and
-inclusive. Please read and follow our [Code of
-Conduct](https://github.com/cockroachdb/code-of-conduct).
+- copies Cockroach Enterprise source, or source from a CSL tag (v23.2.16 and later)
+- turns the default `./dev build` / `//pkg/cmd/cockroach` binary into the artifact we tell people to ship
+- sets `COCKROACH_ENABLE_LICENSE_ENFORCER` as something this line requires
+- replaces the imported Cockroach Labs manuals under `docs/` with a wholesale rewrite
+
+New explanations go in `docs/fgdb/` and start with the FGL banner those pages already use. The imported design note and RFCs stay where they are.
+
+## License of your contribution
+
+Put Future Gadget Laboratories documentation and project files under the Apache License 2.0, the same way [NOTICE](NOTICE) describes, unless the file you are editing already has a different header.
+
+Do not delete an upstream copyright header when you edit an imported file. Add your change under that file's existing license.
+
+## Pull requests
+
+Keep the pull request about one problem.
+
+In the description, write:
+
+1. What changed.
+2. How you checked it. For a docs change, say which commands you read against the source, or that you followed the copy-paste steps. A full Bazel build is not required for a docs-only change.
+3. That you did not copy CSL or Cockroach Enterprise code.
+
+Use the pull request template. It has a license checklist.
+
+If you change `pkg/`, say what database behavior can change: correctness, durability, or availability. Add or update a test when that area already has tests.
+
+If you build a binary, use:
+
+```bash
+./dev build oss
+./artifacts/cockroach-oss version
+```
+
+The `Distribution` line must say `OSS`. `./dev build` without `oss` links CCL code.
+
+The release workflow in [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) is how maintainers publish. Leave `.github/workflows/fgdb-oss-release.yml` and `build/fgdb/` runner scripts alone unless the change is about that release path.
+
+## Issues
+
+Use the templates in `.github/ISSUE_TEMPLATE/`.
+
+| Template | When |
+| --- | --- |
+| Bug | A query result, a crash, a stuck node, or lost availability |
+| Feature | A change you want in the database or the docs |
+| Security | A pointer only. Put the details in a private advisory. See [SECURITY.md](SECURITY.md). |
+
+Label names the templates ask for:
+
+| Label | Meaning |
+| --- | --- |
+| `bug` | Something is wrong |
+| `enhancement` | A new or changed behavior |
+| `reliability` | Correctness, durability, replication, or availability |
+| `security` | Maintainers apply this on private advisories |
+
+Create those labels in the GitHub repository if they are missing. GitHub ignores a template label that does not exist yet.
+
+## Commit messages
+
+Use a sentence that says what changed and why.
+
+```text
+Document the 3-node crash drill in operations.md.
+
+A laptop lab was stopping nodes without saying that the store directory has to stay.
+```
+
+## Secrets
+
+Do not commit tokens, `.env` files, cloud keys, or cluster certificates. The runner registration token in [docs/fgdb/RUNNER.md](docs/fgdb/RUNNER.md) expires in an hour and stays out of git.
+
+## Code of conduct reports
+
+Conduct reports go to the maintainers through the contact in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). A public issue is the wrong place.

@@ -1,0 +1,34 @@
+FutureGadgetDatabases
+Future Gadget Laboratories
+
+This repository is a public fork of CockroachDB v23.2.15
+(upstream commit 3497fb02dce0beb6fc2bbf76c1ed7ad69cc31344,
+import commit a72022ff42bbceb6f0865b3b07e6fd6a9e94a6e1).
+
+CockroachDB is a trademark of Cockroach Labs, Inc.
+The imported source is copyright Cockroach Labs, Inc. and
+The Cockroach Authors, under the license headers in each file.
+Future Gadget Laboratories is not Cockroach Labs and does not
+speak for Cockroach Labs.
+
+Documentation and release tooling added by Future Gadget Laboratories
+are under the Apache License, Version 2.0, unless a file says otherwise.
+The text is licenses/APL.txt.
+
+The Business Source License 1.1 for CockroachDB 23.2 has Change Date
+2026-10-01 and Change License Apache License, Version 2.0.
+See licenses/BSL.txt. After that date, files that were under that BSL
+are under Apache-2.0. The root LICENSE file is the notice imported with
+the tree. Read it together with licenses/BSL.txt.
+
+The CockroachDB Community License does not convert to Apache-2.0.
+See licenses/CCL.txt. CCL program code in this tree lives under pkg/ccl
+and pkg/ui/distccl. The cockroach-oss binary target excludes it.
+Do not ship a build that links those packages.
+
+This repository does not contain CockroachDB Software License code.
+Do not copy Cockroach Enterprise source, or source from v23.2.16 or
+any later CSL tag, into this project.
+
+Other components keep the licenses listed in the licenses/ directory
+and in their file headers.

@@ -1,15 +1,17 @@
-# Future Gadget Laboratories — FutureGadgetDatabases
+# This page has moved
 
-This repository is Future Gadget Laboratories / CipherBank's OSS CockroachDB line based on **v23.2.15**.
+The project front door is [README.md](README.md).
 
-- **Upstream:** [cockroachdb/cockroach](https://github.com/cockroachdb/cockroach) tag `v23.2.15` (commit `3497fb02dce0beb6fc2bbf76c1ed7ad69cc31344`).
-- **Licensing:** Core BSL converted to Apache-2.0 on **2026-10-01** (see `licenses/BSL.txt` Change Date). Official images still include CCL. Prefer self-built `cockroach-oss`.
-- **Scope:** No CSL / Enterprise code. This line intentionally stops at OSS v23.2.15 and does not include later tags (v23.2.16+ / CSL).
-- **Cleanroom:** Behavior that exists only in Enterprise / CSL is a two-team reimplementation, not a copy. Process: [docs/fgdb/CLEANROOM.md](docs/fgdb/CLEANROOM.md). Agents: [docs/agent/CLEANROOM-ENFORCEMENT.md](docs/agent/CLEANROOM-ENFORCEMENT.md). Citations: [docs/fgdb/SOURCES.md](docs/fgdb/SOURCES.md).
+The short product brief is [docs/fgdb/PROJECT.md](docs/fgdb/PROJECT.md).
 
-See the upstream `README.md` for general build and usage details. Official
-builds include CCL code. The CCL-free binary and image from this fork are
-described here:
+The guide list is [docs/fgdb/README.md](docs/fgdb/README.md).
 
-- [docs/fgdb/RUNNER.md](docs/fgdb/RUNNER.md) — labcluster3 runner (`fgdb-build`)
-- [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) — cut `v23.2.15-oss`, artifact URLs, digest pin
+These pages belong with that front door:
+
+- [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) — publish the `v23.2.15-oss` binary and image
+- [docs/fgdb/RUNNER.md](docs/fgdb/RUNNER.md) — set up the machine that builds that release
+- [docs/fgdb/CLEANROOM.md](docs/fgdb/CLEANROOM.md) — rewrite newer behavior without copying proprietary code
+- [docs/fgdb/SOURCES.md](docs/fgdb/SOURCES.md) — public sources for that process
+- [docs/agent/CLEANROOM-ENFORCEMENT.md](docs/agent/CLEANROOM-ENFORCEMENT.md) — rules for people and agents doing that work
+
+CipherBank is a design partner and a supported consumer. The license story and the build steps live in the pages above.
