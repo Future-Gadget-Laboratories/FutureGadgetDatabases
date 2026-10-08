@@ -135,6 +135,7 @@ Inside the tarball:
 
 ```text
 cockroach-oss-v23.2.15.linux-amd64/cockroach
+cockroach-oss-v23.2.15.linux-amd64/fgdb-backup
 cockroach-oss-v23.2.15.linux-amd64/lib/libgeos.so
 cockroach-oss-v23.2.15.linux-amd64/lib/libgeos_c.so
 cockroach-oss-v23.2.15.linux-amd64/LICENSE
@@ -142,6 +143,8 @@ cockroach-oss-v23.2.15.linux-amd64/licenses/
 ```
 
 `cockroach` is the `cockroach-oss` binary under the upstream filename.
+`fgdb-backup` is a separate program that copies user databases with SQL.
+`build/fgdb/package-oss-tarball.sh` compiles it when `pkg/cmd/fgdb-backup/go.mod` is in the source tree. The image copies it to `/cockroach/fgdb-backup`.
 `licenses/CCL.txt` is license text from the source tree, not CCL code.
 `OSS-BUILD.txt` in the archive says the same thing.
 
@@ -168,8 +171,8 @@ has no digest). Pushing the same tags again is a normal republish.
 
 The image is UBI 9 minimal build `9.8-1791279563` (manifest list
 `sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae`,
-pinned in `build/deploy-oss/Dockerfile`) plus the OSS binary, `libgeos` in
-`/usr/local/lib/cockroach`, and `licenses/`. `COCKROACH_CHANNEL=fgl-oss`.
+pinned in `build/deploy-oss/Dockerfile`) plus the OSS binary, `fgdb-backup`
+on `PATH`, `libgeos` in `/usr/local/lib/cockroach`, and `licenses/`. `COCKROACH_CHANNEL=fgl-oss`.
 FIPS is off unless the image is rebuilt with `--build-arg fips_enabled=1`.
 The comment at the top of the Dockerfile says how to bump the base image.
 

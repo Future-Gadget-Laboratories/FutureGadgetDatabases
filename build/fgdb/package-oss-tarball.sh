@@ -6,6 +6,7 @@
 #
 # Archive layout:
 #   cockroach-oss-<version>.linux-amd64/cockroach
+#   cockroach-oss-<version>.linux-amd64/fgdb-backup   (when pkg/cmd/fgdb-backup is present)
 #   cockroach-oss-<version>.linux-amd64/lib/libgeos.so
 #   cockroach-oss-<version>.linux-amd64/lib/libgeos_c.so
 #   cockroach-oss-<version>.linux-amd64/LICENSE
@@ -63,6 +64,25 @@ trap 'rm -rf "$stage"' EXIT
 
 mkdir -p "${stage}/${prefix}/lib" "${stage}/${prefix}/licenses"
 install -m 0755 "$oss_bin" "${stage}/${prefix}/cockroach"
+if [[ -f "${src}/pkg/cmd/fgdb-backup/go.mod" ]]; then
+  if ! command -v go >/dev/null 2>&1; then
+    echo "package-oss-tarball: go is required to build pkg/cmd/fgdb-backup" >&2
+    exit 1
+  fi
+  echo "package-oss-tarball: building fgdb-backup"
+  # The Cockroach go.mod line is "go 1.21". Releases are built with the
+  # toolchain in EXPECT_GO (go1.21.12). Fail if PATH has a different one.
+  want_go="${FGDB_EXPECT_GO:-go1.21.12}"
+  got_go=$(go env GOVERSION)
+  if [[ "$got_go" != "$want_go" ]]; then
+    echo "package-oss-tarball: fgdb-backup must be built with ${want_go}, found ${got_go}" >&2
+    exit 1
+  fi
+  (
+    cd "${src}/pkg/cmd/fgdb-backup"
+    CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local GOFLAGS="${GOFLAGS:--mod=readonly}" go build -trimpath -o "${stage}/${prefix}/fgdb-backup" .
+  )
+fi
 install -m 0644 "${src}/lib/libgeos.so" "${stage}/${prefix}/lib/libgeos.so"
 install -m 0644 "${src}/lib/libgeos_c.so" "${stage}/${prefix}/lib/libgeos_c.so"
 cp -a "${src}/LICENSE" "${stage}/${prefix}/LICENSE"
@@ -83,6 +103,10 @@ only as license text from the source tree. It is not a grant to CCL code,
 and no CCL object code is in the cockroach binary.
 
 Version: ${version}
+
+fgdb-backup, when this archive includes it, is a separate SQL client for
+logical backup and restore. It is not a CockroachDB BACKUP implementation.
+The database binary in this archive is still cockroach-oss.
 EOF
 
 mkdir -p "$out"

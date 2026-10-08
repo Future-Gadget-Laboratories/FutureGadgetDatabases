@@ -1,0 +1,232 @@
+// Copyright 2026 Future Gadget Laboratories.
+//
+// Licensed under the Apache License, Version 2.0. See licenses/APL.txt.
+
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+	"unicode"
+)
+
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func quoteLiteral(s string) string {
+	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
+}
+
+func qualified(parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		out = append(out, quoteIdent(p))
+	}
+	return strings.Join(out, ".")
+}
+
+func ensureSemicolon(sql string) string {
+	s := strings.TrimSpace(sql)
+	if s == "" {
+		return ""
+	}
+	if strings.HasSuffix(s, ";") {
+		return s
+	}
+	return s + ";"
+}
+
+func stripLeadingComments(sql string) string {
+	s := strings.TrimSpace(sql)
+	for strings.HasPrefix(s, "--") {
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = strings.TrimSpace(s[i+1:])
+			continue
+		}
+		return ""
+	}
+	return s
+}
+
+func classifyStatement(sql string) string {
+	s := stripLeadingComments(sql)
+	if s == "" {
+		return "comment"
+	}
+	fields := strings.Fields(s)
+	n := len(fields)
+	if n > 4 {
+		n = 4
+	}
+	head := strings.ToUpper(strings.Join(fields[:n], " "))
+	switch {
+	case strings.HasPrefix(head, "CREATE SCHEMA"):
+		return "schema"
+	case strings.HasPrefix(head, "CREATE TYPE"):
+		return "type"
+	case strings.HasPrefix(head, "CREATE SEQUENCE"):
+		return "sequence"
+	case strings.HasPrefix(head, "CREATE TABLE"):
+		return "table"
+	case strings.HasPrefix(head, "CREATE FUNCTION"), strings.HasPrefix(head, "CREATE OR REPLACE FUNCTION"):
+		return "function"
+	case strings.HasPrefix(head, "CREATE PROCEDURE"), strings.HasPrefix(head, "CREATE OR REPLACE PROCEDURE"):
+		return "procedure"
+	case strings.HasPrefix(head, "CREATE MATERIALIZED VIEW"):
+		return "materialized_view"
+	case strings.HasPrefix(head, "CREATE VIEW"):
+		return "view"
+	case strings.HasPrefix(head, "CREATE UNIQUE INDEX"), strings.HasPrefix(head, "CREATE INDEX"):
+		return "index"
+	case strings.HasPrefix(head, "ALTER TABLE"):
+		up := strings.ToUpper(s)
+		if strings.Contains(up, "FOREIGN KEY") || strings.Contains(up, "VALIDATE CONSTRAINT") {
+			return "foreign_key"
+		}
+		return "alter"
+	default:
+		return "other"
+	}
+}
+
+func objectName(kind, sql string) string {
+	fields := strings.Fields(stripLeadingComments(sql))
+	upper := upperFields(fields)
+	switch kind {
+	case "schema", "type", "sequence", "table", "view", "materialized_view", "index", "function", "procedure":
+		// CREATE [UNIQUE] [MATERIALIZED] INDEX|TABLE|... [IF NOT EXISTS] name
+		if name := tokenAfter(upper, fields, "EXISTS"); name != "" {
+			return name
+		}
+		return tokenAfterKeyword(upper, fields, createObjectKeyword)
+	case "foreign_key", "alter":
+		return tokenAfter(upper, fields, "TABLE")
+	default:
+		return ""
+	}
+}
+
+func upperFields(fields []string) []string {
+	upper := make([]string, len(fields))
+	for i, f := range fields {
+		upper[i] = strings.ToUpper(f)
+	}
+	return upper
+}
+
+func tokenAfter(upper, fields []string, word string) string {
+	for i := 0; i < len(upper); i++ {
+		if upper[i] == word && i+1 < len(fields) {
+			return trimObjectToken(fields[i+1])
+		}
+	}
+	return ""
+}
+
+func tokenAfterKeyword(upper, fields []string, keyword func(string) bool) string {
+	for i := 0; i < len(upper); i++ {
+		if keyword(upper[i]) && i+1 < len(fields) {
+			return trimObjectToken(fields[i+1])
+		}
+	}
+	return ""
+}
+
+func createObjectKeyword(word string) bool {
+	switch word {
+	case "SCHEMA", "TYPE", "SEQUENCE", "TABLE", "VIEW", "INDEX", "FUNCTION", "PROCEDURE":
+		return true
+	default:
+		return false
+	}
+}
+
+func trimObjectToken(tok string) string {
+	tok = strings.TrimSpace(tok)
+	if i := strings.IndexAny(tok, ",("); i >= 0 {
+		tok = tok[:i]
+	}
+	return strings.TrimRight(tok, ",")
+}
+
+func safeSegment(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("name %q cannot be used in a backup path", name)
+	}
+	for _, r := range name {
+		if r < 32 || r == 127 {
+			return fmt.Errorf("name %q cannot be used in a backup path", name)
+		}
+	}
+	return nil
+}
+
+func isSimpleIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 && !unicode.IsLetter(r) && r != '_' {
+			return false
+		}
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func parseAsOf(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	layouts := []string{
+		"2006-01-02 15:04:05.999999-07",
+		"2006-01-02 15:04:05.999999-07:00",
+		"2006-01-02 15:04:05.999999Z07:00",
+		"2006-01-02 15:04:05.999999Z07",
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05",
+	}
+	var last error
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, s)
+		if err == nil {
+			return t, nil
+		}
+		last = err
+	}
+	return time.Time{}, fmt.Errorf("parse timestamp %q: %w", s, last)
+}
+
+func skippedDatabase(name string) bool {
+	switch strings.ToLower(name) {
+	case "system", "postgres":
+		return true
+	default:
+		return false
+	}
+}
+
+func skippedSchema(name string) bool {
+	switch strings.ToLower(name) {
+	case "pg_catalog", "information_schema", "crdb_internal", "pg_extension":
+		return true
+	default:
+		return false
+	}
+}
+
+func skippedPrincipal(name string) bool {
+	switch strings.ToLower(name) {
+	case "admin", "root", "node", "public":
+		return true
+	default:
+		return false
+	}
+}
