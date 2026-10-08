@@ -286,6 +286,7 @@ jobs:
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
           SOURCE_HAS_WORKFLOW: ${{ needs.build.outputs.source_has_workflow }}
@@ -339,18 +340,35 @@ jobs:
             echo "release assets are missing" >&2
             exit 1
           fi
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$asset_tgz" dist/SHA256SUMS --clobber
-            gh release edit "$RELEASE_TAG" --notes-file "$notes"
+          # This job has no checkout. gh release looks up the repo with git
+          # unless --repo or GH_REPO is set, and then fails with
+          # "fatal: not a git repository".
+          repo_args=(--repo "$GITHUB_REPOSITORY")
+          # The commits API peels an annotated tag to the commit it points at.
+          # A missing tag is a 404; gh release create will create it from
+          # SOURCE_SHA. An existing tag must be that same commit, or the
+          # assets would not match v*-oss.
+          tag_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq .sha 2>/dev/null) || tag_commit=
+          if [[ -n "$tag_commit" && "$tag_commit" != "$SOURCE_SHA" ]]; then
+            echo "Tag ${RELEASE_TAG} points at ${tag_commit}, but this build is ${SOURCE_SHA}." >&2
+            echo "Refusing to publish this binary onto that tag. The tag is left where it is." >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" "${repo_args[@]}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; replacing its assets and notes."
+            gh release upload "$RELEASE_TAG" "${repo_args[@]}" "$asset_tgz" dist/SHA256SUMS --clobber
+            gh release edit "$RELEASE_TAG" "${repo_args[@]}" --notes-file "$notes"
           else
-            if [[ "$SOURCE_HAS_WORKFLOW" != "true" ]]; then
+            if [[ "$SOURCE_HAS_WORKFLOW" != "true" && -z "$tag_commit" ]]; then
               echo "Refusing to create git tag ${RELEASE_TAG} at ${SOURCE_SHA}." >&2
               echo "That commit does not contain .github/workflows/fgdb-oss-release.yml." >&2
               echo "A tag on the raw v23.2.15 commit would run upstream bincheck from the unguarded tree." >&2
               echo "Push ${RELEASE_TAG} from main after this workflow is merged, or dispatch with ref set to that commit." >&2
               exit 1
             fi
+            echo "Creating release ${RELEASE_TAG}."
             gh release create "$RELEASE_TAG" \
+              "${repo_args[@]}" \
               --target "$SOURCE_SHA" \
               --title "CockroachDB ${VERSION} OSS" \
               --notes-file "$notes" \
@@ -389,6 +407,7 @@ jobs:
         id: push
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
           SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
         run: |
@@ -420,18 +439,16 @@ jobs:
             docker tag "$primary" "$alias"
             tags+=("$alias")
           fi
-          digest=""
           for tag in "${tags[@]}"; do
-            push_log=$(mktemp)
-            docker push "$tag" | tee "$push_log"
-            found=$(sed -n 's/^digest: \(sha256:[0-9a-f][0-9a-f]*\).*/\1/p' "$push_log" | tail -n 1)
-            if [[ -n "$found" ]]; then
-              digest=$found
-            fi
-            rm -f "$push_log"
+            # A second push of the same image is success. Current Docker
+            # prints "<tag>: digest: sha256:..." which does not start with
+            # "digest:", so the digest is read from the registry below.
+            docker push "$tag"
           done
-          if [[ -z "$digest" ]]; then
-            echo "docker push did not report a digest" >&2
+          digest=$(bash build/fgdb/resolve-image-digest.sh "${tags[@]}")
+          hex=${digest#sha256:}
+          if [[ "$digest" == "$hex" || ${#hex} -ne 64 || ! "$hex" =~ ^[0-9a-f]+$ ]]; then
+            echo "refusing unexpected digest: ${digest}" >&2
             exit 1
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
@@ -457,24 +474,32 @@ jobs:
       - name: Update release notes with the digest
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
           DIGEST: ${{ needs.image.outputs.digest }}
           IMAGE_REPOSITORY: ${{ env.IMAGE_REPOSITORY }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          case "$DIGEST" in
-            sha256:[0-9a-f]*) ;;
-            *)
-              echo "refusing unexpected digest: ${DIGEST}" >&2
-              exit 1
-              ;;
-          esac
+          hex=${DIGEST#sha256:}
+          if [[ "$DIGEST" == "$hex" || ${#hex} -ne 64 || ! "$hex" =~ ^[0-9a-f]+$ ]]; then
+            echo "refusing unexpected digest: ${DIGEST}" >&2
+            exit 1
+          fi
           pin="${IMAGE_REPOSITORY}@${DIGEST}"
           notes=$(mktemp)
-          gh release view "$RELEASE_TAG" --json body --jq .body >"$notes"
+          # No checkout in this job. --repo keeps gh from calling git.
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$notes"
           tmp=$(mktemp)
-          sed "s|Image digest: pending|Image digest: ${pin}|" "$notes" >"$tmp"
+          if grep -q 'Image digest:' "$notes"; then
+            sed "s|Image digest: .*|Image digest: ${pin}|" "$notes" >"$tmp"
+          else
+            cat "$notes" >"$tmp"
+            printf '\n- Image digest: %s\n' "$pin" >>"$tmp"
+          fi
+          # One pin sentence. A second run must not append another.
+          grep -v 'CipherBank should pin ' "$tmp" >"${tmp}.body" || true
+          mv "${tmp}.body" "$tmp"
           printf '\nCipherBank should pin %s (tag %s-oss is a moving name).\n' \
             "$pin" "$VERSION" >>"$tmp"
-          gh release edit "$RELEASE_TAG" --notes-file "$tmp"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$tmp"
