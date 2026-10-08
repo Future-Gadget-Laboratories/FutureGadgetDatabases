@@ -30,7 +30,8 @@ After the behavior is in place, user-facing names can move toward FutureGadgetDa
 These are real gaps. They are not in this docs pass:
 
 - A public website
-- Deeper operations runbooks (backup, restore, upgrades, multi-region)
+- Incremental backup and point-in-time restore. Logical backup of user databases is [backup.md](backup.md). It is not enterprise `BACKUP`.
+- Deeper operations runbooks (upgrades, multi-region)
 - More cleanroom feature notes, as each feature gets a behavior spec
 - arm64 release artifacts
 - Consumer install pins, after a published image digest exists. This repository does not edit those pins.

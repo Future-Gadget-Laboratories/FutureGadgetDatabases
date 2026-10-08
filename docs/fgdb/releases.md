@@ -35,7 +35,7 @@ Checksum URL:
 https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-oss/SHA256SUMS
 ```
 
-The tarball contains a file named `cockroach`. That file is the `cockroach-oss` binary. Installers that expect the upstream layout (a file named `cockroach` inside the archive) can use this tarball as a drop-in. Also in the archive: `lib/libgeos.so`, `lib/libgeos_c.so`, `LICENSE`, `licenses/`, and `OSS-BUILD.txt`.
+The tarball contains a file named `cockroach`. That file is the `cockroach-oss` binary. Installers that expect the upstream layout (a file named `cockroach` inside the archive) can use this tarball as a drop-in. Also in the archive: `fgdb-backup` (the logical backup client, when that release was built from a tree that contains it), `lib/libgeos.so`, `lib/libgeos_c.so`, `LICENSE`, `licenses/`, and `OSS-BUILD.txt`. The image puts `fgdb-backup` on `PATH` next to `cockroach`. How to use it is [backup.md](backup.md).
 
 There is no arm64 release in this first cut.
 

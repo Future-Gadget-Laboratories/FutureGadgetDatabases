@@ -1,0 +1,612 @@
+// Copyright 2026 Future Gadget Laboratories.
+//
+// Licensed under the Apache License, Version 2.0. See licenses/APL.txt.
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
+)
+
+func cockroachBin(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("FGDB_COCKROACH"); p != "" {
+		return p
+	}
+	p := "/tmp/fgdb-bin/cockroach"
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	t.Skip("set FGDB_COCKROACH to a cockroach-oss binary")
+	return ""
+}
+
+func TestRoundtrip(t *testing.T) {
+	bin := cockroachBin(t)
+	tool := buildTool(t)
+	base := t.TempDir()
+	srcDir := filepath.Join(base, "src")
+	dstDir := filepath.Join(base, "dst")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srcAddr := "127.0.0.1:26271"
+	dstAddr := "127.0.0.1:26273"
+	startNode(t, bin, srcDir, srcAddr, "127.0.0.1:18081", true)
+	startNode(t, bin, dstDir, dstAddr, "127.0.0.1:18083", true)
+	srcURL := "postgresql://root@" + srcAddr + "/defaultdb?sslmode=disable"
+	dstURL := "postgresql://root@" + dstAddr + "/defaultdb?sslmode=disable"
+
+	sql(t, bin, srcAddr, true, `
+CREATE DATABASE shop;
+CREATE DATABASE audit;
+CREATE TYPE shop.public.status AS ENUM ('new', 'paid');
+CREATE SEQUENCE shop.public.order_seq;
+CREATE TABLE shop.public.users (
+  id INT PRIMARY KEY,
+  name STRING NOT NULL,
+  tags STRING[],
+  profile JSONB
+);
+CREATE TABLE shop.public.orders (
+  id INT PRIMARY KEY DEFAULT nextval('shop.public.order_seq'),
+  user_id INT NOT NULL REFERENCES shop.public.users (id),
+  status shop.public.status,
+  note STRING
+);
+CREATE VIEW shop.public.paid AS SELECT id, user_id, note FROM shop.public.orders WHERE status = 'paid';
+INSERT INTO shop.public.users VALUES (1, 'ada', ARRAY['a','b'], '{"n":1}');
+INSERT INTO shop.public.users VALUES (2, 'bea', NULL, NULL);
+INSERT INTO shop.public.users VALUES (3, '', ARRAY[]::STRING[], '""'::JSONB);
+INSERT INTO shop.public.orders (user_id, status, note) VALUES (1, 'paid', 'hi');
+INSERT INTO shop.public.orders (user_id, status, note) VALUES (2, 'new', NULL);
+CREATE TABLE shop.public.events (id INT PRIMARY KEY, payload STRING);
+INSERT INTO shop.public.events (id, payload)
+SELECT i, repeat(md5(i::STRING), 20)
+FROM generate_series(1, 50000) AS i;
+ALTER DATABASE shop CONFIGURE ZONE USING gc.ttlseconds = 20000;
+ALTER TABLE shop.public.users CONFIGURE ZONE USING gc.ttlseconds = 86400;
+CREATE USER reporter;
+GRANT SELECT ON shop.public.users TO reporter;
+CREATE TABLE audit.public.checks (id INT PRIMARY KEY, ok BOOL);
+INSERT INTO audit.public.checks VALUES (1, true);
+`)
+
+	dest := filepath.Join(base, "backups")
+	out := runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", dest, "--name", "lab", "--split-rows", "20000")
+	var bres BackupResult
+	if err := json.Unmarshal(out, &bres); err != nil {
+		t.Fatalf("backup json: %v\n%s", err, out)
+	}
+	if !bres.OK {
+		t.Fatalf("backup not ok: %s", bres.Error)
+	}
+	t.Logf("peak_rss_bytes=%d rows=%d tables=%d backup=%s", bres.PeakRSSBytes, bres.Rows, bres.Tables, bres.Backup)
+	if bres.Rows < 50000 {
+		t.Fatalf("rows = %d", bres.Rows)
+	}
+	// 50000 payloads of 640 bytes is about 32 MiB. Holding that table in
+	// memory would push the process well past this cap.
+	if bres.PeakRSSBytes == 0 {
+		t.Fatal("peak RSS was not reported")
+	}
+	if bres.PeakRSSBytes > 96<<20 {
+		t.Fatalf("peak RSS %d bytes is too high for a streamed backup", bres.PeakRSSBytes)
+	}
+	parts, err := filepath.Glob(filepath.Join(bres.Backup, "data", "shop", "public", "events.part*.csv.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) < 2 {
+		t.Fatalf("expected split files, found %v", parts)
+	}
+
+	vout := runTool(t, tool, "verify", "--json", "--src", filepath.Join(dest, "lab", "latest"))
+	var vres VerifyResult
+	if err := json.Unmarshal(vout, &vres); err != nil {
+		t.Fatal(err)
+	}
+	if !vres.OK || vres.Rows != bres.Rows {
+		t.Fatalf("verify %#v", vres)
+	}
+
+	incomplete := filepath.Join(dest, "lab", "19990101T000000Z")
+	if err := os.MkdirAll(filepath.Join(incomplete, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(incomplete, "data", "partial.csv.gz"), []byte("nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lout := runTool(t, tool, "list", "--json", "--src", filepath.Join(dest, "lab"))
+	var lres ListResult
+	if err := json.Unmarshal(lout, &lres); err != nil {
+		t.Fatal(err)
+	}
+	for _, ts := range lres.Timestamps {
+		if ts == "19990101T000000Z" {
+			t.Fatal("incomplete backup was listed")
+		}
+	}
+	if lres.Latest != bres.Timestamp {
+		t.Fatalf("latest %q, backup timestamp %q", lres.Latest, bres.Timestamp)
+	}
+
+	rout := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
+	var rres RestoreResult
+	if err := json.Unmarshal(rout, &rres); err != nil {
+		t.Fatalf("restore json: %v\n%s", err, rout)
+	}
+	if !rres.OK {
+		t.Fatalf("restore failed: %s\nincompatible=%v\nwarnings=%v", rres.Error, rres.Incompatible, rres.Warnings)
+	}
+	if rres.Rows != bres.Rows {
+		t.Fatalf("restored rows %d, backup rows %d", rres.Rows, bres.Rows)
+	}
+
+	compare := func(addr string) string {
+		return strings.TrimSpace(sqlOut(t, bin, addr, true, `
+SELECT count(*) FROM shop.public.users;
+SELECT count(*) FROM shop.public.orders;
+SELECT count(*) FROM shop.public.paid;
+SELECT name, tags::STRING, profile::STRING FROM shop.public.users ORDER BY id;
+SELECT id, user_id, status, note FROM shop.public.orders ORDER BY id;
+SELECT last_value FROM shop.public.order_seq;
+SELECT count(*), min(id), max(id), min(length(payload)), max(length(payload)) FROM shop.public.events;
+SELECT raw_config_sql FROM crdb_internal.zones WHERE database_name = 'shop' ORDER BY target;
+SELECT grantee, privilege_type FROM [SHOW GRANTS ON TABLE shop.public.users] WHERE grantee = 'reporter';
+SELECT ok FROM audit.public.checks;
+`))
+	}
+	srcCmp := compare(srcAddr)
+	dstCmp := compare(dstAddr)
+	if srcCmp != dstCmp {
+		t.Fatalf("source and target differ\nSOURCE:\n%s\nTARGET:\n%s", srcCmp, dstCmp)
+	}
+
+	if _, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest")); err == nil {
+		t.Fatal("second restore overwrote non-empty tables")
+	}
+
+	// Unsupported DDL must be reported and must not be dropped.
+	badDir := filepath.Join(base, "bad", filepath.Base(bres.Backup))
+	copyDir(t, bres.Backup, badDir)
+	objPath := filepath.Join(badDir, "objects.json")
+	body, err := os.ReadFile(objPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var objects ObjectsFile
+	if err := json.Unmarshal(body, &objects); err != nil {
+		t.Fatal(err)
+	}
+	objects.Statements = append(objects.Statements, Statement{
+		Database: "shop",
+		Kind:     "table",
+		Object:   "shop.public.vectors",
+		SQL:      "CREATE TABLE public.vectors (id INT PRIMARY KEY, v VECTOR(3));",
+	})
+	objects.Zones = append(objects.Zones, ZoneStatement{
+		Object: "INDEX shop.public.orders@orders_user_id",
+		Level:  "index",
+		SQL:    "ALTER INDEX shop.public.orders@orders_pkey CONFIGURE ZONE USING gc.ttlseconds = 80000;",
+	})
+	rewritten, err := json.MarshalIndent(objects, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten = append(rewritten, '\n')
+	if err := os.WriteFile(objPath, rewritten, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	patchDigest(t, filepath.Join(badDir, "manifest.json"), "objects_file", objPath)
+	// Restore onto a fresh node so the incompatible object is the only new failure mode
+	// we assert. The target already has the good schema; duplicate creates are fine,
+	// and the VECTOR table must still be reported.
+	badOut, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", badDir, "--database", "shop")
+	if err == nil {
+		t.Fatal("incompatible restore succeeded")
+	}
+	var bad RestoreResult
+	if jerr := json.Unmarshal(badOut, &bad); jerr != nil {
+		t.Fatalf("bad restore output: %v\n%s", jerr, badOut)
+	}
+	found := false
+	for _, p := range bad.Incompatible {
+		if strings.Contains(p.Object, "vectors") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("incompatible list did not name vectors: %#v\n%s", bad.Incompatible, bad.Error)
+	}
+
+	// GC TTL preflight, then a temporary raise that is put back.
+	sql(t, bin, srcAddr, true, `
+CREATE DATABASE shortlived;
+CREATE TABLE shortlived.public.t (id INT PRIMARY KEY);
+INSERT INTO shortlived.public.t VALUES (1);
+ALTER TABLE shortlived.public.t CONFIGURE ZONE USING gc.ttlseconds = 1;
+`)
+	if _, err := runToolErr(tool, "backup", "--json", "--url", srcURL, "--dest", filepath.Join(base, "gc-fail"), "--database", "shortlived", "--name", "short"); err == nil {
+		t.Fatal("backup with a 1 second gc.ttlseconds succeeded")
+	} else if !strings.Contains(err.Error(), "gc.ttlseconds") {
+		t.Fatal(err)
+	}
+	gcOut := runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", filepath.Join(base, "gc-ok"), "--database", "shortlived", "--name", "short", "--extend-gc-ttl", "1h")
+	var gcRes BackupResult
+	if err := json.Unmarshal(gcOut, &gcRes); err != nil {
+		t.Fatal(err)
+	}
+	ttl := strings.TrimSpace(sqlOut(t, bin, srcAddr, true, `SELECT raw_config_sql FROM crdb_internal.zones WHERE table_name = 't' AND database_name = 'shortlived';`))
+	if !strings.Contains(ttl, "gc.ttlseconds = 1") {
+		t.Fatalf("ttl was not restored:\n%s", ttl)
+	}
+	zoneBody, err := os.ReadFile(filepath.Join(gcRes.Backup, "zones.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(zoneBody), "gc.ttlseconds = 1") {
+		t.Fatalf("backup kept the temporary ttl:\n%s", zoneBody)
+	}
+	if strings.Contains(string(zoneBody), "gc.ttlseconds = 3600") {
+		t.Fatalf("backup recorded the raised ttl:\n%s", zoneBody)
+	}
+	// Index zone configs are captured and then skipped when 23.2 OSS rejects them.
+	zoneDir := filepath.Join(base, "zone-skip", gcRes.Timestamp)
+	copyDir(t, gcRes.Backup, zoneDir)
+	zobjPath := filepath.Join(zoneDir, "objects.json")
+	zbody, err := os.ReadFile(zobjPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var zobjects ObjectsFile
+	if err := json.Unmarshal(zbody, &zobjects); err != nil {
+		t.Fatal(err)
+	}
+	zobjects.Zones = append(zobjects.Zones, ZoneStatement{
+		Object: "INDEX shortlived.public.t@t_pkey",
+		Level:  "index",
+		SQL:    "ALTER INDEX shortlived.public.t@t_pkey CONFIGURE ZONE USING gc.ttlseconds = 80000;",
+	})
+	zrewritten, err := json.MarshalIndent(zobjects, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zrewritten = append(zrewritten, '\n')
+	if err := os.WriteFile(zobjPath, zrewritten, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	patchDigest(t, filepath.Join(zoneDir, "manifest.json"), "objects_file", zobjPath)
+	zout := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", zoneDir, "--database", "shortlived")
+	var zres RestoreResult
+	if err := json.Unmarshal(zout, &zres); err != nil {
+		t.Fatalf("zone restore json: %v\n%s", err, zout)
+	}
+	if !zres.OK {
+		t.Fatalf("index zone should be skipped, not fail the restore: %s", zres.Error)
+	}
+	skipped := false
+	for _, w := range zres.Warnings {
+		if strings.Contains(w, "zone config skipped") && strings.Contains(w, "t_pkey") {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Fatalf("expected an index zone warning, got %#v", zres.Warnings)
+	}
+
+	// S3 write plus IMPORT from that URL.
+	backend := s3mem.New()
+	if err := backend.CreateBucket("lab"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(gofakes3.New(backend).Server())
+	defer srv.Close()
+	t.Setenv("AWS_ACCESS_KEY_ID", "testkey")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "testsecret")
+	t.Setenv("AWS_REGION", "us-east-1")
+	s3dest := "s3://lab/fgdb"
+	s3out := runTool(t, tool, "backup", "--json",
+		"--url", srcURL, "--dest", s3dest, "--name", "shop",
+		"--database", "audit",
+		"--compression", "none",
+		"--s3-endpoint", srv.URL, "--s3-region", "us-east-1",
+		"--part-size", "5242880")
+	var s3res BackupResult
+	if err := json.Unmarshal(s3out, &s3res); err != nil {
+		t.Fatal(err)
+	}
+	if !s3res.OK {
+		t.Fatalf("s3 backup: %s", s3res.Error)
+	}
+	_ = runTool(t, tool, "verify", "--json", "--src", "s3://lab/fgdb/shop/latest", "--s3-endpoint", srv.URL, "--s3-region", "us-east-1")
+	sql(t, bin, dstAddr, true, `DROP DATABASE IF EXISTS audit CASCADE;`)
+	s3restore := runTool(t, tool, "restore", "--json",
+		"--url", dstURL,
+		"--src", "s3://lab/fgdb/shop/latest",
+		"--s3-endpoint", srv.URL,
+		"--s3-region", "us-east-1",
+		"--s3-import-auth", "specified",
+		"--load", "import")
+	var s3r RestoreResult
+	if err := json.Unmarshal(s3restore, &s3r); err != nil {
+		t.Fatalf("s3 restore json: %v\n%s", err, s3restore)
+	}
+	if !s3r.OK {
+		t.Fatalf("s3 restore: %s", s3r.Error)
+	}
+	got := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT id, ok FROM audit.public.checks;`))
+	if !strings.Contains(got, "true") && !strings.Contains(got, "t") {
+		t.Fatalf("s3 restore data: %s", got)
+	}
+
+	// Secure cluster: certs on the URL.
+	secureRoundtrip(t, bin, tool, base)
+}
+
+func secureRoundtrip(t *testing.T, bin, tool, base string) {
+	t.Helper()
+	certs := filepath.Join(base, "certs")
+	caKey := filepath.Join(base, "ca.key")
+	run(t, bin, "cert", "create-ca", "--certs-dir="+certs, "--ca-key="+caKey, "--allow-ca-key-reuse")
+	run(t, bin, "cert", "create-node", "127.0.0.1", "localhost", "--certs-dir="+certs, "--ca-key="+caKey)
+	run(t, bin, "cert", "create-client", "root", "--certs-dir="+certs, "--ca-key="+caKey)
+	dir := filepath.Join(base, "secure")
+	addr := "127.0.0.1:26275"
+	startNode(t, bin, dir, addr, "127.0.0.1:18085", false, "--certs-dir="+certs)
+	url := fmt.Sprintf("postgresql://root@%s/defaultdb?sslmode=verify-full&sslrootcert=%s&sslcert=%s&sslkey=%s",
+		addr,
+		filepath.Join(certs, "ca.crt"),
+		filepath.Join(certs, "client.root.crt"),
+		filepath.Join(certs, "client.root.key"),
+	)
+	sqlURL(t, bin, url, `CREATE DATABASE securedb; CREATE TABLE securedb.public.t (id INT PRIMARY KEY, note STRING); INSERT INTO securedb.public.t VALUES (1, 'cert');`)
+	dest := filepath.Join(base, "secure-backup")
+	out := runTool(t, tool, "backup", "--json", "--url", url, "--dest", dest, "--name", "sec", "--database", "securedb")
+	var bres BackupResult
+	if err := json.Unmarshal(out, &bres); err != nil {
+		t.Fatal(err)
+	}
+	if !bres.OK {
+		t.Fatalf("secure backup: %s", bres.Error)
+	}
+	// Restore back into the same cluster after dropping the database.
+	sqlURL(t, bin, url, `DROP DATABASE securedb CASCADE;`)
+	rout := runTool(t, tool, "restore", "--json", "--url", url, "--src", filepath.Join(dest, "sec", "latest"))
+	var rres RestoreResult
+	if err := json.Unmarshal(rout, &rres); err != nil {
+		t.Fatalf("secure restore json: %v\n%s", err, rout)
+	}
+	if !rres.OK {
+		t.Fatalf("secure restore: %s", rres.Error)
+	}
+	got := sqlURLOut(t, bin, url, `SELECT note FROM securedb.public.t;`)
+	if !strings.Contains(got, "cert") {
+		t.Fatalf("secure data: %s", got)
+	}
+}
+
+func buildTool(t *testing.T) string {
+	t.Helper()
+	tool := filepath.Join(t.TempDir(), "fgdb-backup")
+	cmd := exec.Command("go", "build", "-o", tool, ".")
+	cmd.Dir = "."
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build tool: %v\n%s", err, stderr.String())
+	}
+	return tool
+}
+
+func startNode(t *testing.T, bin, dir, addr, httpAddr string, insecure bool, extra ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{
+		"start-single-node",
+		"--store=" + dir,
+		"--listen-addr=" + addr,
+		"--advertise-addr=" + addr,
+		"--http-addr=" + httpAddr,
+		"--cache=128MiB",
+		"--max-sql-memory=128MiB",
+	}
+	if insecure {
+		args = append(args, "--insecure")
+	}
+	args = append(args, extra...)
+	logPath := filepath.Join(dir, "node.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		_ = logFile.Close()
+	})
+	deadline := time.Now().Add(45 * time.Second)
+	var last []byte
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		args := []string{"sql", "--host=" + addr, "-e", "SELECT 1"}
+		if insecure {
+			args = append([]string{"sql", "--insecure", "--host=" + addr, "-e", "SELECT 1"})
+		} else {
+			certs := ""
+			for _, e := range extra {
+				if strings.HasPrefix(e, "--certs-dir=") {
+					certs = strings.TrimPrefix(e, "--certs-dir=")
+				}
+			}
+			args = []string{"sql", "--certs-dir=" + certs, "--host=" + addr, "-e", "SELECT 1"}
+		}
+		c := exec.CommandContext(ctx, bin, args...)
+		out, err := c.CombinedOutput()
+		cancel()
+		if err == nil {
+			return
+		}
+		last = out
+		time.Sleep(300 * time.Millisecond)
+	}
+	logTail, _ := os.ReadFile(logPath)
+	t.Fatalf("node %s did not start: %s\n%s", addr, last, tail(string(logTail), 2000))
+}
+
+func sql(t *testing.T, bin, addr string, insecure bool, q string) {
+	t.Helper()
+	if out := sqlOut(t, bin, addr, insecure, q); strings.Contains(out, "ERROR") {
+		t.Fatalf("sql error:\n%s", out)
+	}
+}
+
+func sqlOut(t *testing.T, bin, addr string, insecure bool, q string) string {
+	t.Helper()
+	args := []string{"sql", "--host=" + addr, "-e", q}
+	if insecure {
+		args = []string{"sql", "--insecure", "--host=" + addr, "-e", q}
+	}
+	cmd := exec.Command(bin, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sql: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+func sqlURL(t *testing.T, bin, url, q string) {
+	t.Helper()
+	out := sqlURLOut(t, bin, url, q)
+	if strings.Contains(out, "ERROR") {
+		t.Fatalf("sql error:\n%s", out)
+	}
+}
+
+func sqlURLOut(t *testing.T, bin, url, q string) string {
+	t.Helper()
+	cmd := exec.Command(bin, "sql", "--url", url, "-e", q)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sql url: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+func run(t *testing.T, bin string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v: %v\n%s", bin, args, err, out)
+	}
+}
+
+func runTool(t *testing.T, tool string, args ...string) []byte {
+	t.Helper()
+	out, err := runToolErr(tool, args...)
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
+func runToolErr(tool string, args ...string) ([]byte, error) {
+	cmd := exec.Command(tool, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return stdout.Bytes(), fmt.Errorf("%w\n%s", err, stderr.String())
+	}
+	return stdout.Bytes(), nil
+}
+
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, body, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func patchDigest(t *testing.T, manifestPath, field, filePath string) {
+	t.Helper()
+	body, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	var manifest map[string]any
+	mbody, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(mbody, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	obj, ok := manifest[field].(map[string]any)
+	if !ok {
+		t.Fatalf("manifest field %s: %#v", field, manifest[field])
+	}
+	obj["sha256"] = hex.EncodeToString(sum[:])
+	obj["bytes"] = float64(len(body))
+	out, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, append(out, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
