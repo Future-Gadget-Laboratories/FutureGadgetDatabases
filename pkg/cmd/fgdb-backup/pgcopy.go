@@ -82,13 +82,16 @@ func sequenceRestoreSQL(schema, name string, start int64, last *int64) (string, 
 
 // splitBoundQuery reads one split point. Each call skips splitRows keys
 // after the previous bound, so the scan stays proportional to the page
-// instead of growing with OFFSET.
+// instead of growing with OFFSET. The key is qualified with the table
+// alias. ORDER BY the output column would sort id::STRING, so the bounds
+// would be 1, 10, 100 and the files would not be about splitRows rows.
 func splitBoundQuery(table, pk, prev string, splitRows int) string {
-	q := fmt.Sprintf("SELECT %s::STRING FROM %s", quoteIdent(pk), table)
+	col := "src." + quoteIdent(pk)
+	q := fmt.Sprintf("SELECT %s::STRING FROM %s AS src", col, table)
 	if prev != "" {
-		q += fmt.Sprintf(" WHERE %s >= %s", quoteIdent(pk), sqlBound(prev))
+		q += fmt.Sprintf(" WHERE %s >= %s", col, sqlBound(prev))
 	}
-	return q + fmt.Sprintf(" ORDER BY %s OFFSET %d LIMIT 1", quoteIdent(pk), splitRows)
+	return q + fmt.Sprintf(" ORDER BY %s OFFSET %d LIMIT 1", col, splitRows)
 }
 
 // newerBackup reports whether candidate should replace the latest pointer.

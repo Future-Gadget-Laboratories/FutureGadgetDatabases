@@ -13,13 +13,14 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	smithymiddleware "github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithymiddleware "github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 const (
@@ -194,11 +195,19 @@ func (w *s3Writer) start() error {
 	return nil
 }
 
+// cleanupContext stays usable after SIGINT or SIGTERM cancels w.ctx. Aborting
+// on the cancelled context leaves the uploaded parts in the bucket.
+func (w *s3Writer) cleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(w.ctx), 30*time.Second)
+}
+
 func (w *s3Writer) abort() error {
 	if w.uploadID == "" {
 		return nil
 	}
-	_, err := w.store.client.AbortMultipartUpload(w.ctx, &s3.AbortMultipartUploadInput{
+	ctx, cancel := w.cleanupContext()
+	defer cancel()
+	_, err := w.store.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(w.store.bucket),
 		Key:      aws.String(w.key),
 		UploadId: aws.String(w.uploadID),
@@ -219,7 +228,9 @@ func (w *s3Writer) Abort() error {
 		w.uploadID = ""
 	}
 	if w.putDone {
-		_, delErr := w.store.client.DeleteObject(w.ctx, &s3.DeleteObjectInput{
+		ctx, cancel := w.cleanupContext()
+		defer cancel()
+		_, delErr := w.store.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(w.store.bucket),
 			Key:    aws.String(w.key),
 		})
@@ -248,10 +259,12 @@ func (w *s3Writer) Close() error {
 			w.uploadID = ""
 		}
 		if w.putDone {
-			_, _ = w.store.client.DeleteObject(w.ctx, &s3.DeleteObjectInput{
+			ctx, cancel := w.cleanupContext()
+			_, _ = w.store.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(w.store.bucket),
 				Key:    aws.String(w.key),
 			})
+			cancel()
 			w.putDone = false
 		}
 		return err

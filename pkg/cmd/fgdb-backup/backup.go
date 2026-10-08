@@ -659,11 +659,16 @@ func dumpTable(ctx context.Context, db *database, store Store, spec dumpSpec) (T
 	if len(cols) == 0 {
 		return entry, fmt.Errorf("%s.%s.%s has no columns to copy", spec.database, spec.schema, spec.table)
 	}
+	arrays, err := arraySQLColumns(cols)
+	if err != nil {
+		return entry, fmt.Errorf("copy %s.%s.%s: %w", spec.database, spec.schema, spec.table, err)
+	}
 	entry = TableEntry{
 		Database: spec.database,
 		Schema:   spec.schema,
 		Name:     spec.table,
 		Columns:  columnNames(cols),
+		ArraySQL: arrays,
 	}
 
 	var wheres []string

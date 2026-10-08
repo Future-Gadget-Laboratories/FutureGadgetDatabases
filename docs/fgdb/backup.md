@@ -40,7 +40,7 @@ Format version 1. Paths look like this:
 
 `manifest.json` records the source `version()`, the cluster id, the `AS OF SYSTEM TIME` timestamp, per-table row counts, and the sha256 of each stored file. `data_format` is `pgcopy`. `objects.json` is what restore executes. The `.sql` files are the same statements in a form you can read.
 
-Table files are PostgreSQL text `COPY` output, usually gzip-compressed. NULL is the two characters `\N`. A real string that is those two characters is stored as `\\N`, and an empty string is an empty field, so the three stay distinct. Array columns are written as SQL `ARRAY[...]::type` literals, because `IMPORT INTO ... PGCOPY` parses that form and rejects the `{a,b}` text that `COPY TO` emits for arrays. `verify` checks checksums before it trusts `objects.json`, in the same order the files were written, and recounts rows from that text. It does not restore.
+Table files are PostgreSQL text `COPY` output, usually gzip-compressed. NULL is the two characters `\N`. A real string that is those two characters is stored as `\\N`, and an empty string is an empty field, so the three stay distinct. Array columns are written as SQL `ARRAY[...]::type` literals, because `IMPORT INTO ... PGCOPY` parses that form and rejects the `{a,b}` text that `COPY TO` emits for arrays. The manifest records which columns are arrays. `--load=copy` rewrites those fields to `{...}` text as it streams, because `COPY FROM STDIN` rejects the `ARRAY` literal. A string column that happens to contain that text is not rewritten. `verify` checks checksums before it trusts `objects.json`, in the same order the files were written, and recounts rows from that text. It does not restore.
 
 ```bash
 fgdb-backup verify --json --src s3://bucket/prefix/name/latest
@@ -64,13 +64,13 @@ Those flags set S3 server-side encryption on `PutObject` and on multipart upload
 
 `latest.json` is written only after `manifest.json` is in place, and only if this backup's timestamp is newer than the pointer already there. An older backup that finishes later does not replace a newer one. `restore --src .../latest` reads that pointer. A directory with data files but no manifest is unfinished. `list` does not return it, and it is never what `latest` points at. A backup that hits an error, including a killed backup, does not publish `latest`.
 
-Each file is written under a temporary name. It is published only after the `COPY` succeeds and the checksum covers those bytes. If the `COPY` fails, the tool deletes the temporary file, aborts an S3 multipart upload, and deletes any short object it already put. A half-written table is not left under its final name.
+Each file is written under a temporary name. It is published only after the `COPY` succeeds and the checksum covers those bytes. If the `COPY` fails, or the process is stopped with SIGINT or SIGTERM during the upload, the tool deletes the temporary file, aborts an S3 multipart upload, and deletes any short object it already put. The abort uses a context that is still active after the signal cancels the backup, so the uploaded parts are not left in the bucket. A half-written table is not left under its final name.
 
 ### Large tables
 
 Rows are streamed. The process does not load a whole table into memory. S3 uploads use multipart upload. The part size defaults to 8 MiB and must be at least 5 MiB (`--part-size`). S3 allows 10,000 parts per object. Before the next part would pass that limit, the tool aborts the upload and exits with an error that names the limit and the part size. Raise `--part-size`, or pass `--split-rows` so each file stays under `part size × 10000` bytes.
 
-`--split-rows=N` splits a table into primary-key ranges of about N rows, all read at the same timestamp. The next boundary is read with a keyset predicate (`WHERE pk >= previous ORDER BY pk OFFSET N`), not an offset that grows with the table. This only works for a table whose primary key is one integer column (`INT2`, `INT4`, or `INT8`). Other tables are one stream, and the tool says so on stderr. The files are named `<table>.part0001.pgcopy.gz`, and one `IMPORT` loads every part.
+`--split-rows=N` splits a table into primary-key ranges of about N rows, all read at the same timestamp. The next boundary is `SELECT src.pk::STRING FROM table AS src WHERE src.pk >= previous ORDER BY src.pk OFFSET N`. The sort is on the key column. Sorting the text of the key would order 1, 10, 100 and the files would not be about N rows. Each call starts at the previous bound, so the scan stays proportional to the page. This only works for a table whose primary key is one integer column (`INT2`, `INT4`, or `INT8`). Other tables are one stream, and the tool says so on stderr. The files are named `<table>.part0001.pgcopy.gz`, and one `IMPORT` loads every part.
 
 The backup JSON includes `peak_rss_bytes`, the high-water resident set size of the tool process (`VmHWM` on Linux).
 
@@ -94,13 +94,12 @@ ALTER DATABASE app CONFIGURE ZONE USING gc.ttlseconds = 86400;
 2. Schemas, types, and sequences. A sequence that only exists to back an identity column is not created twice; the `CREATE TABLE` creates it.
 3. Tables and indexes. Foreign keys are not created yet.
 4. Functions and procedures. If one cannot be replayed, restore stops and names that object.
-5. Views.
-6. Row data (`IMPORT INTO` of PGCOPY by default, or `--load=copy`).
-7. Materialized views, after the tables have their rows. Cockroach's `SHOW CREATE` adds a hidden `rowid` column that cannot be replayed; the tool removes that column when the query does not select `rowid`.
-8. Foreign keys and `VALIDATE CONSTRAINT`.
-9. Sequence values. A sequence that has never been called is restored with `setval(start, false)`. A sequence that has been called is restored with `setval(last_value, true)`.
-10. Users, role memberships, and grants. Failures here are warnings.
-11. Zone configurations. Failures here are warnings. A zone is applied only when its database is one of the databases being restored, matched by name, not by a substring.
+5. Row data (`IMPORT INTO` of PGCOPY by default, or `--load=copy`).
+6. Views and materialized views, in the order they were created. A plain view that reads a materialized view is created after that materialized view, and both are created after the tables have their rows. Cockroach's `SHOW CREATE` adds a hidden `rowid` column to a materialized view that cannot be replayed; the tool removes that column when the query does not select `rowid`.
+7. Foreign keys and `VALIDATE CONSTRAINT`.
+8. Sequence values. A sequence that has never been called is restored with `setval(start, false)`. A sequence that has been called is restored with `setval(last_value, true)`.
+9. Users, role memberships, and grants. Failures here are warnings.
+10. Zone configurations. Failures here are warnings. A zone is applied only when its database is one of the databases being restored, matched by name, not by a substring.
 
 `system` and `postgres` are skipped. Other databases, including `defaultdb`, are included unless you pass `--database`. Schemas `pg_catalog`, `information_schema`, `crdb_internal`, and `pg_extension` are skipped.
 
@@ -110,11 +109,11 @@ Zone configs are read from `crdb_internal.zones` for the databases in the backup
 
 Virtual computed columns and stored computed columns are not in the data files. The `CREATE TABLE` statement still has the expression, and the database recomputes stored values when the other columns are loaded. Ordinary columns are copied. `GENERATED BY DEFAULT AS IDENTITY` columns are copied, so the values stay the same. `GENERATED ALWAYS AS IDENTITY` cannot be loaded by `COPY` or `IMPORT` on this binary; backup stops before writing files and names the column.
 
-Restore refuses when a target database already exists and has user objects (tables, views, sequences, types, functions, or procedures). It does not merge the backup into that database. `--force` drops and recreates only the objects that are in the backup. The drops do not use `CASCADE`, so a table that is not in the backup is not emptied. If one of those outside tables references a backup table, `--force` stops and names the error instead of truncating it. A failed restore can leave a partial database (some objects dropped or created, data not loaded). The recovery is to rerun the same restore with `--force`.
+Restore refuses when a target database already exists and has user objects (tables, views, sequences, types, functions, or procedures). It does not merge the backup into that database. `--force` drops and recreates only the objects that are in the backup. Before it drops anything, it looks for a foreign key from a table that is not in the backup to a table that is. If it finds one, it stops and leaves the database as it was, including the backup's views and functions. Views and materialized views are then dropped in reverse creation order, so a view that reads another view is dropped first. The drops do not use `CASCADE`, so a table that is not in the backup is not emptied. A failed restore can leave a partial database (some objects dropped or created, data not loaded). The recovery is to rerun the same restore with `--force`.
 
-If a `CREATE` statement uses syntax this binary does not accept, restore stops before loading rows and names the object. The JSON lists each rejected object under `incompatible`. The tool does not delete or rewrite that statement to hide it, except for the hidden `rowid` on a materialized view described above. Duplicate objects (`CREATE` of something that already exists) are allowed so a retry can continue after `--force` has dropped them.
+If a `CREATE` statement for a database, schema, type, sequence, table, index, function, or procedure is rejected, restore stops before loading rows and names the object. Views are created after the rows are loaded, and a rejected view is named the same way. The error quotes the target's message. It does not describe every rejection as a syntax problem. The JSON lists each rejected object under `incompatible`. The tool does not delete or rewrite that statement to hide it, except for the hidden `rowid` on a materialized view described above. Duplicate objects (`CREATE` of something that already exists) are allowed so a retry can continue after `--force` has dropped them.
 
-`--load=import` is the default. For a local backup, and for an S3 backup that would otherwise need access keys in the statement, the tool listens on `--import-listen` (default `127.0.0.1:0`) and the database fetches `http://...`. The database process must be able to reach that address. With `--s3-import-auth=implicit` (or `auto` when `AWS_ACCESS_KEY_ID` is unset), the database reads `s3://` itself and the URL has no keys. Pass `--s3-endpoint` for a non-AWS endpoint. If the node cannot read the URL, run again with `--load=copy`. That streams the files from this machine into `COPY ... FROM STDIN` in the same PGCOPY text format.
+`--load=import` is the default. For a local backup, and for an S3 backup that would otherwise need access keys in the statement, the tool listens on `--import-listen` (default `127.0.0.1:0`) and the database fetches `http://...`. The database process must be able to reach that address. With `--s3-import-auth=implicit` (or `auto` when `AWS_ACCESS_KEY_ID` is unset), the database reads `s3://` itself and the URL has no keys. Pass `--s3-endpoint` for a non-AWS endpoint. If the node cannot read the URL, run again with `--load=copy`. That streams the files from this machine into `COPY ... FROM STDIN`. Array fields are rewritten to the `{...}` form `COPY` accepts. The files on disk stay in the `ARRAY` form `IMPORT` accepts.
 
 ## Examples
 

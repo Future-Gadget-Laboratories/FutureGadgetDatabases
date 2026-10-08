@@ -173,7 +173,10 @@ func restoreSchema(ctx context.Context, db *database, objects ObjectsFile, selec
 	if len(problems) > 0 {
 		return stopIncompatible(res, problems)
 	}
-	pre := []string{"schema", "type", "sequence", "table", "index", "function", "procedure", "view", "other"}
+	// Views, plain and materialized, are created after the row load. A plain
+	// view can read a materialized view, and a materialized view needs the
+	// table rows to be present when it is created.
+	pre := []string{"schema", "type", "sequence", "table", "index", "function", "procedure", "other"}
 	problems = applyStatements(ctx, db, objects.Statements, selected, pre, true)
 	if len(problems) > 0 {
 		return stopIncompatible(res, problems)
@@ -210,6 +213,26 @@ func applyStatements(ctx context.Context, db *database, stmts []Statement, selec
 	var problems []Problem
 	for _, kind := range kinds {
 		problems = append(problems, applyKind(ctx, db, stmts, selected, kind, ignoreDup)...)
+	}
+	return problems
+}
+
+// applyKindsInOrder runs every matching statement in the order it was
+// backed up. applyStatements groups by kind, which would create every plain
+// view before any materialized view.
+func applyKindsInOrder(ctx context.Context, db *database, stmts []Statement, selected map[string]bool, kinds []string, ignoreDup bool) []Problem {
+	want := map[string]bool{}
+	for _, kind := range kinds {
+		want[kind] = true
+	}
+	var problems []Problem
+	for _, st := range stmts {
+		if !want[st.Kind] || !selected[st.Database] {
+			continue
+		}
+		if p, ok := execStatement(ctx, db, st, ignoreDup); !ok {
+			problems = append(problems, p)
+		}
 	}
 	return problems
 }
@@ -291,7 +314,7 @@ func loadSelected(ctx context.Context, db *database, bundle restoreBundle, selec
 }
 
 func finishRestore(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, res *RestoreResult) (RestoreResult, error) {
-	problems := applyStatements(ctx, db, bundle.objects.Statements, selected, []string{"materialized_view"}, false)
+	problems := applyKindsInOrder(ctx, db, bundle.objects.Statements, selected, []string{"view", "materialized_view"}, false)
 	problems = append(problems, applyStatements(ctx, db, bundle.objects.Statements, selected, []string{"foreign_key", "alter"}, false)...)
 	problems = append(problems, restoreSequences(ctx, db, bundle.objects.SequenceValues, selected)...)
 	res.Warnings = append(res.Warnings, restoreGrants(ctx, db, bundle.objects.Grants)...)
@@ -589,6 +612,16 @@ func loadCopy(ctx context.Context, db *database, store Store, base string, manif
 				}
 				src = gz
 			}
+			if hasArrayColumn(table.ArraySQL) {
+				if len(table.ArraySQL) != len(table.Columns) {
+					rc.Close()
+					if gz != nil {
+						_ = gz.Close()
+					}
+					return nil, fmt.Errorf("COPY %s: array_sql does not match the column list", table.qualified())
+				}
+				src = newArrayCopyReader(src, table.ArraySQL)
+			}
 			logf("copying %s", table.qualified())
 			err = db.copyFrom(ctx, bufio.NewReader(src), copySQL)
 			if gz != nil {
@@ -605,7 +638,7 @@ func loadCopy(ctx context.Context, db *database, store Store, base string, manif
 
 func incompatibleError(problems []Problem) error {
 	var b strings.Builder
-	b.WriteString("restore stopped. These objects use syntax or features the target rejected. Nothing was dropped to hide them:\n")
+	b.WriteString("restore stopped. The target rejected these objects. Nothing was dropped to hide them:\n")
 	for _, p := range problems {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", p.Object, p.Kind, oneLine(p.Error))
 	}

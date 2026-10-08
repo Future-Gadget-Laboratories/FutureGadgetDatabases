@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
@@ -82,6 +84,33 @@ func TestS3AbortDeletesPartial(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("aborted object is still visible")
+	}
+}
+
+func TestS3AbortAfterCancel(t *testing.T) {
+	store := fakeS3(t)
+	s3s := store.(*s3Store)
+	s3s.partSize = minPartSize
+	ctx, cancel := context.WithCancel(context.Background())
+	wc, err := store.Create(ctx, "name/20060102T150405Z/data/blob.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wc.Write(bytes.Repeat([]byte("a"), minPartSize)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := wc.(interface{ Abort() error }).Abort(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s3s.client.ListMultipartUploads(context.Background(), &s3.ListMultipartUploadsInput{
+		Bucket: aws.String(s3s.bucket),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Uploads) != 0 {
+		t.Fatalf("cancelled upload left %d multipart uploads", len(out.Uploads))
 	}
 }
 

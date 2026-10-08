@@ -294,6 +294,14 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 	if !strings.Contains(notes, "1") {
 		t.Fatalf("unrelated table was emptied: %s", notes)
 	}
+	paid := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT count(*) FROM shop.public.paid;`))
+	if !strings.Contains(paid, "1") {
+		t.Fatalf("force restore dropped views before the foreign-key check: %s", paid)
+	}
+	add := strings.TrimSpace(sqlDBOut(t, bin, dstAddr, "shop", `SELECT add(20, 22);`))
+	if !strings.Contains(add, "42") {
+		t.Fatalf("force restore dropped functions before the foreign-key check: %s", add)
+	}
 }
 
 func compareCluster(t *testing.T, bin, addr string) string {

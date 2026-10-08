@@ -45,10 +45,15 @@ type FileDigest struct {
 // TableEntry is one user table. Files are in primary-key order when the
 // table was split, and row_count is the sum of those files.
 type TableEntry struct {
-	Database string       `json:"database"`
-	Schema   string       `json:"schema"`
-	Name     string       `json:"name"`
-	Columns  []string     `json:"columns"`
+	Database string   `json:"database"`
+	Schema   string   `json:"schema"`
+	Name     string   `json:"name"`
+	Columns  []string `json:"columns"`
+	// ArraySQL is parallel to Columns. An entry is the SQL cast written into
+	// that column's ARRAY[...] literal, or empty when the column is not an
+	// array. COPY FROM STDIN cannot parse the literal, so --load=copy rewrites
+	// only these columns. Omitted when the table has no array columns.
+	ArraySQL []string     `json:"array_sql,omitempty"`
 	RowCount int64        `json:"row_count"`
 	Files    []FileDigest `json:"files"`
 }

@@ -235,6 +235,29 @@ func columnNames(cols []columnInfo) []string {
 	return out
 }
 
+// arraySQLColumns records which copied columns are arrays. The cast is the
+// same one arrayLiteralExpr appends, so restore can tell an array field from
+// a string that happens to look like ARRAY[...].
+func arraySQLColumns(cols []columnInfo) ([]string, error) {
+	out := make([]string, len(cols))
+	any := false
+	for i, c := range cols {
+		if !strings.HasPrefix(c.TypeName, "_") {
+			continue
+		}
+		cast, err := arrayCastSQL(c.TypeName, c.FormatType)
+		if err != nil {
+			return nil, fmt.Errorf("column %s: %w", c.Name, err)
+		}
+		out[i] = cast
+		any = true
+	}
+	if !any {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func selectList(cols []columnInfo) (string, error) {
 	parts := make([]string, len(cols))
 	for i, c := range cols {

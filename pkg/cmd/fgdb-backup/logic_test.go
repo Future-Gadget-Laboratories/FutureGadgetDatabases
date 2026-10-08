@@ -270,11 +270,85 @@ func TestSplitBoundQueryUsesKeyset(t *testing.T) {
 		t.Fatal(first)
 	}
 	next := splitBoundQuery("shop.public.events", "id", "20000", 20000)
-	if !strings.Contains(next, `WHERE "id" >= 20000`) || !strings.Contains(next, "OFFSET 20000") {
+	if !strings.Contains(next, `WHERE src."id" >= 20000`) || !strings.Contains(next, "OFFSET 20000") {
+		t.Fatal(next)
+	}
+	if !strings.Contains(next, `ORDER BY src."id"`) || strings.Contains(next, `ORDER BY "id"`) {
 		t.Fatal(next)
 	}
 	if strings.Contains(next, "OFFSET 40000") {
 		t.Fatal(next)
+	}
+}
+
+func TestArrayCopyRewrite(t *testing.T) {
+	ints, err := sqlArrayToPostgres(`ARRAY['1',NULL,'2']::bigint[]`)
+	if err != nil || ints != `{"1",NULL,"2"}` {
+		t.Fatalf("%s %v", ints, err)
+	}
+	words, err := sqlArrayToPostgres(`ARRAY['a',NULL,'b,c',e'd\'e',e'a\\b']::text[]`)
+	if err != nil || words != `{"a",NULL,"b,c","d'e","a\\b"}` {
+		t.Fatalf("%s %v", words, err)
+	}
+	empty, err := sqlArrayToPostgres(`ARRAY[]::bigint[]`)
+	if err != nil || empty != `{}` {
+		t.Fatalf("%s %v", empty, err)
+	}
+	literal := `ARRAY['a',NULL,'b,c',e'd\'e',e'a\\b']::text[]`
+	line := "1\t" + escapePGCopy(literal) + "\t" + escapePGCopy(`ARRAY[1]::int`) + "\n"
+	got, err := rewriteArrayLine([]byte(line), []string{"", "text[]", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "1\t" + escapePGCopy(words) + "\t" + escapePGCopy(`ARRAY[1]::int`) + "\n"
+	if string(got) != want {
+		t.Fatalf("rewritten row\n%s\nwant\n%s", got, want)
+	}
+	nullRow, err := rewriteArrayLine([]byte("3\t\\N\t\\N\n"), []string{"", "bigint[]", "text[]"})
+	if err != nil || string(nullRow) != "3\t\\N\t\\N\n" {
+		t.Fatalf("null row %q %v", nullRow, err)
+	}
+}
+
+func TestViewDropIsReverseDependencyOrder(t *testing.T) {
+	objects := ObjectsFile{Statements: []Statement{
+		{Database: "shop", Kind: "view", Object: "public.v1"},
+		{Database: "shop", Kind: "materialized_view", Object: "public.mv"},
+		{Database: "shop", Kind: "view", Object: "public.plain"},
+	}}
+	matched := matchingStatements(objects, "shop", []string{"view", "materialized_view"})
+	for i, j := 0, len(matched)-1; i < j; i, j = i+1, j-1 {
+		matched[i], matched[j] = matched[j], matched[i]
+	}
+	var names []string
+	for _, st := range matched {
+		names = append(names, st.Object)
+	}
+	if strings.Join(names, ",") != "public.plain,public.mv,public.v1" {
+		t.Fatal(names)
+	}
+}
+
+func TestIncompatibleErrorDoesNotBlameSyntax(t *testing.T) {
+	err := incompatibleError([]Problem{{
+		Object: "public.plain",
+		Kind:   "view",
+		Error:  `ERROR: relation "mv" does not exist`,
+	}})
+	if strings.Contains(err.Error(), "syntax") {
+		t.Fatal(err)
+	}
+	if !strings.Contains(err.Error(), "public.plain") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatal(err)
+	}
+}
+
+func TestRelationKeyUsesSchemaAndName(t *testing.T) {
+	if got := relationKey("shop.public.users"); got != "public.users" {
+		t.Fatal(got)
+	}
+	if got := relationKey(`"public"."Users"`); got != "public.Users" {
+		t.Fatal(got)
 	}
 }
 
