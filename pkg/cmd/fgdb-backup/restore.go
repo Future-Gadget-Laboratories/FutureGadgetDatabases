@@ -597,13 +597,28 @@ func loadCopy(ctx context.Context, db *database, store Store, base string, manif
 }
 
 func copyTable(ctx context.Context, db *database, store Store, base string, manifest Manifest, table TableEntry) error {
-	copySQL := copyFromSQL(table)
+	job := copyFile{
+		db: db, store: store, base: base, manifest: manifest, table: table,
+		sql: copyFromSQL(table),
+	}
 	for _, f := range table.Files {
-		if err := copyTableFile(ctx, db, store, base, manifest, table, f, copySQL); err != nil {
+		job.file = f
+		if err := copyTableFile(ctx, job); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// copyFile is one COPY FROM STDIN of a backed-up table file.
+type copyFile struct {
+	db       *database
+	store    Store
+	base     string
+	manifest Manifest
+	table    TableEntry
+	file     FileDigest
+	sql      string
 }
 
 func copyFromSQL(table TableEntry) string {
@@ -617,26 +632,26 @@ func copyFromSQL(table TableEntry) string {
 	)
 }
 
-func copyTableFile(ctx context.Context, db *database, store Store, base string, manifest Manifest, table TableEntry, f FileDigest, copySQL string) error {
-	rc, err := store.Open(ctx, base+"/"+f.Path)
+func copyTableFile(ctx context.Context, job copyFile) error {
+	rc, err := job.store.Open(ctx, job.base+"/"+job.file.Path)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	src, gz, err := openCopySource(rc, manifest, f.Path)
+	src, gz, err := openCopySource(rc, job.manifest, job.file.Path)
 	if err != nil {
 		return err
 	}
 	if gz != nil {
 		defer gz.Close()
 	}
-	src, err = wrapArrayCopy(src, table)
+	src, err = wrapArrayCopy(src, job.table)
 	if err != nil {
 		return err
 	}
-	logf("copying %s", table.qualified())
-	if err := db.copyFrom(ctx, bufio.NewReader(src), copySQL); err != nil {
-		return fmt.Errorf("COPY %s: %w", table.qualified(), err)
+	logf("copying %s", job.table.qualified())
+	if err := job.db.copyFrom(ctx, bufio.NewReader(src), job.sql); err != nil {
+		return fmt.Errorf("COPY %s: %w", job.table.qualified(), err)
 	}
 	return nil
 }
