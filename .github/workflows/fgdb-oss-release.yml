@@ -230,7 +230,14 @@ jobs:
             --test_output=errors \
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
 
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.12"
+
       - name: Package tarball and checksums
+        env:
+          FGDB_EXPECT_GO: ${{ env.EXPECT_GO }}
         run: |
           set -euo pipefail
           bash tooling/build/fgdb/package-oss-tarball.sh "${PWD}/src" "${PWD}/dist"

@@ -9,12 +9,16 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // RestoreOptions is the restore command.
@@ -82,10 +86,13 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	defer db.Close(ctx)
 
+	if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
+		return res, err
+	}
 	if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
 		return res, err
 	}
-	if err := prepareTargets(ctx, db, bundle.manifest, selected, opt.Force); err != nil {
+	if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
 		return res, err
 	}
 	warnings, err := loadSelected(ctx, db, bundle, selected, opt)
@@ -119,11 +126,17 @@ func openRestoreBundle(ctx context.Context, opt RestoreOptions) (restoreBundle, 
 	if err != nil {
 		return bundle, err
 	}
-	manifest, objects, err := readBackup(ctx, store, base)
+	manifest, err := readManifest(ctx, store, base)
 	if err != nil {
 		return bundle, err
 	}
+	// Check every checksum before trusting objects.json. Table files are
+	// verified in manifest order, which is the order IMPORT reads them.
 	if _, _, err := verifyBackup(ctx, store, base, manifest); err != nil {
+		return bundle, err
+	}
+	objects, err := readObjects(ctx, store, base, manifest)
+	if err != nil {
 		return bundle, err
 	}
 	bundle.root = root
@@ -160,7 +173,7 @@ func restoreSchema(ctx context.Context, db *database, objects ObjectsFile, selec
 	if len(problems) > 0 {
 		return stopIncompatible(res, problems)
 	}
-	pre := []string{"schema", "type", "sequence", "table", "index", "view", "other"}
+	pre := []string{"schema", "type", "sequence", "table", "index", "function", "procedure", "view", "other"}
 	problems = applyStatements(ctx, db, objects.Statements, selected, pre, true)
 	if len(problems) > 0 {
 		return stopIncompatible(res, problems)
@@ -239,16 +252,13 @@ func statementObject(st Statement) string {
 	return st.Object
 }
 
-func prepareTargets(ctx context.Context, db *database, manifest Manifest, selected map[string]bool, force bool) error {
+func prepareTargets(ctx context.Context, db *database, manifest Manifest, selected map[string]bool) error {
 	nonEmpty, err := nonEmptyTables(ctx, db, manifest, selected)
 	if err != nil {
 		return err
 	}
-	if len(nonEmpty) > 0 && !force {
-		return fmt.Errorf("refusing to overwrite non-empty tables: %s\npass --force to truncate them and load the backup", strings.Join(nonEmpty, ", "))
-	}
-	if force {
-		return truncateTables(ctx, db, nonEmpty)
+	if len(nonEmpty) > 0 {
+		return fmt.Errorf("target tables still have rows after preparing the restore (%s). Rerun with --force to drop and recreate the objects in the backup. This does not empty unrelated tables", strings.Join(nonEmpty, ", "))
 	}
 	return nil
 }
@@ -270,27 +280,6 @@ func nonEmptyTables(ctx context.Context, db *database, manifest Manifest, select
 	return nonEmpty, nil
 }
 
-func truncateTables(ctx context.Context, db *database, names []string) error {
-	for _, name := range names {
-		if err := truncateOne(ctx, db, name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func truncateOne(ctx context.Context, db *database, name string) error {
-	parts := strings.Split(name, ".")
-	if len(parts) != 3 {
-		return fmt.Errorf("bad table name %q", name)
-	}
-	_, err := db.exec(ctx, "TRUNCATE TABLE "+qualified(parts[0], parts[1], parts[2])+" CASCADE")
-	if err != nil {
-		return fmt.Errorf("truncate %s: %w", name, err)
-	}
-	return nil
-}
-
 func loadSelected(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions) ([]string, error) {
 	if opt.Load == "copy" {
 		return loadCopy(ctx, db, bundle.store, bundle.base, bundle.manifest, selected)
@@ -302,7 +291,8 @@ func loadSelected(ctx context.Context, db *database, bundle restoreBundle, selec
 }
 
 func finishRestore(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, res *RestoreResult) (RestoreResult, error) {
-	problems := applyStatements(ctx, db, bundle.objects.Statements, selected, []string{"foreign_key", "alter"}, false)
+	problems := applyStatements(ctx, db, bundle.objects.Statements, selected, []string{"materialized_view"}, false)
+	problems = append(problems, applyStatements(ctx, db, bundle.objects.Statements, selected, []string{"foreign_key", "alter"}, false)...)
 	problems = append(problems, restoreSequences(ctx, db, bundle.objects.SequenceValues, selected)...)
 	res.Warnings = append(res.Warnings, restoreGrants(ctx, db, bundle.objects.Grants)...)
 	res.Warnings = append(res.Warnings, restoreZones(ctx, db, bundle.objects.Zones, selected, bundle.manifest)...)
@@ -408,13 +398,14 @@ func countRestoredTable(ctx context.Context, db *database, table TableEntry) (in
 }
 
 func zoneInScope(z ZoneStatement, selected map[string]bool, manifest Manifest) bool {
+	if z.Database != "" {
+		return selected[z.Database]
+	}
 	for _, d := range manifest.Databases {
-		if selected[d] && strings.Contains(z.Object, d) {
+		if selected[d] && zoneObjectNames(z.Object, d) {
 			return true
 		}
 	}
-	// Database-less statements are not expected. Keep index/table objects
-	// whose qualified name starts with a selected database.
 	return false
 }
 
@@ -423,7 +414,7 @@ func tableIsEmpty(ctx context.Context, db *database, table TableEntry) (bool, er
 	q := "SELECT 1 FROM " + qualified(table.Database, table.Schema, table.Name) + " LIMIT 1"
 	err := db.queryRow(ctx, q).Scan(&n)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return true, nil
 		}
 		return false, fmt.Errorf("check %s: %w", table.qualified(), err)
@@ -460,15 +451,22 @@ func loadImport(ctx context.Context, req importRequest) ([]string, error) {
 }
 
 func serveLocalBackup(req importRequest) (string, func(), error) {
-	if req.root.Kind != "file" {
+	if s3s, ok := req.store.(*s3Store); ok && s3s.implicitImport() {
 		return "", nil, nil
 	}
 	ln, err := net.Listen("tcp", req.opt.ImportListen)
 	if err != nil {
 		return "", nil, fmt.Errorf("listen for IMPORT: %w", err)
 	}
-	dir := req.root.join(req.base)
-	srv := &http.Server{Handler: http.FileServer(http.Dir(dir))}
+	var handler http.Handler
+	if req.root.Kind == "file" {
+		handler = http.FileServer(http.Dir(req.root.join(req.base)))
+	} else {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			serveStoredObject(w, r, req)
+		})
+	}
+	srv := &http.Server{Handler: handler}
 	go func() { _ = srv.Serve(ln) }()
 	closer := func() {
 		shut, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -480,6 +478,28 @@ func serveLocalBackup(req importRequest) (string, func(), error) {
 	return httpBase, closer, nil
 }
 
+func serveStoredObject(w http.ResponseWriter, r *http.Request, req importRequest) {
+	rel := strings.TrimPrefix(r.URL.Path, "/")
+	if rel == "" || strings.Contains(rel, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	key := req.base + "/" + rel
+	n, err := req.store.Size(r.Context(), key)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	rc, err := req.store.Open(r.Context(), key)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+	_, _ = io.Copy(w, rc)
+}
+
 func importTable(ctx context.Context, req importRequest, httpBase string, table TableEntry) error {
 	if !req.selected[table.Database] || table.RowCount == 0 {
 		return nil
@@ -489,9 +509,10 @@ func importTable(ctx context.Context, req importRequest, httpBase string, table 
 		return err
 	}
 	logf("importing %s", table.qualified())
-	_, err = req.db.exec(ctx, importCSVStatement(table, uris, req.manifest.Compression))
+	stmt := importDataStatement(table, uris, req.manifest.Compression)
+	_, err = req.db.exec(ctx, stmt)
 	if err != nil {
-		return fmt.Errorf("IMPORT INTO %s failed. The database node must be able to read the backup URL. For a backup that lives only on this machine, the node must reach --import-listen (%s), or rerun with --load=copy. Error: %w", table.qualified(), req.opt.ImportListen, err)
+		return fmt.Errorf("IMPORT INTO %s failed. The database node must be able to read the backup URL. For a backup that lives only on this machine, the node must reach --import-listen (%s), or rerun with --load=copy. Error: %s", table.qualified(), req.opt.ImportListen, scrubSecrets(err.Error()))
 	}
 	return nil
 }
@@ -510,17 +531,16 @@ func importURIs(ctx context.Context, req importRequest, httpBase string, table T
 }
 
 func oneImportURI(ctx context.Context, root Location, s3s *s3Store, httpBase, base, path string) (string, error) {
-	switch root.Kind {
-	case "file":
+	if httpBase != "" {
 		return httpBase + "/" + path, nil
-	case "s3":
-		return s3s.importURL(ctx, base+"/"+path)
-	default:
-		return "", fmt.Errorf("cannot IMPORT from %s", root.Kind)
 	}
+	if root.Kind == "s3" {
+		return s3s.importURL(ctx, base+"/"+path)
+	}
+	return "", fmt.Errorf("cannot IMPORT from %s", root.Kind)
 }
 
-func importCSVStatement(table TableEntry, uris []string, compression string) string {
+func importDataStatement(table TableEntry, uris []string, compression string) string {
 	quoted := make([]string, len(uris))
 	for i, u := range uris {
 		quoted[i] = quoteLiteral(u)
@@ -533,7 +553,7 @@ func importCSVStatement(table TableEntry, uris []string, compression string) str
 	if compression == "gzip" {
 		with = "decompress = 'gzip', nullif = '\\N'"
 	}
-	return fmt.Sprintf("IMPORT INTO %s (%s) CSV DATA (%s) WITH %s",
+	return fmt.Sprintf("IMPORT INTO %s (%s) PGCOPY DATA (%s) WITH %s",
 		qualified(table.Database, table.Schema, table.Name),
 		strings.Join(cols, ", "),
 		strings.Join(quoted, ", "),
@@ -550,7 +570,7 @@ func loadCopy(ctx context.Context, db *database, store Store, base string, manif
 		for i, c := range table.Columns {
 			cols[i] = quoteIdent(c)
 		}
-		copySQL := fmt.Sprintf("COPY %s (%s) FROM STDIN WITH CSV NULL E'\\\\N'",
+		copySQL := fmt.Sprintf("COPY %s (%s) FROM STDIN",
 			qualified(table.Database, table.Schema, table.Name),
 			strings.Join(cols, ", "),
 		)
@@ -669,29 +689,33 @@ func openBackup(ctx context.Context, root Location, timestamp string) (Store, st
 	return store, timestamp, nil
 }
 
-func readBackup(ctx context.Context, store Store, base string) (Manifest, ObjectsFile, error) {
+func readManifest(ctx context.Context, store Store, base string) (Manifest, error) {
 	var manifest Manifest
-	var objects ObjectsFile
 	rc, err := store.Open(ctx, base+"/manifest.json")
 	if err != nil {
-		return manifest, objects, err
+		return manifest, err
 	}
 	err = json.NewDecoder(rc).Decode(&manifest)
 	rc.Close()
 	if err != nil {
-		return manifest, objects, fmt.Errorf("manifest.json: %w", err)
+		return manifest, fmt.Errorf("manifest.json: %w", err)
 	}
 	if manifest.FormatVersion != formatVersion {
-		return manifest, objects, fmt.Errorf("backup format version %d is not supported (this tool reads version %d)", manifest.FormatVersion, formatVersion)
+		return manifest, fmt.Errorf("backup format version %d is not supported (this tool reads version %d)", manifest.FormatVersion, formatVersion)
 	}
+	return manifest, nil
+}
+
+func readObjects(ctx context.Context, store Store, base string, manifest Manifest) (ObjectsFile, error) {
+	var objects ObjectsFile
 	body, err := store.Open(ctx, base+"/"+manifest.ObjectsFile.Path)
 	if err != nil {
-		return manifest, objects, err
+		return objects, err
 	}
 	err = json.NewDecoder(body).Decode(&objects)
 	body.Close()
 	if err != nil {
-		return manifest, objects, fmt.Errorf("objects.json: %w", err)
+		return objects, fmt.Errorf("objects.json: %w", err)
 	}
-	return manifest, objects, nil
+	return objects, nil
 }

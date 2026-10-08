@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/johannesboyne/gofakes3"
@@ -60,4 +61,74 @@ func TestS3Multipart(t *testing.T) {
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("read %d bytes, wrote %d", len(got), len(payload))
 	}
+}
+
+func TestS3AbortDeletesPartial(t *testing.T) {
+	store := fakeS3(t)
+	ctx := context.Background()
+	wc, err := store.Create(ctx, "name/20060102T150405Z/data/partial.pgcopy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wc.Write([]byte("partial row")); err != nil {
+		t.Fatal(err)
+	}
+	if err := wc.(interface{ Abort() error }).Abort(); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := store.Exists(ctx, "name/20060102T150405Z/data/partial.pgcopy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("aborted object is still visible")
+	}
+}
+
+func TestS3PartLimit(t *testing.T) {
+	store := fakeS3(t)
+	s3s := store.(*s3Store)
+	s3s.partSize = minPartSize
+	s3s.maxParts = 2
+	ctx := context.Background()
+	wc, err := store.Create(ctx, "name/20060102T150405Z/data/big.pgcopy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = wc.Write(bytes.Repeat([]byte("a"), minPartSize*2+1))
+	if err == nil {
+		err = wc.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "stops at") {
+		t.Fatalf("expected a multipart limit error, got %v", err)
+	}
+	ok, existsErr := store.Exists(ctx, "name/20060102T150405Z/data/big.pgcopy")
+	if existsErr != nil {
+		t.Fatal(existsErr)
+	}
+	if ok {
+		t.Fatal("object that hit the part limit was published")
+	}
+}
+
+func fakeS3(t *testing.T) Store {
+	t.Helper()
+	backend := s3mem.New()
+	if err := backend.CreateBucket("lab"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(gofakes3.New(backend).Server())
+	t.Cleanup(srv.Close)
+	t.Setenv("AWS_ACCESS_KEY_ID", "testkey")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "testsecret")
+	t.Setenv("AWS_REGION", "us-east-1")
+	loc, err := parseLocation("s3://lab/fgdb", "us-east-1", srv.URL, "", "", "specified")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openStore(context.Background(), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

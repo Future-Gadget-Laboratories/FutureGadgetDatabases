@@ -153,14 +153,15 @@ func isGCError(err error) bool {
 }
 
 type columnInfo struct {
-	Name      string
-	Generated string // "", s, v
-	TypeName  string
+	Name       string
+	Generated  string // "", s, v
+	TypeName   string
+	FormatType string
 }
 
 func (d *database) columns(ctx context.Context, schema, table string) ([]columnInfo, error) {
 	rows, err := d.query(ctx, `
-SELECT a.attname, a.attgenerated::STRING, t.typname
+SELECT a.attname, a.attgenerated::STRING, t.typname, format_type(t.oid, NULL)
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -174,7 +175,7 @@ ORDER BY a.attnum`, schema, table)
 	var out []columnInfo
 	for rows.Next() {
 		var c columnInfo
-		if err := rows.Scan(&c.Name, &c.Generated, &c.TypeName); err != nil {
+		if err := rows.Scan(&c.Name, &c.Generated, &c.TypeName, &c.FormatType); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -215,7 +216,10 @@ ORDER BY array_position(i.indkey, a.attnum)`, schema, table)
 func dataColumns(cols []columnInfo) []columnInfo {
 	var out []columnInfo
 	for _, c := range cols {
-		if c.Generated == "v" {
+		// Virtual and stored computed columns are not loaded. The CREATE
+		// TABLE expression recomputes stored values. Identity columns are
+		// ordinary data columns except GENERATED ALWAYS, which backup rejects.
+		if c.Generated == "v" || c.Generated == "s" {
 			continue
 		}
 		out = append(out, c)
@@ -231,10 +235,71 @@ func columnNames(cols []columnInfo) []string {
 	return out
 }
 
-func selectList(cols []columnInfo) string {
+func selectList(cols []columnInfo) (string, error) {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
+		if strings.HasPrefix(c.TypeName, "_") {
+			cast, err := arrayCastSQL(c.TypeName, c.FormatType)
+			if err != nil {
+				return "", fmt.Errorf("column %s: %w", c.Name, err)
+			}
+			parts[i] = arrayLiteralExpr(quoteIdent(c.Name), cast)
+			continue
+		}
 		parts[i] = quoteIdent(c.Name)
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, ", "), nil
+}
+
+// arrayLiteralExpr turns an array into text that IMPORT PGCOPY can parse.
+// COPY TO writes {a,b}, and that text is not a SQL array literal, so the
+// importer rejects it. ARRAY['a','b']::type is.
+func arrayLiteralExpr(col, cast string) string {
+	return fmt.Sprintf(`CASE WHEN %[1]s IS NULL THEN NULL ELSE (SELECT 'ARRAY[' || IFNULL(string_agg(CASE WHEN x IS NULL THEN 'NULL' ELSE quote_literal(x::STRING) END, ',' ORDER BY ord), '') || ']::%[2]s' FROM unnest(%[1]s) WITH ORDINALITY AS u(x, ord)) END`, col, cast)
+}
+
+func arrayCastSQL(typname, formatted string) (string, error) {
+	switch typname {
+	case "_float8":
+		return "FLOAT8[]", nil
+	case "_bpchar":
+		return "CHAR[]", nil
+	case "_bytea":
+		return "BYTES[]", nil
+	case "_time":
+		return "TIME[]", nil
+	case "_timestamp":
+		return "TIMESTAMP[]", nil
+	case "_timestamptz":
+		return "TIMESTAMPTZ[]", nil
+	case "_timetz":
+		return "TIMETZ[]", nil
+	case "_varchar":
+		return "VARCHAR[]", nil
+	case "_varbit":
+		return "VARBIT[]", nil
+	case "_numeric":
+		return "DECIMAL[]", nil
+	}
+	if simpleArrayCast(formatted) {
+		return formatted, nil
+	}
+	return "", fmt.Errorf("cannot write array type %s in a form IMPORT PGCOPY accepts", formatted)
+}
+
+func simpleArrayCast(formatted string) bool {
+	body := strings.TrimSuffix(formatted, "[]")
+	if body == formatted || strings.ContainsAny(body, " \t\"'") {
+		return false
+	}
+	parts := strings.Split(body, ".")
+	if len(parts) > 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !isSimpleIdent(part) {
+			return false
+		}
+	}
+	return true
 }

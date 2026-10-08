@@ -70,9 +70,17 @@ if [[ -f "${src}/pkg/cmd/fgdb-backup/go.mod" ]]; then
     exit 1
   fi
   echo "package-oss-tarball: building fgdb-backup"
+  # The Cockroach go.mod line is "go 1.21". Releases are built with the
+  # toolchain in EXPECT_GO (go1.21.12). Fail if PATH has a different one.
+  want_go="${FGDB_EXPECT_GO:-go1.21.12}"
+  got_go=$(go env GOVERSION)
+  if [[ "$got_go" != "$want_go" ]]; then
+    echo "package-oss-tarball: fgdb-backup must be built with ${want_go}, found ${got_go}" >&2
+    exit 1
+  fi
   (
     cd "${src}/pkg/cmd/fgdb-backup"
-    CGO_ENABLED=0 GOWORK=off GOFLAGS="${GOFLAGS:--mod=readonly}" go build -trimpath -o "${stage}/${prefix}/fgdb-backup" .
+    CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local GOFLAGS="${GOFLAGS:--mod=readonly}" go build -trimpath -o "${stage}/${prefix}/fgdb-backup" .
   )
 fi
 install -m 0644 "${src}/lib/libgeos.so" "${stage}/${prefix}/lib/libgeos.so"

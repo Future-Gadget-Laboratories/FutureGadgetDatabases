@@ -84,7 +84,7 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	// gc.ttlseconds raise is not part of the artifact.
 	artifactZones := append([]zoneRow(nil), src.zones...)
 	var revertSQL []string
-	defer revertRaisedTTL(db, &revertSQL, &res, &err)
+	defer revertRaisedTTL(opt.URL, &revertSQL, &res, &err)
 
 	src.zones, err = raiseGCTTL(ctx, db, opt, src.dbs, src.zones, &revertSQL, &res)
 	if err != nil {
@@ -184,10 +184,20 @@ func readBackupSource(ctx context.Context, db *database, opt BackupOptions) (bac
 	return src, err
 }
 
-func revertRaisedTTL(db *database, revertSQL *[]string, res *BackupResult, err *error) {
+func revertRaisedTTL(url string, revertSQL *[]string, res *BackupResult, err *error) {
 	if len(*revertSQL) == 0 {
 		return
 	}
+	// The backup connection is often already closed: cancelling COPY on
+	// SIGINT/SIGTERM drops it. A new session still sees the raised zone
+	// config and can put the old value back.
+	ctx := context.Background()
+	db, e := connect(ctx, url)
+	if e != nil {
+		noteTTLRevertFailure(e, strings.Join(*revertSQL, "\n"), res, err)
+		return
+	}
+	defer db.Close(ctx)
 	logf("restoring gc.ttlseconds")
 	for _, sql := range *revertSQL {
 		revertOneTTL(db, sql, res, err)
@@ -202,10 +212,12 @@ func revertOneTTL(db *database, sql string, res *BackupResult, err *error) {
 }
 
 func noteTTLRevertFailure(e error, sql string, res *BackupResult, err *error) {
+	msg := fmt.Errorf("could not restore gc.ttlseconds: %w\nRun: %s", e, sql)
 	if *err != nil {
-		return
+		*err = fmt.Errorf("%w; %v", *err, msg)
+	} else {
+		*err = fmt.Errorf("backup files were written, but %w", msg)
 	}
-	*err = fmt.Errorf("backup files were written, but gc.ttlseconds could not be restored: %w\nRun: %s", e, sql)
 	res.OK = false
 	res.Error = (*err).Error()
 }
@@ -306,6 +318,14 @@ func backupOneDatabase(ctx context.Context, work *backupWork, database string) e
 	if err := appendDatabaseDDL(ctx, work.db, database, work.asOfText, work.budget, work.objects); err != nil {
 		return err
 	}
+	idents, err := readIdentity(ctx, work.db, database, work.asOfText)
+	if err != nil {
+		return err
+	}
+	if err := rejectAlwaysIdentity(idents); err != nil {
+		return err
+	}
+	omitOwnedSequences(work.objects, database, ownedSequences(idents))
 	rels, err := relationsAt(ctx, work.db, database, work.asOfText)
 	if err != nil {
 		return fmt.Errorf("list tables in %s: %w", database, err)
@@ -352,6 +372,7 @@ func schemaAt(ctx context.Context, db *database, database, asOfText string) ([]s
 
 func appendClassified(objects *ObjectsFile, database string, stmts []string) {
 	for _, sql := range stmts {
+		sql = stripMaterializedRowid(sql)
 		kind := classifyStatement(sql)
 		if kind == "comment" {
 			continue
@@ -437,9 +458,10 @@ func attachGrantsAndZones(ctx context.Context, db *database, dbs []string, artif
 			continue
 		}
 		objects.Zones = append(objects.Zones, ZoneStatement{
-			Object: z.Object,
-			Level:  z.Level,
-			SQL:    ensureSemicolon(z.RawSQL),
+			Object:   z.Object,
+			Database: z.Database,
+			Level:    z.Level,
+			SQL:      ensureSemicolon(z.RawSQL),
 		})
 	}
 }
@@ -483,13 +505,19 @@ func writeBackupFiles(ctx context.Context, art backupArtifact) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	parts := manifestParts{objects: objDig, schema: schemaDigests, users: usersDig, zones: zonesDig, peak: peakRSSBytes()}
 	manifest := newManifest(art, parts)
 	if _, err = writeJSONFile(ctx, art.src.store, art.base+"/manifest.json", manifest); err != nil {
 		return 0, err
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	pointer := LatestPointer{FormatVersion: formatVersion, Name: art.src.name, Timestamp: art.ts, Complete: true}
-	if _, err = writeJSONFile(ctx, art.src.store, art.src.name+"/latest.json", pointer); err != nil {
+	if err = publishLatest(ctx, art.src.store, art.src.name+"/latest.json", pointer); err != nil {
 		return 0, err
 	}
 	return parts.peak, nil
@@ -564,6 +592,7 @@ func newManifest(art backupArtifact, parts manifestParts) Manifest {
 		AsOf:          art.asOfText,
 		GCTTLSeconds:  art.minTTL,
 		Compression:   art.opt.Compression,
+		DataFormat:    dataFormatPGCopy,
 		Databases:     art.src.dbs,
 		ObjectsFile:   parts.objects,
 		SchemaFiles:   parts.schema,
@@ -654,9 +683,9 @@ func dumpTable(ctx context.Context, db *database, store Store, spec dumpSpec) (T
 		wheres = []string{""}
 	}
 
-	ext := ".csv"
+	ext := ".pgcopy"
 	if spec.compression == "gzip" {
-		ext = ".csv.gz"
+		ext = ".pgcopy.gz"
 	}
 	order := ""
 	if len(pk) == 1 {
@@ -667,8 +696,12 @@ func dumpTable(ctx context.Context, db *database, store Store, spec dumpSpec) (T
 		if len(wheres) > 1 {
 			rel = fmt.Sprintf("%s/data/%s/%s/%s.part%04d%s", spec.base, spec.database, spec.schema, spec.table, i+1, ext)
 		}
+		list, err := selectList(cols)
+		if err != nil {
+			return entry, fmt.Errorf("copy %s.%s.%s: %w", spec.database, spec.schema, spec.table, err)
+		}
 		dig, rows, err := copyRelation(ctx, relationCopy{
-			db: db, store: store, spec: spec, rel: rel, cols: selectList(cols), where: where, order: order,
+			db: db, store: store, spec: spec, rel: rel, cols: list, where: where, order: order,
 		})
 		if err != nil {
 			return entry, fmt.Errorf("copy %s.%s.%s: %w", spec.database, spec.schema, spec.table, err)
@@ -691,14 +724,12 @@ func isIntType(typ string) bool {
 
 func splitBounds(ctx context.Context, db *database, spec dumpSpec, pk string) ([]string, error) {
 	var bounds []string
-	for off := spec.splitRows; ; off += spec.splitRows {
+	prev := ""
+	table := qualified(spec.database, spec.schema, spec.table)
+	for {
 		var value *string
 		err := db.withSnapshot(ctx, spec.asOf, func(ctx context.Context) error {
-			q := fmt.Sprintf(
-				"SELECT %s::STRING FROM %s ORDER BY %s OFFSET %d LIMIT 1",
-				quoteIdent(pk), qualified(spec.database, spec.schema, spec.table), quoteIdent(pk), off,
-			)
-			return db.queryRow(ctx, q).Scan(&value)
+			return db.queryRow(ctx, splitBoundQuery(table, pk, prev, spec.splitRows)).Scan(&value)
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -710,6 +741,7 @@ func splitBounds(ctx context.Context, db *database, spec dumpSpec, pk string) ([
 			break
 		}
 		bounds = append(bounds, *value)
+		prev = *value
 		if len(bounds) > 100000 {
 			return nil, fmt.Errorf("too many split points for %s", spec.table)
 		}
@@ -767,13 +799,13 @@ func streamRelation(ctx context.Context, job relationCopy) (FileDigest, int64, e
 	}
 	hw := newHashWriteCloser(wc)
 	sink, gz := maybeGzip(hw, job.spec.compression)
-	counter := newCSVCounter(deadlineWriter{w: sink, exceeded: job.spec.exceeded})
+	counter := newLineCounter(deadlineWriter{w: sink, exceeded: job.spec.exceeded})
 	cerr := job.db.copyTo(ctx, counter, copyOutSQL(job))
 	rows := counter.Rows()
-	if err := closeCopyWriters(gz, hw, cerr); err != nil {
+	dig, err := finishCopy(gz, hw, cerr)
+	if err != nil {
 		return FileDigest{}, rows, err
 	}
-	dig := hw.digest()
 	dig.Path = dataFilePath(job.rel)
 	return dig, rows, nil
 }
@@ -792,22 +824,28 @@ func copyOutSQL(job relationCopy) string {
 		q += " WHERE " + job.where
 	}
 	q += job.order
-	return "COPY (" + q + ") TO STDOUT WITH CSV NULL E'\\\\N'"
+	return "COPY (" + q + ") TO STDOUT"
 }
 
-func closeCopyWriters(gz *gzip.Writer, hw io.Closer, copyErr error) error {
-	var gzErr error
-	if gz != nil {
-		gzErr = gz.Close()
-	}
-	hwErr := hw.Close()
+// finishCopy publishes the file only after COPY succeeds and the checksum
+// covers the bytes, including the gzip trailer. A failed COPY aborts the
+// temporary object instead of leaving it under the final name.
+func finishCopy(gz *gzip.Writer, hw *hashWriteCloser, copyErr error) (FileDigest, error) {
 	if copyErr != nil {
-		return copyErr
+		_ = hw.Abort()
+		return FileDigest{}, copyErr
 	}
-	if gzErr != nil {
-		return gzErr
+	if gz != nil {
+		if err := gz.Close(); err != nil {
+			_ = hw.Abort()
+			return FileDigest{}, err
+		}
 	}
-	return hwErr
+	dig := hw.digest()
+	if err := hw.Close(); err != nil {
+		return FileDigest{}, err
+	}
+	return dig, nil
 }
 
 func dataFilePath(rel string) string {
@@ -826,7 +864,7 @@ func writeBytes(ctx context.Context, store Store, rel string, body []byte) (File
 	}
 	hw := newHashWriteCloser(wc)
 	if _, err := hw.Write(body); err != nil {
-		_ = hw.Close()
+		_ = hw.Abort()
 		return FileDigest{}, err
 	}
 	if err := hw.Close(); err != nil {
@@ -896,12 +934,19 @@ func showCreateDatabase(ctx context.Context, db *database, name string) (string,
 }
 
 func showCreateBundle(ctx context.Context, db *database, name string) ([]string, error) {
+	// create_function_statements and create_procedure_statements only list the
+	// current database. show_create_all_* take the name, but routines do not.
+	if err := db.use(ctx, name); err != nil {
+		return nil, err
+	}
 	lit := quoteLiteral(name)
 	var out []string
 	for _, q := range []string{
 		"SELECT crdb_internal.show_create_all_schemas(" + lit + ")",
 		"SELECT crdb_internal.show_create_all_types(" + lit + ")",
 		"SELECT crdb_internal.show_create_all_tables(" + lit + ")",
+		"SELECT create_statement FROM crdb_internal.create_function_statements WHERE database_name = " + lit + " AND schema_name NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')",
+		"SELECT create_statement FROM crdb_internal.create_procedure_statements WHERE database_name = " + lit + " AND schema_name NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')",
 	} {
 		rows, err := db.query(ctx, q)
 		if err != nil {
@@ -945,35 +990,64 @@ func listRelations(ctx context.Context, db *database) ([]tableRef, error) {
 }
 
 func readSequenceValues(ctx context.Context, db *database, asOf, database string, rels []tableRef) ([]SequenceValue, []string, error) {
-	var out []SequenceValue
-	var warnings []string
+	want := map[string]tableRef{}
 	for _, rel := range rels {
-		if rel.Type != "sequence" {
-			continue
+		if rel.Type == "sequence" {
+			want[rel.Schema+"."+rel.Name] = rel
 		}
-		var last *int64
-		err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
-			q := "SELECT last_value FROM " + qualified(database, rel.Schema, rel.Name)
-			return db.queryRow(ctx, q).Scan(&last)
-		})
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("sequence %s.%s.%s: could not read last_value: %s", database, rel.Schema, rel.Name, err.Error()))
-			continue
-		}
-		if last == nil {
-			continue
-		}
-		obj := qualified(database, rel.Schema, rel.Name)
-		sql := fmt.Sprintf("SELECT setval(%s::REGCLASS, %d, true);", quoteLiteral(qualified(rel.Schema, rel.Name)), *last)
-		out = append(out, SequenceValue{
-			Database:  database,
-			Object:    obj,
-			LastValue: *last,
-			IsCalled:  true,
-			SQL:       sql,
-		})
 	}
-	return out, warnings, nil
+	if len(want) == 0 {
+		return nil, nil, nil
+	}
+	var out []SequenceValue
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		if err := db.use(ctx, database); err != nil {
+			return err
+		}
+		rows, err := db.query(ctx, `SELECT schemaname, sequencename, start_value, last_value FROM pg_catalog.pg_sequences`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			seq, ok, err := scanSequenceValue(rows, database, want)
+			if err != nil {
+				return err
+			}
+			if ok {
+				out = append(out, seq)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("read sequences in %s: %w", database, err)
+	}
+	return out, nil, nil
+}
+
+func scanSequenceValue(rows pgx.Rows, database string, want map[string]tableRef) (SequenceValue, bool, error) {
+	var schema, name string
+	var start int64
+	var last *int64
+	if err := rows.Scan(&schema, &name, &start, &last); err != nil {
+		return SequenceValue{}, false, err
+	}
+	if _, ok := want[schema+"."+name]; !ok {
+		return SequenceValue{}, false, nil
+	}
+	sql, called := sequenceRestoreSQL(schema, name, start, last)
+	value := start
+	if last != nil {
+		value = *last
+	}
+	return SequenceValue{
+		Database:  database,
+		Object:    qualified(database, schema, name),
+		LastValue: value,
+		IsCalled:  called,
+		SQL:       sql,
+	}, true, nil
 }
 
 func readGrants(ctx context.Context, db *database, dbs []string) ([]string, []string) {

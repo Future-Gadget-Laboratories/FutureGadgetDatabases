@@ -112,14 +112,14 @@ func (l Location) join(rel string) string {
 	return filepath.Join(l.Root, filepath.FromSlash(rel))
 }
 
-// Store reads and writes a backup directory. Writes land under a temporary
-// name until Close, so a crash does not leave a file that looks complete.
+// Store reads and writes a backup directory. Create writes under a temporary
+// name. Close publishes that name. Abort deletes it.
 type Store interface {
 	Create(ctx context.Context, rel string) (io.WriteCloser, error)
 	Open(ctx context.Context, rel string) (io.ReadCloser, error)
 	Exists(ctx context.Context, rel string) (bool, error)
-	// ListDirs returns child directory names of rel that contain manifest.json
-	// when rel is a name prefix, or the names of timestamp directories.
+	Size(ctx context.Context, rel string) (int64, error)
+	// ListManifests returns child directory names that contain manifest.json.
 	ListManifests(ctx context.Context, rel string) ([]string, error)
 }
 
@@ -161,6 +161,14 @@ func (s *localStore) Create(_ context.Context, rel string) (io.WriteCloser, erro
 
 func (s *localStore) Open(_ context.Context, rel string) (io.ReadCloser, error) {
 	return os.Open(s.path(rel))
+}
+
+func (s *localStore) Size(_ context.Context, rel string) (int64, error) {
+	fi, err := os.Stat(s.path(rel))
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
 }
 
 func (s *localStore) Exists(_ context.Context, rel string) (bool, error) {
@@ -227,6 +235,19 @@ func (r *renameFile) Close() error {
 		return err
 	}
 	return nil
+}
+
+// Abort deletes the temporary file. The final name is not created.
+func (r *renameFile) Abort() error {
+	if r.done {
+		return nil
+	}
+	r.done = true
+	err := r.f.Close()
+	if rmErr := os.Remove(r.tmp); err == nil {
+		err = rmErr
+	}
+	return err
 }
 
 // partWriter keeps at most partSize bytes buffered and flushes full parts
@@ -306,6 +327,13 @@ func (h *hashWriteCloser) Write(p []byte) (int, error) {
 }
 
 func (h *hashWriteCloser) Close() error { return h.w.Close() }
+
+func (h *hashWriteCloser) Abort() error {
+	if a, ok := h.w.(interface{ Abort() error }); ok {
+		return a.Abort()
+	}
+	return h.w.Close()
+}
 
 func (h *hashWriteCloser) digest() FileDigest {
 	return FileDigest{

@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,12 +15,17 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	smithymiddleware "github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-const minPartSize = 5 << 20
+const (
+	minPartSize = 5 << 20
+	maxS3Parts  = 10000
+)
 
 type s3Store struct {
 	client     *s3.Client
@@ -31,6 +37,7 @@ type s3Store struct {
 	sse        types.ServerSideEncryption
 	kmsKeyID   string
 	partSize   int
+	maxParts   int
 	importAuth string
 }
 
@@ -53,6 +60,7 @@ func newS3Store(ctx context.Context, loc Location) (*s3Store, error) {
 		region:     loc.Region,
 		endpoint:   loc.Endpoint,
 		partSize:   8 << 20,
+		maxParts:   maxS3Parts,
 		importAuth: loc.ImportAuth,
 	}
 	switch loc.SSE {
@@ -113,6 +121,13 @@ func (w *s3Writer) Write(p []byte) (int, error) {
 	return w.parts.Write(p)
 }
 
+func (s *s3Store) partLimit() int {
+	if s.maxParts > 0 {
+		return s.maxParts
+	}
+	return maxS3Parts
+}
+
 func (w *s3Writer) flush(part []byte) error {
 	// A short buffer is the whole object when multipart has not started.
 	// A short buffer after that is the last part of a multipart upload.
@@ -123,6 +138,12 @@ func (w *s3Writer) flush(part []byte) error {
 		if err := w.start(); err != nil {
 			return err
 		}
+	}
+	if len(w.done) >= w.store.partLimit() {
+		_ = w.abort()
+		w.uploadID = ""
+		limit := w.store.partLimit()
+		return fmt.Errorf("S3 multipart upload stops at %d parts of %d bytes (about %d bytes). This object would exceed that limit. Raise --part-size or pass --split-rows so each file stays under the limit", limit, w.store.partSize, int64(limit)*int64(w.store.partSize))
 	}
 	num := int32(len(w.done) + 1)
 	in := &s3.UploadPartInput{
@@ -185,6 +206,31 @@ func (w *s3Writer) abort() error {
 	return err
 }
 
+// Abort drops an unfinished upload and deletes a short object that was
+// already put. The final key is not left behind as a finished file.
+func (w *s3Writer) Abort() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	var err error
+	if w.uploadID != "" {
+		err = w.abort()
+		w.uploadID = ""
+	}
+	if w.putDone {
+		_, delErr := w.store.client.DeleteObject(w.ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(w.store.bucket),
+			Key:    aws.String(w.key),
+		})
+		w.putDone = false
+		if err == nil {
+			err = delErr
+		}
+	}
+	return err
+}
+
 func (w *s3Writer) Close() error {
 	if w.closed {
 		return nil
@@ -197,6 +243,17 @@ func (w *s3Writer) Close() error {
 	// partWriter.Close emits whatever is left. If multipart has not started
 	// and the buffer is shorter than partSize, flush() puts the object.
 	if err := w.parts.Close(); err != nil {
+		if w.uploadID != "" {
+			_ = w.abort()
+			w.uploadID = ""
+		}
+		if w.putDone {
+			_, _ = w.store.client.DeleteObject(w.ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(w.store.bucket),
+				Key:    aws.String(w.key),
+			})
+			w.putDone = false
+		}
 		return err
 	}
 	if w.uploadID == "" {
@@ -229,6 +286,17 @@ func (s *s3Store) Open(ctx context.Context, rel string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	return out.Body, nil
+}
+
+func (s *s3Store) Size(ctx context.Context, rel string) (int64, error) {
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(rel)),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return aws.ToInt64(out.ContentLength), nil
 }
 
 func (s *s3Store) Exists(ctx context.Context, rel string) (bool, error) {
@@ -311,9 +379,23 @@ func isNotFound(err error) bool {
 	return strings.Contains(msg, "NotFound") || strings.Contains(msg, "status code: 404") || strings.Contains(msg, "NoSuchKey")
 }
 
-// importURL is the s3 URL the database itself reads during IMPORT.
-// Credentials are added only for AUTH=specified. They are not written to the manifest.
-func (s *s3Store) importURL(ctx context.Context, rel string) (string, error) {
+// implicitImport is true when the database node can read S3 without this
+// process putting credentials in the IMPORT statement.
+func (s *s3Store) implicitImport() bool {
+	auth := s.importAuth
+	if auth == "" || auth == "auto" {
+		return os.Getenv("AWS_ACCESS_KEY_ID") == ""
+	}
+	return auth == "implicit"
+}
+
+// importURL is the s3 URL the database itself reads. It never contains
+// access keys. Explicit credentials are served over HTTP by the tool instead,
+// so job records and logs cannot see them.
+func (s *s3Store) importURL(_ context.Context, rel string) (string, error) {
+	if !s.implicitImport() {
+		return "", fmt.Errorf("refusing to put AWS credentials in an IMPORT statement")
+	}
 	u := url.URL{
 		Scheme: "s3",
 		Host:   s.bucket,
@@ -321,37 +403,86 @@ func (s *s3Store) importURL(ctx context.Context, rel string) (string, error) {
 	}
 	q := url.Values{}
 	q.Set("AWS_REGION", s.region)
+	q.Set("AUTH", "implicit")
 	if s.endpoint != "" {
 		q.Set("AWS_ENDPOINT", s.endpoint)
 	}
-	auth := s.importAuth
-	if auth == "" || auth == "auto" {
-		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			auth = "specified"
-		} else {
-			auth = "implicit"
-		}
-	}
-	switch auth {
-	case "implicit":
-		q.Set("AUTH", "implicit")
-	case "specified":
-		creds, err := s.cfg.Credentials.Retrieve(ctx)
-		if err != nil {
-			return "", fmt.Errorf("read AWS credentials for IMPORT: %w", err)
-		}
-		if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
-			return "", fmt.Errorf("AUTH=specified needs AWS access key credentials; the default chain did not provide them")
-		}
-		q.Set("AUTH", "specified")
-		q.Set("AWS_ACCESS_KEY_ID", creds.AccessKeyID)
-		q.Set("AWS_SECRET_ACCESS_KEY", creds.SecretAccessKey)
-		if creds.SessionToken != "" {
-			q.Set("AWS_SESSION_TOKEN", creds.SessionToken)
-		}
-	default:
-		return "", fmt.Errorf("unknown s3 import auth %q", auth)
-	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// putLatest writes latest.json only when candidate is newer than the object
+// already there. If-Match / If-None-Match stop an older backup from winning
+// a race against a newer one.
+func (s *s3Store) putLatest(ctx context.Context, rel string, ptr LatestPointer) error {
+	body, err := json.MarshalIndent(ptr, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	key := s.key(rel)
+	var last error
+	for attempt := 0; attempt < 5; attempt++ {
+		etag, existing, found, err := s.readLatest(ctx, rel)
+		if err != nil {
+			return err
+		}
+		if found && !newerBackup(ptr.Timestamp, existing) {
+			logf("leaving latest at %s; %s is not newer", existing, ptr.Timestamp)
+			return nil
+		}
+		header, value := "If-None-Match", "*"
+		if found {
+			header, value = "If-Match", etag
+		}
+		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(body),
+		}, putHeader(header, value))
+		if err == nil {
+			return nil
+		}
+		last = err
+	}
+	return fmt.Errorf("update latest pointer: %w", last)
+}
+
+func (s *s3Store) readLatest(ctx context.Context, rel string) (etag, timestamp string, found bool, err error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(rel)),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return "", "", false, nil
+		}
+		return "", "", false, err
+	}
+	defer out.Body.Close()
+	var ptr LatestPointer
+	if decErr := json.NewDecoder(out.Body).Decode(&ptr); decErr != nil {
+		return "", "", false, decErr
+	}
+	return aws.ToString(out.ETag), ptr.Timestamp, true, nil
+}
+
+func putHeader(key, value string) func(*s3.Options) {
+	return func(o *s3.Options) {
+		o.APIOptions = append(o.APIOptions, func(stack *smithymiddleware.Stack) error {
+			return stack.Finalize.Add(
+				smithymiddleware.FinalizeMiddlewareFunc("fgdbBackupHeader", func(
+					ctx context.Context,
+					in smithymiddleware.FinalizeInput,
+					next smithymiddleware.FinalizeHandler,
+				) (smithymiddleware.FinalizeOutput, smithymiddleware.Metadata, error) {
+					if req, ok := in.Request.(*smithyhttp.Request); ok {
+						req.Header.Set(key, value)
+					}
+					return next.HandleFinalize(ctx, in)
+				}),
+				smithymiddleware.Before,
+			)
+		})
+	}
 }

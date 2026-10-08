@@ -73,7 +73,13 @@ func classifyStatement(sql string) string {
 		return "sequence"
 	case strings.HasPrefix(head, "CREATE TABLE"):
 		return "table"
-	case strings.HasPrefix(head, "CREATE MATERIALIZED VIEW"), strings.HasPrefix(head, "CREATE VIEW"):
+	case strings.HasPrefix(head, "CREATE FUNCTION"), strings.HasPrefix(head, "CREATE OR REPLACE FUNCTION"):
+		return "function"
+	case strings.HasPrefix(head, "CREATE PROCEDURE"), strings.HasPrefix(head, "CREATE OR REPLACE PROCEDURE"):
+		return "procedure"
+	case strings.HasPrefix(head, "CREATE MATERIALIZED VIEW"):
+		return "materialized_view"
+	case strings.HasPrefix(head, "CREATE VIEW"):
 		return "view"
 	case strings.HasPrefix(head, "CREATE UNIQUE INDEX"), strings.HasPrefix(head, "CREATE INDEX"):
 		return "index"
@@ -92,7 +98,7 @@ func objectName(kind, sql string) string {
 	fields := strings.Fields(stripLeadingComments(sql))
 	upper := upperFields(fields)
 	switch kind {
-	case "schema", "type", "sequence", "table", "view", "index":
+	case "schema", "type", "sequence", "table", "view", "materialized_view", "index", "function", "procedure":
 		// CREATE [UNIQUE] [MATERIALIZED] INDEX|TABLE|... [IF NOT EXISTS] name
 		if name := tokenAfter(upper, fields, "EXISTS"); name != "" {
 			return name
@@ -133,7 +139,7 @@ func tokenAfterKeyword(upper, fields []string, keyword func(string) bool) string
 
 func createObjectKeyword(word string) bool {
 	switch word {
-	case "SCHEMA", "TYPE", "SEQUENCE", "TABLE", "VIEW", "INDEX":
+	case "SCHEMA", "TYPE", "SEQUENCE", "TABLE", "VIEW", "INDEX", "FUNCTION", "PROCEDURE":
 		return true
 	default:
 		return false
@@ -142,8 +148,10 @@ func createObjectKeyword(word string) bool {
 
 func trimObjectToken(tok string) string {
 	tok = strings.TrimSpace(tok)
-	tok = strings.TrimRight(tok, ",(")
-	return tok
+	if i := strings.IndexAny(tok, ",("); i >= 0 {
+		tok = tok[:i]
+	}
+	return strings.TrimRight(tok, ",")
 }
 
 func safeSegment(name string) error {

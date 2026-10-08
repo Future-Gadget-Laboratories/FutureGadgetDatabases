@@ -42,7 +42,7 @@ func runVerify(ctx context.Context, loc Location, src string) (VerifyResult, err
 	if err != nil {
 		return res, err
 	}
-	manifest, _, err := readBackup(ctx, store, base)
+	manifest, err := readManifest(ctx, store, base)
 	if err != nil {
 		return res, err
 	}
@@ -60,7 +60,9 @@ func runVerify(ctx context.Context, loc Location, src string) (VerifyResult, err
 }
 
 func verifyBackup(ctx context.Context, store Store, base string, manifest Manifest) (int, int64, error) {
-	files := []FileDigest{manifest.ObjectsFile}
+	// Same order the backup writes metadata, then table files in the order
+	// IMPORT reads them. objects.json is checked here before restore decodes it.
+	var files []FileDigest
 	files = append(files, manifest.SchemaFiles...)
 	if manifest.UsersFile != nil {
 		files = append(files, *manifest.UsersFile)
@@ -68,6 +70,7 @@ func verifyBackup(ctx context.Context, store Store, base string, manifest Manife
 	if manifest.ZonesFile != nil {
 		files = append(files, *manifest.ZonesFile)
 	}
+	files = append(files, manifest.ObjectsFile)
 	var rows int64
 	for _, table := range manifest.Tables {
 		var sum int64
@@ -81,7 +84,7 @@ func verifyBackup(ctx context.Context, store Store, base string, manifest Manife
 		rows += table.RowCount
 	}
 	for _, f := range files {
-		if err := verifyFile(ctx, store, base, manifest.Compression, f); err != nil {
+		if err := verifyFile(ctx, store, base, manifest, f); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -99,7 +102,7 @@ func (b *byteCounter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func verifyFile(ctx context.Context, store Store, base, compression string, f FileDigest) error {
+func verifyFile(ctx context.Context, store Store, base string, manifest Manifest, f FileDigest) error {
 	rc, err := store.Open(ctx, base+"/"+f.Path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", f.Path, err)
@@ -110,7 +113,7 @@ func verifyFile(ctx context.Context, store Store, base, compression string, f Fi
 	src := io.TeeReader(rc, counted)
 	if isDataFile(f.Path) {
 		var payload io.Reader = src
-		if compression == "gzip" || hasGzipSuffix(f.Path) {
+		if manifest.Compression == "gzip" || hasGzipSuffix(f.Path) {
 			zr, zerr := gzip.NewReader(src)
 			if zerr != nil {
 				return fmt.Errorf("%s: gzip: %w", f.Path, zerr)
@@ -118,7 +121,7 @@ func verifyFile(ctx context.Context, store Store, base, compression string, f Fi
 			defer zr.Close()
 			payload = zr
 		}
-		n, cerr := countCSVRecords(payload)
+		n, cerr := countDataRows(payload, manifest.DataFormat)
 		if cerr != nil {
 			return fmt.Errorf("%s: %w", f.Path, cerr)
 		}

@@ -9,10 +9,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -121,7 +124,8 @@ func cmdBackup(args []string) int {
 	if err != nil {
 		return fail(*asJSON, err)
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	res, err := runBackup(ctx, BackupOptions{
 		URL:          *urlStr,
 		Dest:         loc,
@@ -136,6 +140,9 @@ func cmdBackup(args []string) int {
 	})
 	if err != nil {
 		res.OK = false
+		if errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "could not restore gc.ttlseconds") {
+			err = fmt.Errorf("backup interrupted by signal; gc.ttlseconds was restored when this run had raised it")
+		}
 		if res.Error == "" {
 			res.Error = err.Error()
 		}
@@ -154,7 +161,7 @@ func cmdRestore(args []string) int {
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
 	var dbs stringList
 	fs.Var(&dbs, "database", "database to restore; repeat the flag or use commas. Default: every database in the backup")
-	force := fs.Bool("force", false, "truncate non-empty target tables before loading")
+	force := fs.Bool("force", false, "drop and recreate only the objects in the backup when the target database is not empty")
 	load := fs.String("load", "import", "import (IMPORT INTO) or copy (COPY FROM STDIN)")
 	listen := fs.String("import-listen", "127.0.0.1:0", "address the database dials when importing a local backup")
 	region := fs.String(flagS3Region, "", helpS3Region)
@@ -172,7 +179,9 @@ func cmdRestore(args []string) int {
 	if err != nil {
 		return fail(*asJSON, err)
 	}
-	res, err := runRestore(context.Background(), RestoreOptions{
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	res, err := runRestore(ctx, RestoreOptions{
 		URL:          *urlStr,
 		Src:          loc.String(),
 		Location:     loc,

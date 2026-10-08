@@ -6,6 +6,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,13 +20,16 @@ func TestClassifyAndOrder(t *testing.T) {
 		"CREATE TYPE public.mood AS ENUM ('ok', 'bad');",
 		"CREATE SEQUENCE public.orders_seq MINVALUE 1 MAXVALUE 9223372036854775807 INCREMENT 1 START 1;",
 		"CREATE TABLE public.customers (\n\tid INT8 NOT NULL,\n\tCONSTRAINT customers_pkey PRIMARY KEY (id ASC)\n);",
+		"CREATE FUNCTION public.add(IN a INT8, IN b INT8) RETURNS INT8 LANGUAGE SQL AS $$ SELECT a + b; $$;",
+		"CREATE PROCEDURE public.echo(IN a INT8) LANGUAGE SQL AS $$ SELECT a; $$;",
+		"CREATE MATERIALIZED VIEW public.mv (id, rowid) AS SELECT id FROM public.t;",
 		"CREATE VIEW public.order_names (id, name) AS SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id;",
 		"ALTER TABLE public.orders ADD CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers(id);",
 		"-- Validate foreign key constraints. These can fail if there was unvalidated data during the SHOW CREATE ALL TABLES",
 		"ALTER TABLE public.orders VALIDATE CONSTRAINT orders_customer_id_fkey;",
 		"CREATE TABLE public.vectors (id INT PRIMARY KEY, v VECTOR(3));",
 	}
-	want := []string{"schema", "type", "sequence", "table", "view", "foreign_key", "comment", "foreign_key", "table"}
+	want := []string{"schema", "type", "sequence", "table", "function", "procedure", "materialized_view", "view", "foreign_key", "comment", "foreign_key", "table"}
 	for i, sql := range stmts {
 		got := classifyStatement(sql)
 		if got != want[i] {
@@ -131,6 +137,144 @@ func TestWhereRanges(t *testing.T) {
 	}
 	if got[0] != `"id" < 10` || got[2] != `"id" >= 20` {
 		t.Fatal(got)
+	}
+}
+
+func TestNullAndSequenceHelpers(t *testing.T) {
+	unused, called := sequenceRestoreSQL("public", "unused_seq", 1, nil)
+	if called || !strings.Contains(unused, ", 1, false)") {
+		t.Fatalf("unused sequence: %s called=%v", unused, called)
+	}
+	last := int64(4)
+	used, called := sequenceRestoreSQL("public", "used", 1, &last)
+	if !called || !strings.Contains(used, ", 4, true)") {
+		t.Fatalf("used sequence: %s", used)
+	}
+	mv := "CREATE MATERIALIZED VIEW public.mv (\n\tid,\n\tnote,\n\trowid\n) AS SELECT id, note FROM public.t WHERE id > 0;"
+	stripped := stripMaterializedRowid(mv)
+	if strings.Contains(strings.ToLower(stripped), "rowid") {
+		t.Fatalf("rowid remains: %s", stripped)
+	}
+	if classifyStatement(stripped) != "materialized_view" {
+		t.Fatalf("kind %s", classifyStatement(stripped))
+	}
+	drop, err := dropRoutineStatement("function", "CREATE FUNCTION public.add(IN a INT8, IN b INT8) RETURNS INT8 LANGUAGE SQL AS $$ SELECT a + b; $$")
+	if err != nil || drop != "DROP FUNCTION IF EXISTS public.add(INT8, INT8);" {
+		t.Fatalf("drop function: %s %v", drop, err)
+	}
+}
+
+func TestZoneMatchIsExact(t *testing.T) {
+	selected := map[string]bool{"shop": true}
+	manifest := Manifest{Databases: []string{"shop"}}
+	if zoneInScope(ZoneStatement{Object: "shopping.public.t"}, selected, manifest) {
+		t.Fatal("shop matched shopping")
+	}
+	if zoneInScope(ZoneStatement{Object: "DATABASE shopping"}, selected, manifest) {
+		t.Fatal("shop matched DATABASE shopping")
+	}
+	if !zoneInScope(ZoneStatement{Database: "shop", Object: "TABLE shop.public.users"}, selected, manifest) {
+		t.Fatal("database field did not match shop")
+	}
+	if zoneInScope(ZoneStatement{Database: "shopping", Object: "TABLE shopping.public.t"}, selected, manifest) {
+		t.Fatal("database field matched the wrong database")
+	}
+	if !zoneInScope(ZoneStatement{Object: "shop.public.users"}, selected, manifest) {
+		t.Fatal("qualified shop object was skipped")
+	}
+}
+
+func TestLatestPointerDoesNotMoveBackward(t *testing.T) {
+	if !newerBackup("20261008T120000Z", "") {
+		t.Fatal("first pointer should publish")
+	}
+	if newerBackup("20261008T110000Z", "20261008T120000Z") {
+		t.Fatal("older timestamp replaced a newer one")
+	}
+	if newerBackup("20261008T120000Z", "20261008T120000Z") {
+		t.Fatal("equal timestamp should not replace the pointer")
+	}
+	dir := t.TempDir()
+	store := &localStore{root: dir}
+	ctx := context.Background()
+	newer := LatestPointer{FormatVersion: 1, Name: "lab", Timestamp: "20261008T120000Z", Complete: true}
+	older := LatestPointer{FormatVersion: 1, Name: "lab", Timestamp: "20261008T110000Z", Complete: true}
+	if err := store.putLatest(ctx, "lab/latest.json", newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.putLatest(ctx, "lab/latest.json", older); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := readLatestPointer(ctx, store, "lab/latest.json")
+	if !ok || got.Timestamp != newer.Timestamp {
+		t.Fatalf("latest is %#v", got)
+	}
+}
+
+func TestAbortDoesNotPublish(t *testing.T) {
+	dir := t.TempDir()
+	store := &localStore{root: dir}
+	wc, err := store.Create(context.Background(), "lab/20261008T120000Z/data/t.pgcopy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wc.Write([]byte("1\t\\N\n")); err != nil {
+		t.Fatal(err)
+	}
+	hw := newHashWriteCloser(wc)
+	if _, err := finishCopy(nil, hw, context.Canceled); err == nil {
+		t.Fatal("expected the copy error")
+	}
+	final := filepath.Join(dir, "lab", "20261008T120000Z", "data", "t.pgcopy")
+	if _, err := os.Stat(final); !os.IsNotExist(err) {
+		t.Fatalf("partial file was published: %v", err)
+	}
+}
+
+func TestArraySelectList(t *testing.T) {
+	list, err := selectList([]columnInfo{
+		{Name: "id", TypeName: "int8", FormatType: "bigint"},
+		{Name: "tags", TypeName: "_text", FormatType: "text[]"},
+		{Name: "when", TypeName: "_timestamptz", FormatType: "timestamp with time zone[]"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list, `"id"`) || strings.Contains(list, "unnest(\"id\")") {
+		t.Fatal(list)
+	}
+	if !strings.Contains(list, `unnest("tags")`) || !strings.Contains(list, "::text[]") {
+		t.Fatal(list)
+	}
+	if !strings.Contains(list, "TIMESTAMPTZ[]") {
+		t.Fatal(list)
+	}
+	if _, err := selectList([]columnInfo{{Name: "c", TypeName: "_char", FormatType: `"char"[]`}}); err == nil {
+		t.Fatal("expected an unsupported array type to fail")
+	}
+}
+
+func TestScrubSecrets(t *testing.T) {
+	in := "s3://bucket/key?AWS_ACCESS_KEY_ID=AKIASECRET&AWS_SECRET_ACCESS_KEY=supersecret&AWS_SESSION_TOKEN=sessiontoken"
+	out := scrubSecrets(in)
+	for _, secret := range []string{"AKIASECRET", "supersecret", "sessiontoken"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("secret remains in %s", out)
+		}
+	}
+}
+
+func TestSplitBoundQueryUsesKeyset(t *testing.T) {
+	first := splitBoundQuery("shop.public.events", "id", "", 20000)
+	if strings.Contains(first, "WHERE") || !strings.Contains(first, "OFFSET 20000") {
+		t.Fatal(first)
+	}
+	next := splitBoundQuery("shop.public.events", "id", "20000", 20000)
+	if !strings.Contains(next, `WHERE "id" >= 20000`) || !strings.Contains(next, "OFFSET 20000") {
+		t.Fatal(next)
+	}
+	if strings.Contains(next, "OFFSET 40000") {
+		t.Fatal(next)
 	}
 }
 

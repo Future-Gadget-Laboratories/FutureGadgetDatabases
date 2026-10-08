@@ -23,6 +23,7 @@ type Manifest struct {
 	AsOf          string       `json:"as_of"`
 	GCTTLSeconds  int          `json:"gc_ttl_seconds"`
 	Compression   string       `json:"compression"`
+	DataFormat    string       `json:"data_format,omitempty"`
 	Databases     []string     `json:"databases"`
 	ObjectsFile   FileDigest   `json:"objects_file"`
 	SchemaFiles   []FileDigest `json:"schema_files,omitempty"`
@@ -88,9 +89,10 @@ type SequenceValue struct {
 
 // ZoneStatement is replayed as best effort. A rejection is reported and skipped.
 type ZoneStatement struct {
-	Object string `json:"object"`
-	Level  string `json:"level"`
-	SQL    string `json:"sql"`
+	Object   string `json:"object"`
+	Database string `json:"database,omitempty"`
+	Level    string `json:"level"`
+	SQL      string `json:"sql"`
 }
 
 // LatestPointer is written only after manifest.json is in place.
