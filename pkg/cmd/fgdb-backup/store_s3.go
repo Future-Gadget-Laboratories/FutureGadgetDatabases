@@ -246,41 +246,64 @@ func (s *s3Store) Exists(ctx context.Context, rel string) (bool, error) {
 }
 
 func (s *s3Store) ListManifests(ctx context.Context, rel string) ([]string, error) {
+	prefix := s.listPrefix(rel)
+	var out []string
+	var token *string
+	for {
+		page, err := s.listPage(ctx, prefix, token)
+		if err != nil {
+			return nil, err
+		}
+		names, err := s.manifestNames(ctx, rel, prefix, page.CommonPrefixes)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, names...)
+		if !aws.ToBool(page.IsTruncated) {
+			return out, nil
+		}
+		token = page.NextContinuationToken
+	}
+}
+
+func (s *s3Store) listPrefix(rel string) string {
 	prefix := s.key(rel)
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+	return prefix
+}
+
+func (s *s3Store) listPage(ctx context.Context, prefix string, token *string) (*s3.ListObjectsV2Output, error) {
+	return s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:            aws.String(s.bucket),
+		Prefix:            aws.String(prefix),
+		Delimiter:         aws.String("/"),
+		ContinuationToken: token,
+	})
+}
+
+func (s *s3Store) manifestNames(ctx context.Context, rel, prefix string, prefixes []types.CommonPrefix) ([]string, error) {
 	var out []string
-	var token *string
-	for {
-		page, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:            aws.String(s.bucket),
-			Prefix:            aws.String(prefix),
-			Delimiter:         aws.String("/"),
-			ContinuationToken: token,
-		})
+	for _, cp := range prefixes {
+		name, ok, err := s.completeManifest(ctx, rel, prefix, aws.ToString(cp.Prefix))
 		if err != nil {
 			return nil, err
 		}
-		for _, cp := range page.CommonPrefixes {
-			name := strings.Trim(strings.TrimPrefix(aws.ToString(cp.Prefix), prefix), "/")
-			if name == "" || strings.Contains(name, "/") {
-				continue
-			}
-			ok, err := s.Exists(ctx, strings.Trim(rel+"/"+name+"/manifest.json", "/"))
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				out = append(out, name)
-			}
+		if ok {
+			out = append(out, name)
 		}
-		if !aws.ToBool(page.IsTruncated) {
-			break
-		}
-		token = page.NextContinuationToken
 	}
 	return out, nil
+}
+
+func (s *s3Store) completeManifest(ctx context.Context, rel, prefix, child string) (string, bool, error) {
+	name := strings.Trim(strings.TrimPrefix(child, prefix), "/")
+	if name == "" || strings.Contains(name, "/") {
+		return "", false, nil
+	}
+	ok, err := s.Exists(ctx, strings.Trim(rel+"/"+name+"/manifest.json", "/"))
+	return name, ok, err
 }
 
 func isNotFound(err error) bool {

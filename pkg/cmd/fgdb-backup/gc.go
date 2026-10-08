@@ -14,6 +14,12 @@ import (
 
 const defaultReportedGCTTL = 14400
 
+// rangeDefaultZone is the crdb_internal.zones target for the cluster default.
+const rangeDefaultZone = "RANGE default"
+
+// sqlAlter is the prefix of an ALTER statement that names its target next.
+const sqlAlter = "ALTER "
+
 var gcTTLPattern = regexp.MustCompile(`(?i)gc\.ttlseconds\s*=\s*([0-9]+)`)
 
 func parseGCTTL(sql string) (int, bool) {
@@ -88,65 +94,97 @@ func planGCTTLRaises(desired int, databases []string, zones []zoneRow) []gcChang
 	if desired <= 0 {
 		return nil
 	}
+	def, dbZone := indexZoneTTL(zones)
+	changes := tableTTLChanges(desired, zones)
+	return append(changes, databaseTTLChanges(desired, databases, def, dbZone)...)
+}
+
+func indexZoneTTL(zones []zoneRow) (int, map[string]zoneRow) {
 	def := 0
 	dbZone := map[string]zoneRow{}
-	var changes []gcChange
 	for _, z := range zones {
 		switch z.Level {
 		case "range":
 			def = z.Effective
 		case "database":
 			dbZone[z.Database] = z
-		case "table":
-			own, hasOwn := parseGCTTL(z.RawSQL)
-			if !hasOwn || own >= desired {
-				continue
-			}
-			prefix := alterPrefix(z)
-			changes = append(changes, gcChange{
-				Object: z.Object,
-				Apply:  prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
-				Revert: prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", own),
-			})
 		}
 	}
-	for _, database := range databases {
-		z, ok := dbZone[database]
-		eff := def
-		if ok && z.Effective > 0 {
-			eff = z.Effective
-		}
-		if eff == 0 || eff >= desired {
+	return def, dbZone
+}
+
+func tableTTLChanges(desired int, zones []zoneRow) []gcChange {
+	var changes []gcChange
+	for _, z := range zones {
+		if z.Level != "table" {
 			continue
 		}
-		if !ok {
-			obj := "DATABASE " + quoteIdent(database)
-			changes = append(changes, gcChange{
-				Object: obj,
-				Apply:  "ALTER " + obj + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
-				Revert: "ALTER " + obj + " CONFIGURE ZONE DISCARD",
-			})
+		own, hasOwn := parseGCTTL(z.RawSQL)
+		if !hasOwn || own >= desired {
 			continue
 		}
-		prefix := alterPrefix(z)
-		if n, has := parseGCTTL(z.RawSQL); has {
-			if n >= desired {
-				continue
-			}
-			changes = append(changes, gcChange{
-				Object: z.Object,
-				Apply:  prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
-				Revert: prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", n),
-			})
-			continue
-		}
-		changes = append(changes, gcChange{
-			Object: z.Object,
-			Apply:  prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
-			Revert: prefix + " CONFIGURE ZONE USING gc.ttlseconds = COPY FROM PARENT",
-		})
+		changes = append(changes, ttlNumberChange(z, desired, own))
 	}
 	return changes
+}
+
+func ttlNumberChange(z zoneRow, desired, own int) gcChange {
+	prefix := alterPrefix(z)
+	return gcChange{
+		Object: z.Object,
+		Apply:  prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
+		Revert: prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", own),
+	}
+}
+
+func databaseTTLChanges(desired int, databases []string, def int, dbZone map[string]zoneRow) []gcChange {
+	var changes []gcChange
+	for _, database := range databases {
+		z, ok := dbZone[database]
+		change, apply := databaseTTLChange(database, z, ok, def, desired)
+		if apply {
+			changes = append(changes, change)
+		}
+	}
+	return changes
+}
+
+func databaseEffective(z zoneRow, ok bool, def int) int {
+	if ok && z.Effective > 0 {
+		return z.Effective
+	}
+	return def
+}
+
+func databaseTTLChange(database string, z zoneRow, ok bool, def, desired int) (gcChange, bool) {
+	eff := databaseEffective(z, ok, def)
+	if eff == 0 || eff >= desired {
+		return gcChange{}, false
+	}
+	if !ok {
+		return newDatabaseTTL(database, desired), true
+	}
+	if n, has := parseGCTTL(z.RawSQL); has {
+		if n >= desired {
+			return gcChange{}, false
+		}
+		return ttlNumberChange(z, desired, n), true
+	}
+	prefix := alterPrefix(z)
+	return gcChange{
+		Object: z.Object,
+		Apply:  prefix + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
+		Revert: prefix + " CONFIGURE ZONE USING gc.ttlseconds = COPY FROM PARENT",
+	}, true
+}
+
+func newDatabaseTTL(database string, desired int) gcChange {
+	obj := "DATABASE " + quoteIdent(database)
+	return gcChange{
+		Object: obj,
+		Apply:  sqlAlter + obj + fmt.Sprintf(" CONFIGURE ZONE USING gc.ttlseconds = %d", desired),
+		Revert: sqlAlter + obj + " CONFIGURE ZONE DISCARD",
+	}
 }
 
 func alterPrefix(z zoneRow) string {
@@ -162,7 +200,7 @@ func alterPrefix(z zoneRow) string {
 	case "index":
 		return "ALTER INDEX " + qualified(z.Database, z.Schema, z.Table) + "@" + quoteIdent(z.Index)
 	default:
-		return "ALTER " + z.Object
+		return sqlAlter + z.Object
 	}
 }
 

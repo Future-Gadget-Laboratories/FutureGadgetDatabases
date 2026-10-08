@@ -40,6 +40,22 @@ func TestRoundtrip(t *testing.T) {
 	bin := cockroachBin(t)
 	tool := buildTool(t)
 	base := t.TempDir()
+	srcURL, dstURL, srcAddr, dstAddr := startPair(t, bin, base)
+	seedShop(t, bin, srcAddr)
+	dest := filepath.Join(base, "backups")
+	bres := backupAndCheck(t, tool, srcURL, dest)
+	verifyLatest(t, tool, dest, bres)
+	restoreAndCompare(t, bin, tool, srcAddr, dstAddr, dstURL, dest, bres)
+	assertIncompatible(t, tool, dstURL, base, bres)
+	assertShortTTLFails(t, bin, tool, srcURL, srcAddr, base)
+	gcRes := assertExtendTTLReverts(t, bin, tool, srcURL, srcAddr, base)
+	assertIndexZoneSkipped(t, tool, dstURL, base, gcRes)
+	assertS3Import(t, bin, tool, srcURL, dstURL, dstAddr)
+	secureRoundtrip(t, bin, tool, base)
+}
+
+func startPair(t *testing.T, bin, base string) (srcURL, dstURL, srcAddr, dstAddr string) {
+	t.Helper()
 	srcDir := filepath.Join(base, "src")
 	dstDir := filepath.Join(base, "dst")
 	if err := os.MkdirAll(srcDir, 0o755); err != nil {
@@ -48,13 +64,17 @@ func TestRoundtrip(t *testing.T) {
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	srcAddr := "127.0.0.1:26271"
-	dstAddr := "127.0.0.1:26273"
+	srcAddr = "127.0.0.1:26271"
+	dstAddr = "127.0.0.1:26273"
 	startNode(t, bin, srcDir, srcAddr, "127.0.0.1:18081", true)
 	startNode(t, bin, dstDir, dstAddr, "127.0.0.1:18083", true)
-	srcURL := "postgresql://root@" + srcAddr + "/defaultdb?sslmode=disable"
-	dstURL := "postgresql://root@" + dstAddr + "/defaultdb?sslmode=disable"
+	srcURL = "postgresql://root@" + srcAddr + "/defaultdb?sslmode=disable"
+	dstURL = "postgresql://root@" + dstAddr + "/defaultdb?sslmode=disable"
+	return srcURL, dstURL, srcAddr, dstAddr
+}
 
+func seedShop(t *testing.T, bin, srcAddr string) {
+	t.Helper()
 	sql(t, bin, srcAddr, true, `
 CREATE DATABASE shop;
 CREATE DATABASE audit;
@@ -89,8 +109,10 @@ GRANT SELECT ON shop.public.users TO reporter;
 CREATE TABLE audit.public.checks (id INT PRIMARY KEY, ok BOOL);
 INSERT INTO audit.public.checks VALUES (1, true);
 `)
+}
 
-	dest := filepath.Join(base, "backups")
+func backupAndCheck(t *testing.T, tool, srcURL, dest string) BackupResult {
+	t.Helper()
 	out := runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", dest, "--name", "lab", "--split-rows", "20000")
 	var bres BackupResult
 	if err := json.Unmarshal(out, &bres); err != nil {
@@ -111,14 +133,23 @@ INSERT INTO audit.public.checks VALUES (1, true);
 	if bres.PeakRSSBytes > 96<<20 {
 		t.Fatalf("peak RSS %d bytes is too high for a streamed backup", bres.PeakRSSBytes)
 	}
-	parts, err := filepath.Glob(filepath.Join(bres.Backup, "data", "shop", "public", "events.part*.csv.gz"))
+	assertSplitParts(t, bres.Backup)
+	return bres
+}
+
+func assertSplitParts(t *testing.T, backup string) {
+	t.Helper()
+	parts, err := filepath.Glob(filepath.Join(backup, "data", "shop", "public", "events.part*.csv.gz"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(parts) < 2 {
 		t.Fatalf("expected split files, found %v", parts)
 	}
+}
 
+func verifyLatest(t *testing.T, tool, dest string, bres BackupResult) {
+	t.Helper()
 	vout := runTool(t, tool, "verify", "--json", "--src", filepath.Join(dest, "lab", "latest"))
 	var vres VerifyResult
 	if err := json.Unmarshal(vout, &vres); err != nil {
@@ -127,7 +158,17 @@ INSERT INTO audit.public.checks VALUES (1, true);
 	if !vres.OK || vres.Rows != bres.Rows {
 		t.Fatalf("verify %#v", vres)
 	}
+	writeIncomplete(t, dest)
+	lout := runTool(t, tool, "list", "--json", "--src", filepath.Join(dest, "lab"))
+	var lres ListResult
+	if err := json.Unmarshal(lout, &lres); err != nil {
+		t.Fatal(err)
+	}
+	assertLatest(t, lres, bres.Timestamp)
+}
 
+func writeIncomplete(t *testing.T, dest string) {
+	t.Helper()
 	incomplete := filepath.Join(dest, "lab", "19990101T000000Z")
 	if err := os.MkdirAll(filepath.Join(incomplete, "data"), 0o755); err != nil {
 		t.Fatal(err)
@@ -135,20 +176,22 @@ INSERT INTO audit.public.checks VALUES (1, true);
 	if err := os.WriteFile(filepath.Join(incomplete, "data", "partial.csv.gz"), []byte("nope"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lout := runTool(t, tool, "list", "--json", "--src", filepath.Join(dest, "lab"))
-	var lres ListResult
-	if err := json.Unmarshal(lout, &lres); err != nil {
-		t.Fatal(err)
-	}
+}
+
+func assertLatest(t *testing.T, lres ListResult, timestamp string) {
+	t.Helper()
 	for _, ts := range lres.Timestamps {
 		if ts == "19990101T000000Z" {
 			t.Fatal("incomplete backup was listed")
 		}
 	}
-	if lres.Latest != bres.Timestamp {
-		t.Fatalf("latest %q, backup timestamp %q", lres.Latest, bres.Timestamp)
+	if lres.Latest != timestamp {
+		t.Fatalf("latest %q, backup timestamp %q", lres.Latest, timestamp)
 	}
+}
 
+func restoreAndCompare(t *testing.T, bin, tool, srcAddr, dstAddr, dstURL, dest string, bres BackupResult) {
+	t.Helper()
 	rout := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
 	var rres RestoreResult
 	if err := json.Unmarshal(rout, &rres); err != nil {
@@ -160,9 +203,19 @@ INSERT INTO audit.public.checks VALUES (1, true);
 	if rres.Rows != bres.Rows {
 		t.Fatalf("restored rows %d, backup rows %d", rres.Rows, bres.Rows)
 	}
+	srcCmp := compareCluster(t, bin, srcAddr)
+	dstCmp := compareCluster(t, bin, dstAddr)
+	if srcCmp != dstCmp {
+		t.Fatalf("source and target differ\nSOURCE:\n%s\nTARGET:\n%s", srcCmp, dstCmp)
+	}
+	if _, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest")); err == nil {
+		t.Fatal("second restore overwrote non-empty tables")
+	}
+}
 
-	compare := func(addr string) string {
-		return strings.TrimSpace(sqlOut(t, bin, addr, true, `
+func compareCluster(t *testing.T, bin, addr string) string {
+	t.Helper()
+	return strings.TrimSpace(sqlOut(t, bin, addr, true, `
 SELECT count(*) FROM shop.public.users;
 SELECT count(*) FROM shop.public.orders;
 SELECT count(*) FROM shop.public.paid;
@@ -174,20 +227,28 @@ SELECT raw_config_sql FROM crdb_internal.zones WHERE database_name = 'shop' ORDE
 SELECT grantee, privilege_type FROM [SHOW GRANTS ON TABLE shop.public.users] WHERE grantee = 'reporter';
 SELECT ok FROM audit.public.checks;
 `))
-	}
-	srcCmp := compare(srcAddr)
-	dstCmp := compare(dstAddr)
-	if srcCmp != dstCmp {
-		t.Fatalf("source and target differ\nSOURCE:\n%s\nTARGET:\n%s", srcCmp, dstCmp)
-	}
+}
 
-	if _, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest")); err == nil {
-		t.Fatal("second restore overwrote non-empty tables")
-	}
-
-	// Unsupported DDL must be reported and must not be dropped.
+func assertIncompatible(t *testing.T, tool, dstURL, base string, bres BackupResult) {
+	t.Helper()
 	badDir := filepath.Join(base, "bad", filepath.Base(bres.Backup))
 	copyDir(t, bres.Backup, badDir)
+	injectVector(t, badDir)
+	badOut, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", badDir, "--database", "shop")
+	if err == nil {
+		t.Fatal("incompatible restore succeeded")
+	}
+	var bad RestoreResult
+	if jerr := json.Unmarshal(badOut, &bad); jerr != nil {
+		t.Fatalf("bad restore output: %v\n%s", jerr, badOut)
+	}
+	if !namesVector(bad.Incompatible) {
+		t.Fatalf("incompatible list did not name vectors: %#v\n%s", bad.Incompatible, bad.Error)
+	}
+}
+
+func injectVector(t *testing.T, badDir string) {
+	t.Helper()
 	objPath := filepath.Join(badDir, "objects.json")
 	body, err := os.ReadFile(objPath)
 	if err != nil {
@@ -217,39 +278,36 @@ SELECT ok FROM audit.public.checks;
 		t.Fatal(err)
 	}
 	patchDigest(t, filepath.Join(badDir, "manifest.json"), "objects_file", objPath)
-	// Restore onto a fresh node so the incompatible object is the only new failure mode
-	// we assert. The target already has the good schema; duplicate creates are fine,
-	// and the VECTOR table must still be reported.
-	badOut, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", badDir, "--database", "shop")
-	if err == nil {
-		t.Fatal("incompatible restore succeeded")
-	}
-	var bad RestoreResult
-	if jerr := json.Unmarshal(badOut, &bad); jerr != nil {
-		t.Fatalf("bad restore output: %v\n%s", jerr, badOut)
-	}
-	found := false
-	for _, p := range bad.Incompatible {
+}
+
+func namesVector(problems []Problem) bool {
+	for _, p := range problems {
 		if strings.Contains(p.Object, "vectors") {
-			found = true
+			return true
 		}
 	}
-	if !found {
-		t.Fatalf("incompatible list did not name vectors: %#v\n%s", bad.Incompatible, bad.Error)
-	}
+	return false
+}
 
-	// GC TTL preflight, then a temporary raise that is put back.
+func assertShortTTLFails(t *testing.T, bin, tool, srcURL, srcAddr, base string) {
+	t.Helper()
 	sql(t, bin, srcAddr, true, `
 CREATE DATABASE shortlived;
 CREATE TABLE shortlived.public.t (id INT PRIMARY KEY);
 INSERT INTO shortlived.public.t VALUES (1);
 ALTER TABLE shortlived.public.t CONFIGURE ZONE USING gc.ttlseconds = 1;
 `)
-	if _, err := runToolErr(tool, "backup", "--json", "--url", srcURL, "--dest", filepath.Join(base, "gc-fail"), "--database", "shortlived", "--name", "short"); err == nil {
+	_, err := runToolErr(tool, "backup", "--json", "--url", srcURL, "--dest", filepath.Join(base, "gc-fail"), "--database", "shortlived", "--name", "short")
+	if err == nil {
 		t.Fatal("backup with a 1 second gc.ttlseconds succeeded")
-	} else if !strings.Contains(err.Error(), "gc.ttlseconds") {
+	}
+	if !strings.Contains(err.Error(), "gc.ttlseconds") {
 		t.Fatal(err)
 	}
+}
+
+func assertExtendTTLReverts(t *testing.T, bin, tool, srcURL, srcAddr, base string) BackupResult {
+	t.Helper()
 	gcOut := runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", filepath.Join(base, "gc-ok"), "--database", "shortlived", "--name", "short", "--extend-gc-ttl", "1h")
 	var gcRes BackupResult
 	if err := json.Unmarshal(gcOut, &gcRes); err != nil {
@@ -269,9 +327,29 @@ ALTER TABLE shortlived.public.t CONFIGURE ZONE USING gc.ttlseconds = 1;
 	if strings.Contains(string(zoneBody), "gc.ttlseconds = 3600") {
 		t.Fatalf("backup recorded the raised ttl:\n%s", zoneBody)
 	}
-	// Index zone configs are captured and then skipped when 23.2 OSS rejects them.
+	return gcRes
+}
+
+func assertIndexZoneSkipped(t *testing.T, tool, dstURL, base string, gcRes BackupResult) {
+	t.Helper()
 	zoneDir := filepath.Join(base, "zone-skip", gcRes.Timestamp)
 	copyDir(t, gcRes.Backup, zoneDir)
+	injectIndexZone(t, zoneDir)
+	zout := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", zoneDir, "--database", "shortlived")
+	var zres RestoreResult
+	if err := json.Unmarshal(zout, &zres); err != nil {
+		t.Fatalf("zone restore json: %v\n%s", err, zout)
+	}
+	if !zres.OK {
+		t.Fatalf("index zone should be skipped, not fail the restore: %s", zres.Error)
+	}
+	if !zoneSkipped(zres.Warnings) {
+		t.Fatalf("expected an index zone warning, got %#v", zres.Warnings)
+	}
+}
+
+func injectIndexZone(t *testing.T, zoneDir string) {
+	t.Helper()
 	zobjPath := filepath.Join(zoneDir, "objects.json")
 	zbody, err := os.ReadFile(zobjPath)
 	if err != nil {
@@ -295,25 +373,19 @@ ALTER TABLE shortlived.public.t CONFIGURE ZONE USING gc.ttlseconds = 1;
 		t.Fatal(err)
 	}
 	patchDigest(t, filepath.Join(zoneDir, "manifest.json"), "objects_file", zobjPath)
-	zout := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", zoneDir, "--database", "shortlived")
-	var zres RestoreResult
-	if err := json.Unmarshal(zout, &zres); err != nil {
-		t.Fatalf("zone restore json: %v\n%s", err, zout)
-	}
-	if !zres.OK {
-		t.Fatalf("index zone should be skipped, not fail the restore: %s", zres.Error)
-	}
-	skipped := false
-	for _, w := range zres.Warnings {
+}
+
+func zoneSkipped(warnings []string) bool {
+	for _, w := range warnings {
 		if strings.Contains(w, "zone config skipped") && strings.Contains(w, "t_pkey") {
-			skipped = true
+			return true
 		}
 	}
-	if !skipped {
-		t.Fatalf("expected an index zone warning, got %#v", zres.Warnings)
-	}
+	return false
+}
 
-	// S3 write plus IMPORT from that URL.
+func assertS3Import(t *testing.T, bin, tool, srcURL, dstURL, dstAddr string) {
+	t.Helper()
 	backend := s3mem.New()
 	if err := backend.CreateBucket("lab"); err != nil {
 		t.Fatal(err)
@@ -323,9 +395,8 @@ ALTER TABLE shortlived.public.t CONFIGURE ZONE USING gc.ttlseconds = 1;
 	t.Setenv("AWS_ACCESS_KEY_ID", "testkey")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "testsecret")
 	t.Setenv("AWS_REGION", "us-east-1")
-	s3dest := "s3://lab/fgdb"
 	s3out := runTool(t, tool, "backup", "--json",
-		"--url", srcURL, "--dest", s3dest, "--name", "shop",
+		"--url", srcURL, "--dest", "s3://lab/fgdb", "--name", "shop",
 		"--database", "audit",
 		"--compression", "none",
 		"--s3-endpoint", srv.URL, "--s3-region", "us-east-1",
@@ -357,9 +428,6 @@ ALTER TABLE shortlived.public.t CONFIGURE ZONE USING gc.ttlseconds = 1;
 	if !strings.Contains(got, "true") && !strings.Contains(got, "t") {
 		t.Fatalf("s3 restore data: %s", got)
 	}
-
-	// Secure cluster: certs on the URL.
-	secureRoundtrip(t, bin, tool, base)
 }
 
 func secureRoundtrip(t *testing.T, bin, tool, base string) {

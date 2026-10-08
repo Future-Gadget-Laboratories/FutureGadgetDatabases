@@ -25,7 +25,9 @@ func connect(ctx context.Context, url string) (*database, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse --url: %w", err)
 	}
-	cfg.OnNotice = func(*pgconn.PgConn, *pgconn.Notice) {}
+	cfg.OnNotice = func(*pgconn.PgConn, *pgconn.Notice) {
+		// Notices are deliberately discarded.
+	}
 	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)

@@ -89,36 +89,55 @@ func classifyStatement(sql string) string {
 }
 
 func objectName(kind, sql string) string {
-	s := stripLeadingComments(sql)
-	fields := strings.Fields(s)
+	fields := strings.Fields(stripLeadingComments(sql))
+	upper := upperFields(fields)
+	switch kind {
+	case "schema", "type", "sequence", "table", "view", "index":
+		// CREATE [UNIQUE] [MATERIALIZED] INDEX|TABLE|... [IF NOT EXISTS] name
+		if name := tokenAfter(upper, fields, "EXISTS"); name != "" {
+			return name
+		}
+		return tokenAfterKeyword(upper, fields, createObjectKeyword)
+	case "foreign_key", "alter":
+		return tokenAfter(upper, fields, "TABLE")
+	default:
+		return ""
+	}
+}
+
+func upperFields(fields []string) []string {
 	upper := make([]string, len(fields))
 	for i, f := range fields {
 		upper[i] = strings.ToUpper(f)
 	}
-	switch kind {
-	case "schema", "type", "sequence", "table", "view", "index":
-		// CREATE [UNIQUE] [MATERIALIZED] INDEX|TABLE|... [IF NOT EXISTS] name
-		for i := 0; i < len(upper); i++ {
-			if upper[i] == "EXISTS" && i+1 < len(fields) {
-				return trimObjectToken(fields[i+1])
-			}
-		}
-		for i := 0; i < len(upper); i++ {
-			switch upper[i] {
-			case "SCHEMA", "TYPE", "SEQUENCE", "TABLE", "VIEW", "INDEX":
-				if i+1 < len(fields) {
-					return trimObjectToken(fields[i+1])
-				}
-			}
-		}
-	case "foreign_key", "alter":
-		for i := 0; i < len(upper)-1; i++ {
-			if upper[i] == "TABLE" {
-				return trimObjectToken(fields[i+1])
-			}
+	return upper
+}
+
+func tokenAfter(upper, fields []string, word string) string {
+	for i := 0; i < len(upper); i++ {
+		if upper[i] == word && i+1 < len(fields) {
+			return trimObjectToken(fields[i+1])
 		}
 	}
 	return ""
+}
+
+func tokenAfterKeyword(upper, fields []string, keyword func(string) bool) string {
+	for i := 0; i < len(upper); i++ {
+		if keyword(upper[i]) && i+1 < len(fields) {
+			return trimObjectToken(fields[i+1])
+		}
+	}
+	return ""
+}
+
+func createObjectKeyword(word string) bool {
+	switch word {
+	case "SCHEMA", "TYPE", "SEQUENCE", "TABLE", "VIEW", "INDEX":
+		return true
+	default:
+		return false
+	}
 }
 
 func trimObjectToken(tok string) string {

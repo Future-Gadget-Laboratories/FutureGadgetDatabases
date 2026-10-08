@@ -72,7 +72,7 @@ func TestGCBudget(t *testing.T) {
 	if !b.exceeded(asOf.Add(2 * time.Second)) {
 		t.Fatal("expected a 1 second ttl to be inside a 1 minute margin")
 	}
-	long := newBudget(asOf, 14400, "RANGE default", time.Minute)
+	long := newBudget(asOf, 14400, rangeDefaultZone, time.Minute)
 	if long.exceeded(asOf.Add(time.Minute)) {
 		t.Fatal("4 hour ttl should still be inside the window")
 	}
@@ -83,7 +83,7 @@ func TestGCBudget(t *testing.T) {
 
 func TestPlanGCTTLRaises(t *testing.T) {
 	zones := []zoneRow{
-		{Level: "range", Object: "RANGE default", Effective: 14400, FullSQL: "gc.ttlseconds = 14400"},
+		{Level: "range", Object: rangeDefaultZone, Effective: 14400, FullSQL: "gc.ttlseconds = 14400"},
 		{Level: "database", Database: "shop", Object: "DATABASE shop", RawSQL: "ALTER DATABASE shop CONFIGURE ZONE USING gc.ttlseconds = 30", FullSQL: "gc.ttlseconds = 30", Effective: 30},
 		{Level: "table", Database: "shop", Schema: "public", Table: "events", Object: "TABLE shop.public.events", RawSQL: "ALTER TABLE shop.public.events CONFIGURE ZONE USING gc.ttlseconds = 10", FullSQL: "gc.ttlseconds = 10", Effective: 10},
 	}
