@@ -116,10 +116,16 @@ tar -C "$stage" -czf "${out}/${tarball_name}" "$prefix"
   sha256sum "$tarball_name" >SHA256SUMS
 )
 
+# Default release tag is ${version}-oss. The workflow sets
+# FGDB_RELEASE_TAG=default for that path, and sets it to vX.Y.Z-fgdb.N
+# for a tag of that form. VERSION and the tarball name stay on version.txt.
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+release_tag=$(bash "${script_dir}/release-tag.sh" package-tag --version "$version")
+
 cat >"${out}/build-info.env" <<EOF
 VERSION=${version}
 TARBALL=${tarball_name}
-RELEASE_TAG=${version}-oss
+RELEASE_TAG=${release_tag}
 EOF
 
 echo "Packaged ${out}/${tarball_name}"
