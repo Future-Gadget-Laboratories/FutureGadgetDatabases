@@ -157,8 +157,10 @@ publish, and it does not apply to a `v23.2.15-fgdb.N` publish.
 
 The notes say the database binary is still cockroach-oss v23.2.15, and that
 fgdb-backup is an extra program in the tarball and on PATH in the image.
-They still tell CipherBank to pin the image digest. That pin sentence is the
-same one a `v23.2.15-oss` release uses.
+Both releases tell CipherBank to pin the image digest. The sentences differ.
+A `v23.2.15-oss` release says tag `v23.2.15-oss` is a moving name. A
+`v23.2.15-fgdb.N` release names that fgdb tag as the tag to pin, and says
+this publish did not move `v23.2.15-oss` or the minor alias `v23.2-oss`.
 
 To publish the same tag again after it exists, run the workflow from `main`
 and set `ref` to the tag:

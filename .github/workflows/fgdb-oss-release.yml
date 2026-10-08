@@ -551,6 +551,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release helper
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: build/fgdb
+
       - name: Update release notes with the digest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -568,7 +574,7 @@ jobs:
           fi
           pin="${IMAGE_REPOSITORY}@${DIGEST}"
           notes=$(mktemp)
-          # No checkout in this job. --repo keeps gh from calling git.
+          # gh needs --repo. The checkout above is only the pin-sentence helper.
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$notes"
           tmp=$(mktemp)
           if grep -q 'Image digest:' "$notes"; then
@@ -580,6 +586,9 @@ jobs:
           # One pin sentence. A second run must not append another.
           grep -v 'CipherBank should pin ' "$tmp" >"${tmp}.body" || true
           mv "${tmp}.body" "$tmp"
-          printf '\nCipherBank should pin %s (tag %s-oss is a moving name).\n' \
-            "$pin" "$VERSION" >>"$tmp"
+          pin_sentence=$(bash build/fgdb/release-tag.sh pin \
+            --version "$VERSION" \
+            --release-tag "$RELEASE_TAG" \
+            --pin "$pin")
+          printf '\n%s\n' "$pin_sentence" >>"$tmp"
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$tmp"

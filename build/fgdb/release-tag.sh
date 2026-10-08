@@ -18,6 +18,7 @@ usage: release-tag.sh select --event EVENT --ref-name NAME --dispatch-ref REF
        release-tag.sh package-tag --version VERSION
        release-tag.sh image-tags --repository REPO --version VERSION --release-tag TAG --sha SHA --push-minor-alias VALUE
        release-tag.sh title --version VERSION --release-tag TAG
+       release-tag.sh pin --version VERSION --release-tag TAG --pin PIN
        release-tag.sh notes --version VERSION --release-tag TAG --source-sha SHA --workflow-sha SHA --workflow-run URL --repository REPO --push-minor-alias VALUE --verify-log PATH --checksums PATH --out PATH
 EOF
   exit 2
@@ -318,6 +319,56 @@ title_cmd() {
   fi
 }
 
+# One line, no trailing explanation. The digest job appends this after the
+# image digest. A second publish strips any previous "CipherBank should pin "
+# line and appends this one again.
+pin_cmd() {
+  local version="" release_tag="" pin="" minor sentence
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --version)
+        version=${2-}
+        shift 2
+        ;;
+      --release-tag)
+        release_tag=${2-}
+        shift 2
+        ;;
+      --pin)
+        pin=${2-}
+        shift 2
+        ;;
+      *)
+        echo "release-tag: unknown argument ${1}" >&2
+        exit 2
+        ;;
+    esac
+  done
+  if [[ -z "$version" || -z "$release_tag" || -z "$pin" ]]; then
+    usage
+  fi
+  if [[ "$release_tag" == "default" ]]; then
+    echo "release-tag: pin sentence needs the resolved release tag" >&2
+    exit 1
+  fi
+  accept_tag "$version" "$release_tag"
+  require_token pin "$pin"
+  if is_fgdb_release "$release_tag"; then
+    minor=${version%.*}
+    # Name the fgdb tag as the tag to pin. Do not call ${version}-oss a moving name.
+    printf -v sentence 'CipherBank should pin %s (tag %s is the tag to pin). This publish did not move %s-oss or the minor alias %s-oss.' \
+      "$pin" "$release_tag" "$version" "$minor"
+    if [[ "$sentence" == *"moving name"* ]]; then
+      echo "release-tag: fgdb pin sentence must not call an oss tag a moving name" >&2
+      exit 1
+    fi
+  else
+    printf -v sentence 'CipherBank should pin %s (tag %s-oss is a moving name).' \
+      "$pin" "$version"
+  fi
+  printf '%s\n' "$sentence"
+}
+
 notes_cmd() {
   local version="" release_tag="" source_sha="" workflow_sha="" workflow_run=""
   local repository="" push_minor="" verify_log="" checksums="" out=""
@@ -444,6 +495,7 @@ main() {
     package-tag) package_tag_cmd "$@" ;;
     image-tags) image_tags_cmd "$@" ;;
     title) title_cmd "$@" ;;
+    pin) pin_cmd "$@" ;;
     notes) notes_cmd "$@" ;;
     *)
       echo "release-tag: unknown command ${cmd}" >&2

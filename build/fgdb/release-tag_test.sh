@@ -127,6 +127,26 @@ expect_eq "$(bash "$plan" title --version "$version" --release-tag "${version}-o
 expect_eq "$(bash "$plan" title --version "$version" --release-tag "$fgdb_tag")" \
   "CockroachDB ${version} OSS (includes fgdb-backup)" "fgdb title"
 
+pin="${repo}@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+expect_eq "$(bash "$plan" pin --version "$version" --release-tag "${version}-oss" --pin "$pin")" \
+  "CipherBank should pin ${pin} (tag ${version}-oss is a moving name)." \
+  "oss pin sentence"
+fgdb_pin=$(bash "$plan" pin --version "$version" --release-tag "$fgdb_tag" --pin "$pin")
+expect_eq "$fgdb_pin" \
+  "CipherBank should pin ${pin} (tag ${fgdb_tag} is the tag to pin). This publish did not move ${version}-oss or the minor alias v23.2-oss." \
+  "fgdb pin sentence"
+if [[ "$fgdb_pin" == *"moving name"* ]]; then
+  fail "fgdb pin sentence called a tag a moving name"
+fi
+fgdb_pin_2=$(bash "$plan" pin --version "$version" --release-tag v23.2.15-fgdb.2 --pin "$pin")
+expect_eq "$fgdb_pin_2" \
+  "CipherBank should pin ${pin} (tag v23.2.15-fgdb.2 is the tag to pin). This publish did not move ${version}-oss or the minor alias v23.2-oss." \
+  "second fgdb pin sentence"
+must_fail "pin sentence for the default sentinel" \
+  bash "$plan" pin --version "$version" --release-tag default --pin "$pin"
+must_fail "pin sentence for a mismatched fgdb tag" \
+  bash "$plan" pin --version "$version" --release-tag v23.2.16-fgdb.1 --pin "$pin"
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 printf 'verified\n' >"${tmp}/verify.log"
