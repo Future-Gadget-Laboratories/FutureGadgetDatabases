@@ -61,7 +61,46 @@ release `v23.2.15-oss` does not exist yet. Dispatch with `ref` set to `main`
 
 Pushing the tag after a `publish=true` dispatch of the same commit does not
 start a second compile. The extra tag-triggered run is skipped while that
-dispatch is in progress or after it has succeeded.
+dispatch is in progress or after it has succeeded. A `workflow_dispatch` is
+never skipped by that check. The skip script returns immediately unless the
+event is a tag push.
+
+### Finish v23.2.15-oss without moving the tag
+
+Run `37705247405` built and verified commit `2df632c` (annotated tag
+`v23.2.15-oss`) and pushed the image. The Release was not created. The tag
+stays on that commit. Do not move it, and do not re-run the failed jobs of
+that run. Those jobs use the workflow file from `2df632c`, which still has
+the broken publish steps.
+
+After the publish fix is on `main`, start **FGDB OSS release** from `main`:
+
+| Input | Value |
+| --- | --- |
+| `ref` | `v23.2.15-oss` |
+| `publish` | `true` |
+
+```bash
+gh workflow run fgdb-oss-release.yml \
+  --repo Future-Gadget-Laboratories/FutureGadgetDatabases \
+  --ref main \
+  -f ref=v23.2.15-oss \
+  -f publish=true
+```
+
+`--ref main` chooses the workflow file. `-f ref=v23.2.15-oss` is the commit
+that gets compiled. That tag is `2df632c521c7266d268ba76f25b17bd1fc4c02a9`,
+which contains this workflow, so the guard that blocks a first publish of
+raw `v23.2.15` does not apply. `ref=v23.2.15` is refused while the Release
+does not exist, because that commit has no workflow file. `ref=main` would
+compile a later commit than the tag. The tag would not move, and the assets
+would not match it.
+
+The dispatch compiles again, pushes the image tags again, and creates the
+Release. Creating the Release does not move `v23.2.15-oss`. If the Release
+already exists, the job replaces its tarball and notes. The digest written
+into the notes is the one the registry reports after the push, not a line
+scraped from `docker push`.
 
 ## Artifacts
 
@@ -105,7 +144,10 @@ ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2-oss
 ```
 
 `v23.2-oss` is a moving alias. `v23.2.15-oss` moves only when that release
-is rebuilt. `sha-<git sha>` is the immutable tag for one commit.
+is rebuilt. `sha-<git sha>` is the immutable tag for one commit. The
+workflow reads the digest with `docker buildx imagetools inspect` after
+the push (or `docker inspect` on the local image if the registry inspect
+has no digest). Pushing the same tags again is a normal republish.
 
 The image is UBI 9 minimal build `9.8-1791279563` (manifest list
 `sha256:5ed244b62bbf4095080144d9d35eb8fcd3d39a9801f94aadd63b9d10978a01ae`,
