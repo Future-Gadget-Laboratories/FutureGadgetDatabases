@@ -51,7 +51,6 @@ concurrency:
 
 env:
   IMAGE_REPOSITORY: ghcr.io/future-gadget-laboratories/futuregadgetdatabases
-  GHCR_PACKAGE: futuregadgetdatabases
   BUILD_CHANNEL: fgl-oss
   PUSH_MINOR_ALIAS: "true"
   EXPECT_GO: go1.21.12
@@ -345,31 +344,42 @@ jobs:
           # "fatal: not a git repository".
           repo_args=(--repo "$GITHUB_REPOSITORY")
           # The commits API peels an annotated tag to the commit it points at.
-          # A missing tag is a 404; gh release create will create it from
-          # SOURCE_SHA. An existing tag must be that same commit, or the
-          # assets would not match v*-oss.
+          # An existing tag must be the commit that was built.
           tag_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq .sha 2>/dev/null) || tag_commit=
           if [[ -n "$tag_commit" && "$tag_commit" != "$SOURCE_SHA" ]]; then
             echo "Tag ${RELEASE_TAG} points at ${tag_commit}, but this build is ${SOURCE_SHA}." >&2
             echo "Refusing to publish this binary onto that tag. The tag is left where it is." >&2
             exit 1
           fi
-          if gh release view "$RELEASE_TAG" "${repo_args[@]}" >/dev/null 2>&1; then
-            echo "Release ${RELEASE_TAG} already exists; replacing its assets and notes."
-            gh release upload "$RELEASE_TAG" "${repo_args[@]}" "$asset_tgz" dist/SHA256SUMS --clobber
-            gh release edit "$RELEASE_TAG" "${repo_args[@]}" --notes-file "$notes"
-          else
-            if [[ "$SOURCE_HAS_WORKFLOW" != "true" && -z "$tag_commit" ]]; then
+          if [[ -z "$tag_commit" ]]; then
+            if [[ "$SOURCE_HAS_WORKFLOW" != "true" ]]; then
               echo "Refusing to create git tag ${RELEASE_TAG} at ${SOURCE_SHA}." >&2
               echo "That commit does not contain .github/workflows/fgdb-oss-release.yml." >&2
               echo "A tag on the raw v23.2.15 commit would run upstream bincheck from the unguarded tree." >&2
               echo "Push ${RELEASE_TAG} from main after this workflow is merged, or dispatch with ref set to that commit." >&2
               exit 1
             fi
+            # Create the tag with the Git refs API. Do not let the Releases
+            # API create it. GITHUB_TOKEN cannot be granted workflows:write.
+            # POST /releases with target_commitish returns 403 when that
+            # commit's .github/workflows tree differs from the default branch.
+            echo "Creating lightweight tag ${RELEASE_TAG} at ${SOURCE_SHA}."
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="${SOURCE_SHA}"
+          fi
+          if gh release view "$RELEASE_TAG" "${repo_args[@]}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; replacing its assets and notes."
+            gh release upload "$RELEASE_TAG" "${repo_args[@]}" "$asset_tgz" dist/SHA256SUMS --clobber
+            gh release edit "$RELEASE_TAG" "${repo_args[@]}" --notes-file "$notes"
+          else
+            # --verify-tag attaches the release to the tag that already
+            # exists. Do not pass --target. That flag is what returned
+            # HTTP 403 for the job token on run 37722489051.
             echo "Creating release ${RELEASE_TAG}."
             gh release create "$RELEASE_TAG" \
               "${repo_args[@]}" \
-              --target "$SOURCE_SHA" \
+              --verify-tag \
               --title "CockroachDB ${VERSION} OSS" \
               --notes-file "$notes" \
               "$asset_tgz" \
@@ -407,7 +417,6 @@ jobs:
         id: push
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
           SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
         run: |
@@ -453,14 +462,7 @@ jobs:
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "Pushed ${primary}@${digest}"
-          owner=${GITHUB_REPOSITORY%%/*}
-          if ! gh api --method PUT \
-            -H "Accept: application/vnd.github+json" \
-            "/orgs/${owner}/packages/container/${GHCR_PACKAGE}/visibility" \
-            -f visibility=public; then
-            echo "Could not mark ${GHCR_PACKAGE} public with this token."
-            echo "An org owner should set the package visibility to public once, in GitHub Packages."
-          fi
+          echo "Package visibility is not changed here. An organization owner sets the package to public once in its package settings."
 
   digest:
     name: Record image digest on the release
