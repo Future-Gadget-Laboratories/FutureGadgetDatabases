@@ -97,10 +97,23 @@ compile a later commit than the tag. The tag would not move, and the assets
 would not match it.
 
 The dispatch compiles again, pushes the image tags again, and creates the
-Release. Creating the Release does not move `v23.2.15-oss`. If the Release
-already exists, the job replaces its tarball and notes. The digest written
-into the notes is the one the registry reports after the push, not a line
-scraped from `docker push`.
+Release if it does not exist yet. Creating the Release does not move
+`v23.2.15-oss`. If the Release already exists, the job replaces its tarball
+and notes and does not fail. The digest written into the notes is the one
+the registry reports after the push, not a line scraped from `docker push`.
+
+Run 37722489051 built that commit and pushed the image, then
+`gh release create --target` returned HTTP 403. The job token had
+`contents: write`. That is not enough when `--target` names a commit whose
+files under `.github/workflows/` differ from the default branch. GitHub
+requires permission to modify workflows for that call, and the Actions job
+token cannot be given that permission. A release created with `--verify-tag`
+and no `--target` uses the tag that is already there, so the Releases API
+does not retarget it. The workflow does that now. If the tag is missing, the
+job creates a lightweight tag at the built commit with the Git refs API,
+then creates the Release with `--verify-tag`. It still refuses to create a
+tag on the raw `v23.2.15` commit. The release for `v23.2.15-oss` was created
+after that failed run. A later publish replaces its assets.
 
 ## Artifacts
 
@@ -134,8 +147,12 @@ cockroach-oss-v23.2.15.linux-amd64/licenses/
 
 ## Container image
 
-Registry (public package; the workflow tries to set visibility and will say
-so if the token cannot):
+The workflow pushes the image and does not change who can see the package.
+The first push leaves the package private. An organization owner opens the
+package settings and sets the visibility to public once. That cannot be
+undone. The job token's call to set visibility returned HTTP 404, because
+that API does not change visibility for an organization container package.
+The workflow no longer calls it.
 
 ```text
 ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss
@@ -270,7 +287,6 @@ In `.github/workflows/fgdb-oss-release.yml`:
 | Env | Default | Effect |
 | --- | --- | --- |
 | `IMAGE_REPOSITORY` | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases` | image name |
-| `GHCR_PACKAGE` | `futuregadgetdatabases` | package visibility API name |
 | `BUILD_CHANNEL` | `fgl-oss` | stamp channel |
 | `PUSH_MINOR_ALIAS` | `true` | also push `v23.2-oss` |
 | `EXPECT_GO` | `go1.21.12` | version check |
