@@ -7,7 +7,9 @@ contain `pkg/ccl` and `pkg/ui/distccl`, which never convert. Those targets
 are not built here.
 
 The workflow is `.github/workflows/fgdb-oss-release.yml`. It does not run on
-ordinary pushes or pull requests.
+ordinary pushes or pull requests. Pushing `v23.2.15-oss` publishes that
+release. Pushing `v23.2.15-fgdb.N` publishes a different release and leaves
+`v23.2.15-oss` where it is. `N` is an integer.
 
 ## Before the first build
 
@@ -114,6 +116,65 @@ job creates a lightweight tag at the built commit with the Git refs API,
 then creates the Release with `--verify-tag`. It still refuses to create a
 tag on the raw `v23.2.15` commit. The release for `v23.2.15-oss` was created
 after that failed run. A later publish replaces its assets.
+
+## Cut v23.2.15-fgdb.1
+
+`v23.2.15-oss` already points at its commit. Publishing current `main` must
+not move that git tag, and it must not move the image tags `:v23.2.15-oss`
+or `:v23.2-oss`.
+
+Use a release tag of the form `v23.2.15-fgdb.N`. `N` is an integer, so the
+first tag is `v23.2.15-fgdb.1` and the next is `v23.2.15-fgdb.2`. The
+database version string stays `v23.2.15`. That string still comes from
+`pkg/build/version.txt`. The tarball name stays
+`cockroach-oss-v23.2.15.linux-amd64.tgz`.
+
+The git tag is the GitHub Release name. The database binary in that release
+is still cockroach-oss v23.2.15. `fgdb-backup` is an extra program in the
+tarball and on `PATH` in the image. The Release title says the release
+includes fgdb-backup.
+
+The tag has to point at a commit that already contains this workflow, same
+as `v23.2.15-oss`. Once `main` has that workflow:
+
+```bash
+git fetch origin main
+git tag -a v23.2.15-fgdb.1 origin/main -m "cockroach-oss v23.2.15 with fgdb-backup"
+git push origin v23.2.15-fgdb.1
+```
+
+Pushing the tag builds the commit it points at and publishes the Release.
+The image tags for this kind of release are only:
+
+```text
+ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-fgdb.1
+ghcr.io/future-gadget-laboratories/futuregadgetdatabases:sha-<git sha>
+```
+
+`:v23.2.15-oss` is not pushed. `:v23.2-oss` is not moved. The
+`PUSH_MINOR_ALIAS` knob still adds `:v23.2-oss` for a `v23.2.15-oss`
+publish, and it does not apply to a `v23.2.15-fgdb.N` publish.
+
+The notes say the database binary is still cockroach-oss v23.2.15, and that
+fgdb-backup is an extra program in the tarball and on PATH in the image.
+They still tell CipherBank to pin the image digest. That pin sentence is the
+same one a `v23.2.15-oss` release uses.
+
+To publish the same tag again after it exists, run the workflow from `main`
+and set `ref` to the tag:
+
+```bash
+gh workflow run fgdb-oss-release.yml \
+  --repo Future-Gadget-Laboratories/FutureGadgetDatabases \
+  --ref main \
+  -f ref=v23.2.15-fgdb.1 \
+  -f publish=true
+```
+
+`--ref main` chooses the workflow file. `-f ref=v23.2.15-fgdb.1` is the
+commit that gets compiled, and it is also the release tag. A dispatch whose
+`ref` is `main`, a commit SHA, or `v23.2.15-oss` is still a `v23.2.15-oss`
+publish. It does not create `v23.2.15-fgdb.1`.
 
 ## Artifacts
 
