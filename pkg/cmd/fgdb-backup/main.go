@@ -64,6 +64,10 @@ const (
 	flagPartSize     = "part-size"
 	flagSafetyMargin = "safety-margin"
 	flagJSON         = "json"
+
+	helpS3Region   = "S3 region. Default: AWS_REGION"
+	helpS3Endpoint = "S3-compatible endpoint"
+	helpJSON       = "print a JSON object on stdout"
 )
 
 type stringList []string
@@ -91,13 +95,13 @@ func cmdBackup(args []string) int {
 	compression := fs.String("compression", "gzip", "gzip or none")
 	sse := fs.String("sse", "", "S3 server-side encryption: AES256 or aws:kms")
 	kms := fs.String("sse-kms-key-id", "", "KMS key id or ARN when --sse=aws:kms")
-	region := fs.String(flagS3Region, "", "S3 region. Default: AWS_REGION")
+	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", "S3-compatible endpoint, for example http://127.0.0.1:9000")
 	extend := fs.String(flagExtendGCTTL, "", "temporarily raise gc.ttlseconds for this run, for example 12h")
 	split := fs.Int(flagSplitRows, 0, "split integer-primary-key tables into ranges of this many rows")
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
 	margin := fs.Duration(flagSafetyMargin, time.Minute, "fail before the snapshot's GC deadline gets this close")
-	asJSON := fs.Bool(flagJSON, false, "print a JSON object on stdout")
+	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -153,10 +157,10 @@ func cmdRestore(args []string) int {
 	force := fs.Bool("force", false, "truncate non-empty target tables before loading")
 	load := fs.String("load", "import", "import (IMPORT INTO) or copy (COPY FROM STDIN)")
 	listen := fs.String("import-listen", "127.0.0.1:0", "address the database dials when importing a local backup")
-	region := fs.String(flagS3Region, "", "S3 region. Default: AWS_REGION")
-	endpoint := fs.String(flagS3Endpoint, "", "S3-compatible endpoint")
+	region := fs.String(flagS3Region, "", helpS3Region)
+	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
 	importAuth := fs.String("s3-import-auth", "auto", "how the database reads S3: auto, implicit, or specified")
-	asJSON := fs.Bool(flagJSON, false, "print a JSON object on stdout")
+	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -195,9 +199,9 @@ func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
-	region := fs.String(flagS3Region, "", "S3 region. Default: AWS_REGION")
-	endpoint := fs.String(flagS3Endpoint, "", "S3-compatible endpoint")
-	asJSON := fs.Bool(flagJSON, false, "print a JSON object on stdout")
+	region := fs.String(flagS3Region, "", helpS3Region)
+	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
+	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -227,9 +231,9 @@ func cmdList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	src := fs.String("src", "", "directory that contains timestamp folders, for example s3://bucket/prefix/name")
-	region := fs.String(flagS3Region, "", "S3 region. Default: AWS_REGION")
-	endpoint := fs.String(flagS3Endpoint, "", "S3-compatible endpoint")
-	asJSON := fs.Bool(flagJSON, false, "print a JSON object on stdout")
+	region := fs.String(flagS3Region, "", helpS3Region)
+	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
+	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

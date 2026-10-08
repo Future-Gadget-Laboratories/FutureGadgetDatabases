@@ -103,13 +103,20 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	var warnings []string
 	var tables []TableEntry
 	var totalRows int64
-	err = backupDatabases(ctx, db, src.store, src.dbs, asOfText, base, opt, budget, &objects, &tables, &warnings, &totalRows)
+	work := &backupWork{
+		db: db, opt: opt, src: src, asOfText: asOfText, base: base, budget: budget,
+		objects: &objects, tables: &tables, warnings: &warnings, totalRows: &totalRows,
+	}
+	err = backupDatabases(ctx, work)
 	if err != nil {
 		return res, err
 	}
 	attachGrantsAndZones(ctx, db, src.dbs, artifactZones, &objects, &warnings)
 
-	peak, err := writeBackupFiles(ctx, src, opt, base, ts, asOfText, budget.minTTL, objects, tables, warnings)
+	peak, err := writeBackupFiles(ctx, backupArtifact{
+		src: src, opt: opt, base: base, ts: ts, asOfText: asOfText, minTTL: budget.minTTL,
+		objects: objects, tables: tables, warnings: warnings,
+	})
 	if err != nil {
 		return res, err
 	}
@@ -268,9 +275,23 @@ func setBackupHeader(res *BackupResult, opt BackupOptions, src backupSource, asO
 	res.GCTTLSeconds = minTTL
 }
 
-func backupDatabases(ctx context.Context, db *database, store Store, dbs []string, asOfText, base string, opt BackupOptions, budget gcBudget, objects *ObjectsFile, tables *[]TableEntry, warnings *[]string, totalRows *int64) error {
-	for _, database := range dbs {
-		err := backupOneDatabase(ctx, db, store, database, asOfText, base, opt, budget, objects, tables, warnings, totalRows)
+// backupWork is the mutable state for copying one snapshot.
+type backupWork struct {
+	db        *database
+	opt       BackupOptions
+	src       backupSource
+	asOfText  string
+	base      string
+	budget    gcBudget
+	objects   *ObjectsFile
+	tables    *[]TableEntry
+	warnings  *[]string
+	totalRows *int64
+}
+
+func backupDatabases(ctx context.Context, work *backupWork) error {
+	for _, database := range work.src.dbs {
+		err := backupOneDatabase(ctx, work, database)
 		if err != nil {
 			return err
 		}
@@ -278,24 +299,24 @@ func backupDatabases(ctx context.Context, db *database, store Store, dbs []strin
 	return nil
 }
 
-func backupOneDatabase(ctx context.Context, db *database, store Store, database, asOfText, base string, opt BackupOptions, budget gcBudget, objects *ObjectsFile, tables *[]TableEntry, warnings *[]string, totalRows *int64) error {
+func backupOneDatabase(ctx context.Context, work *backupWork, database string) error {
 	if err := safeSegment(database); err != nil {
 		return err
 	}
-	if err := appendDatabaseDDL(ctx, db, database, asOfText, budget, objects); err != nil {
+	if err := appendDatabaseDDL(ctx, work.db, database, work.asOfText, work.budget, work.objects); err != nil {
 		return err
 	}
-	rels, err := relationsAt(ctx, db, database, asOfText)
+	rels, err := relationsAt(ctx, work.db, database, work.asOfText)
 	if err != nil {
 		return fmt.Errorf("list tables in %s: %w", database, err)
 	}
-	seqVals, seqWarn, err := readSequenceValues(ctx, db, asOfText, database, rels)
+	seqVals, seqWarn, err := readSequenceValues(ctx, work.db, work.asOfText, database, rels)
 	if err != nil {
 		return err
 	}
-	*warnings = append(*warnings, seqWarn...)
-	objects.SequenceValues = append(objects.SequenceValues, seqVals...)
-	return dumpDatabaseTables(ctx, db, store, database, asOfText, base, opt, budget, rels, tables, totalRows)
+	*work.warnings = append(*work.warnings, seqWarn...)
+	work.objects.SequenceValues = append(work.objects.SequenceValues, seqVals...)
+	return dumpDatabaseTables(ctx, work, database, rels)
 }
 
 func appendDatabaseDDL(ctx context.Context, db *database, database, asOfText string, budget gcBudget, objects *ObjectsFile) error {
@@ -357,38 +378,38 @@ func relationsAt(ctx context.Context, db *database, database, asOfText string) (
 	return rels, err
 }
 
-func dumpDatabaseTables(ctx context.Context, db *database, store Store, database, asOfText, base string, opt BackupOptions, budget gcBudget, rels []tableRef, tables *[]TableEntry, totalRows *int64) error {
+func dumpDatabaseTables(ctx context.Context, work *backupWork, database string, rels []tableRef) error {
 	for _, rel := range rels {
 		if rel.Type != "table" {
 			continue
 		}
-		entry, err := copyOneTable(ctx, db, store, database, asOfText, base, opt, budget, rel)
+		entry, err := copyOneTable(ctx, work, database, rel)
 		if err != nil {
 			return err
 		}
-		*tables = append(*tables, entry)
-		*totalRows += entry.RowCount
+		*work.tables = append(*work.tables, entry)
+		*work.totalRows += entry.RowCount
 		logf("copied %s.%s.%s (%d rows)", database, rel.Schema, rel.Name, entry.RowCount)
 	}
 	return nil
 }
 
-func copyOneTable(ctx context.Context, db *database, store Store, database, asOfText, base string, opt BackupOptions, budget gcBudget, rel tableRef) (TableEntry, error) {
-	if err := budgetCheck(budget); err != nil {
+func copyOneTable(ctx context.Context, work *backupWork, database string, rel tableRef) (TableEntry, error) {
+	if err := budgetCheck(work.budget); err != nil {
 		return TableEntry{}, err
 	}
-	entry, err := dumpTable(ctx, db, store, dumpSpec{
-		asOf:        asOfText,
-		base:        base,
+	entry, err := dumpTable(ctx, work.db, work.src.store, dumpSpec{
+		asOf:        work.asOfText,
+		base:        work.base,
 		database:    database,
 		schema:      rel.Schema,
 		table:       rel.Name,
-		compression: opt.Compression,
-		splitRows:   opt.SplitRows,
-		exceeded:    func() error { return budgetStillOpen(budget) },
+		compression: work.opt.Compression,
+		splitRows:   work.opt.SplitRows,
+		exceeded:    func() error { return budgetStillOpen(work.budget) },
 	})
 	if err != nil {
-		return TableEntry{}, copyTableError(budget, err)
+		return TableEntry{}, copyTableError(work.budget, err)
 	}
 	return entry, nil
 }
@@ -423,33 +444,55 @@ func attachGrantsAndZones(ctx context.Context, db *database, dbs []string, artif
 	}
 }
 
-func writeBackupFiles(ctx context.Context, src backupSource, opt BackupOptions, base, ts, asOfText string, minTTL int, objects ObjectsFile, tables []TableEntry, warnings []string) (int64, error) {
-	schemaDigests, err := writeSchemaFiles(ctx, src.store, base, src.dbs, objects.Statements)
+// backupArtifact is one finished snapshot ready to write.
+type backupArtifact struct {
+	src      backupSource
+	opt      BackupOptions
+	base     string
+	ts       string
+	asOfText string
+	minTTL   int
+	objects  ObjectsFile
+	tables   []TableEntry
+	warnings []string
+}
+
+// manifestParts is the files and checksums stored in manifest.json.
+type manifestParts struct {
+	objects FileDigest
+	schema  []FileDigest
+	users   FileDigest
+	zones   FileDigest
+	peak    int64
+}
+
+func writeBackupFiles(ctx context.Context, art backupArtifact) (int64, error) {
+	schemaDigests, err := writeSchemaFiles(ctx, art.src.store, art.base, art.src.dbs, art.objects.Statements)
 	if err != nil {
 		return 0, err
 	}
-	usersDig, err := writeSQLLines(ctx, src.store, base+"/users.sql", objects.Grants, "%s\n")
+	usersDig, err := writeSQLLines(ctx, art.src.store, art.base+"/users.sql", art.objects.Grants, "%s\n")
 	if err != nil {
 		return 0, err
 	}
-	zonesDig, err := writeZoneFile(ctx, src.store, base+"/zones.sql", objects.Zones)
+	zonesDig, err := writeZoneFile(ctx, art.src.store, art.base+"/zones.sql", art.objects.Zones)
 	if err != nil {
 		return 0, err
 	}
-	objDig, err := writeJSONFile(ctx, src.store, base+"/objects.json", objects)
+	objDig, err := writeJSONFile(ctx, art.src.store, art.base+"/objects.json", art.objects)
 	if err != nil {
 		return 0, err
 	}
-	peak := peakRSSBytes()
-	manifest := newManifest(src, opt, asOfText, minTTL, objDig, schemaDigests, usersDig, zonesDig, tables, warnings, peak)
-	if _, err = writeJSONFile(ctx, src.store, base+"/manifest.json", manifest); err != nil {
+	parts := manifestParts{objects: objDig, schema: schemaDigests, users: usersDig, zones: zonesDig, peak: peakRSSBytes()}
+	manifest := newManifest(art, parts)
+	if _, err = writeJSONFile(ctx, art.src.store, art.base+"/manifest.json", manifest); err != nil {
 		return 0, err
 	}
-	pointer := LatestPointer{FormatVersion: formatVersion, Name: src.name, Timestamp: ts, Complete: true}
-	if _, err = writeJSONFile(ctx, src.store, src.name+"/latest.json", pointer); err != nil {
+	pointer := LatestPointer{FormatVersion: formatVersion, Name: art.src.name, Timestamp: art.ts, Complete: true}
+	if _, err = writeJSONFile(ctx, art.src.store, art.src.name+"/latest.json", pointer); err != nil {
 		return 0, err
 	}
-	return peak, nil
+	return parts.peak, nil
 }
 
 func writeSchemaFiles(ctx context.Context, store Store, base string, dbs []string, statements []Statement) ([]FileDigest, error) {
@@ -507,26 +550,28 @@ func writeJSONFile(ctx context.Context, store Store, rel string, v any) (FileDig
 	return writeBytes(ctx, store, rel, body)
 }
 
-func newManifest(src backupSource, opt BackupOptions, asOfText string, minTTL int, objDig FileDigest, schemaDigests []FileDigest, usersDig, zonesDig FileDigest, tables []TableEntry, warnings []string, peak int64) Manifest {
+func newManifest(art backupArtifact, parts manifestParts) Manifest {
+	users := parts.users
+	zones := parts.zones
 	return Manifest{
 		FormatVersion: formatVersion,
 		Tool:          toolName,
 		ToolVersion:   toolVersion,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		SourceVersion: src.version,
-		ClusterID:     src.clusterID,
-		Name:          src.name,
-		AsOf:          asOfText,
-		GCTTLSeconds:  minTTL,
-		Compression:   opt.Compression,
-		Databases:     src.dbs,
-		ObjectsFile:   objDig,
-		SchemaFiles:   schemaDigests,
-		UsersFile:     &usersDig,
-		ZonesFile:     &zonesDig,
-		Tables:        tables,
-		Warnings:      warnings,
-		PeakRSSBytes:  peak,
+		SourceVersion: art.src.version,
+		ClusterID:     art.src.clusterID,
+		Name:          art.src.name,
+		AsOf:          art.asOfText,
+		GCTTLSeconds:  art.minTTL,
+		Compression:   art.opt.Compression,
+		Databases:     art.src.dbs,
+		ObjectsFile:   parts.objects,
+		SchemaFiles:   parts.schema,
+		UsersFile:     &users,
+		ZonesFile:     &zones,
+		Tables:        art.tables,
+		Warnings:      art.warnings,
+		PeakRSSBytes:  parts.peak,
 	}
 }
 

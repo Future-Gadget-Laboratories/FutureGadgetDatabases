@@ -45,7 +45,9 @@ func TestRoundtrip(t *testing.T) {
 	dest := filepath.Join(base, "backups")
 	bres := backupAndCheck(t, tool, srcURL, dest)
 	verifyLatest(t, tool, dest, bres)
-	restoreAndCompare(t, bin, tool, srcAddr, dstAddr, dstURL, dest, bres)
+	restoreAndCompare(t, clusterPair{
+		bin: bin, tool: tool, srcAddr: srcAddr, dstAddr: dstAddr, dstURL: dstURL, dest: dest, backup: bres,
+	})
 	assertIncompatible(t, tool, dstURL, base, bres)
 	assertShortTTLFails(t, bin, tool, srcURL, srcAddr, base)
 	gcRes := assertExtendTTLReverts(t, bin, tool, srcURL, srcAddr, base)
@@ -190,8 +192,21 @@ func assertLatest(t *testing.T, lres ListResult, timestamp string) {
 	}
 }
 
-func restoreAndCompare(t *testing.T, bin, tool, srcAddr, dstAddr, dstURL, dest string, bres BackupResult) {
+// clusterPair is the source and target used by one roundtrip restore.
+type clusterPair struct {
+	bin     string
+	tool    string
+	srcAddr string
+	dstAddr string
+	dstURL  string
+	dest    string
+	backup  BackupResult
+}
+
+func restoreAndCompare(t *testing.T, pair clusterPair) {
 	t.Helper()
+	bin, tool, srcAddr, dstAddr := pair.bin, pair.tool, pair.srcAddr, pair.dstAddr
+	dstURL, dest, bres := pair.dstURL, pair.dest, pair.backup
 	rout := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
 	var rres RestoreResult
 	if err := json.Unmarshal(rout, &rres); err != nil {
