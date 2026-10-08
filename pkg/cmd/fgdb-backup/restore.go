@@ -589,51 +589,77 @@ func loadCopy(ctx context.Context, db *database, store Store, base string, manif
 		if !selected[table.Database] || table.RowCount == 0 {
 			continue
 		}
-		cols := make([]string, len(table.Columns))
-		for i, c := range table.Columns {
-			cols[i] = quoteIdent(c)
-		}
-		copySQL := fmt.Sprintf("COPY %s (%s) FROM STDIN",
-			qualified(table.Database, table.Schema, table.Name),
-			strings.Join(cols, ", "),
-		)
-		for _, f := range table.Files {
-			rc, err := store.Open(ctx, base+"/"+f.Path)
-			if err != nil {
-				return nil, err
-			}
-			var src io.Reader = rc
-			var gz *gzip.Reader
-			if manifest.Compression == "gzip" || strings.HasSuffix(f.Path, ".gz") {
-				gz, err = gzip.NewReader(rc)
-				if err != nil {
-					rc.Close()
-					return nil, err
-				}
-				src = gz
-			}
-			if hasArrayColumn(table.ArraySQL) {
-				if len(table.ArraySQL) != len(table.Columns) {
-					rc.Close()
-					if gz != nil {
-						_ = gz.Close()
-					}
-					return nil, fmt.Errorf("COPY %s: array_sql does not match the column list", table.qualified())
-				}
-				src = newArrayCopyReader(src, table.ArraySQL)
-			}
-			logf("copying %s", table.qualified())
-			err = db.copyFrom(ctx, bufio.NewReader(src), copySQL)
-			if gz != nil {
-				_ = gz.Close()
-			}
-			rc.Close()
-			if err != nil {
-				return nil, fmt.Errorf("COPY %s: %w", table.qualified(), err)
-			}
+		if err := copyTable(ctx, db, store, base, manifest, table); err != nil {
+			return nil, err
 		}
 	}
 	return nil, nil
+}
+
+func copyTable(ctx context.Context, db *database, store Store, base string, manifest Manifest, table TableEntry) error {
+	copySQL := copyFromSQL(table)
+	for _, f := range table.Files {
+		if err := copyTableFile(ctx, db, store, base, manifest, table, f, copySQL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFromSQL(table TableEntry) string {
+	cols := make([]string, len(table.Columns))
+	for i, c := range table.Columns {
+		cols[i] = quoteIdent(c)
+	}
+	return fmt.Sprintf("COPY %s (%s) FROM STDIN",
+		qualified(table.Database, table.Schema, table.Name),
+		strings.Join(cols, ", "),
+	)
+}
+
+func copyTableFile(ctx context.Context, db *database, store Store, base string, manifest Manifest, table TableEntry, f FileDigest, copySQL string) error {
+	rc, err := store.Open(ctx, base+"/"+f.Path)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	src, gz, err := openCopySource(rc, manifest, f.Path)
+	if err != nil {
+		return err
+	}
+	if gz != nil {
+		defer gz.Close()
+	}
+	src, err = wrapArrayCopy(src, table)
+	if err != nil {
+		return err
+	}
+	logf("copying %s", table.qualified())
+	if err := db.copyFrom(ctx, bufio.NewReader(src), copySQL); err != nil {
+		return fmt.Errorf("COPY %s: %w", table.qualified(), err)
+	}
+	return nil
+}
+
+func openCopySource(rc io.Reader, manifest Manifest, path string) (io.Reader, *gzip.Reader, error) {
+	if manifest.Compression != "gzip" && !strings.HasSuffix(path, ".gz") {
+		return rc, nil, nil
+	}
+	gz, err := gzip.NewReader(rc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return gz, gz, nil
+}
+
+func wrapArrayCopy(src io.Reader, table TableEntry) (io.Reader, error) {
+	if !hasArrayColumn(table.ArraySQL) {
+		return src, nil
+	}
+	if len(table.ArraySQL) != len(table.Columns) {
+		return nil, fmt.Errorf("COPY %s: array_sql does not match the column list", table.qualified())
+	}
+	return newArrayCopyReader(src, table.ArraySQL), nil
 }
 
 func incompatibleError(problems []Problem) error {
