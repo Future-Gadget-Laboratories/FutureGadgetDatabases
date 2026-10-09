@@ -21,14 +21,16 @@ import (
 // Location is a local directory or an s3 prefix. Backup objects are paths
 // relative to Root.
 type Location struct {
-	Kind       string // file or s3
-	Root       string // local directory, or key prefix without leading slash
-	Bucket     string
-	Region     string
-	Endpoint   string
-	SSE        string
-	KMSKeyID   string
-	ImportAuth string // auto, implicit, specified
+	Kind                 string // file or s3
+	Root                 string // local directory, or key prefix without leading slash
+	Bucket               string
+	Region               string
+	Endpoint             string
+	SSE                  string
+	KMSKeyID             string
+	ImportAuth           string // auto, implicit, specified
+	FileMode             os.FileMode
+	AllowUnsafeOverwrite bool
 }
 
 func parseLocation(raw, region, endpoint, sse, kms, importAuth string) (Location, error) {
@@ -129,7 +131,11 @@ func openStore(ctx context.Context, loc Location) (Store, error) {
 		if err := os.MkdirAll(loc.Root, 0o755); err != nil {
 			return nil, err
 		}
-		return &localStore{root: loc.Root}, nil
+		mode := loc.FileMode
+		if mode == 0 {
+			mode = 0o640
+		}
+		return &localStore{root: loc.Root, fileMode: mode}, nil
 	case "s3":
 		return newS3Store(ctx, loc)
 	default:
@@ -138,7 +144,8 @@ func openStore(ctx context.Context, loc Location) (Store, error) {
 }
 
 type localStore struct {
-	root string
+	root     string
+	fileMode os.FileMode
 }
 
 func (s *localStore) path(rel string) string {
@@ -156,7 +163,16 @@ func (s *localStore) Create(_ context.Context, rel string) (io.WriteCloser, erro
 		return nil, err
 	}
 	tmp := f.Name()
-	return &renameFile{f: f, tmp: tmp, final: final}, nil
+	mode := s.fileMode
+	if mode == 0 {
+		mode = 0o640
+	}
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return nil, err
+	}
+	return &renameFile{f: f, tmp: tmp, final: final, mode: mode}, nil
 }
 
 func (s *localStore) Open(_ context.Context, rel string) (io.ReadCloser, error) {
@@ -211,6 +227,7 @@ type renameFile struct {
 	f     *os.File
 	tmp   string
 	final string
+	mode  os.FileMode
 	done  bool
 }
 
@@ -230,13 +247,41 @@ func (r *renameFile) Close() error {
 		_ = os.Remove(r.tmp)
 		return err
 	}
-	if err := os.Link(r.tmp, r.final); err != nil {
+	src, err := os.Open(r.tmp)
+	if err != nil {
+		return err
+	}
+	final, err := os.OpenFile(r.final, os.O_WRONLY|os.O_CREATE|os.O_EXCL, r.mode)
+	if err != nil {
+		_ = src.Close()
 		_ = os.Remove(r.tmp)
 		return err
 	}
-	if err := os.Remove(r.tmp); err != nil {
+	if _, err := io.Copy(final, src); err != nil {
+		_ = final.Close()
+		_ = src.Close()
+		_ = os.Remove(r.final)
+		_ = os.Remove(r.tmp)
 		return err
 	}
+	if err := final.Sync(); err != nil {
+		_ = final.Close()
+		_ = src.Close()
+		_ = os.Remove(r.final)
+		_ = os.Remove(r.tmp)
+		return err
+	}
+	if err := final.Close(); err != nil {
+		_ = src.Close()
+		_ = os.Remove(r.final)
+		_ = os.Remove(r.tmp)
+		return err
+	}
+	if err := src.Close(); err != nil {
+		_ = os.Remove(r.tmp)
+		return err
+	}
+	_ = os.Remove(r.tmp)
 	if dir, err := os.Open(filepath.Dir(r.final)); err == nil {
 		_ = dir.Sync()
 		_ = dir.Close()

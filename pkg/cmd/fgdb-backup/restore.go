@@ -8,12 +8,15 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -28,9 +31,18 @@ type RestoreOptions struct {
 	Location     Location
 	Databases    []string
 	Force        bool
+	InPlace      bool
 	Load         string
 	ImportListen string
+	ServeAddr    string
+	ServeTLSCert string
+	ServeTLSKey  string
 	JSON         bool
+	Plan         bool
+	PlanFormat   string
+	SwapRestore  bool
+	TestingMode  bool
+	ConfigPath   string
 }
 
 // Problem is one object that could not be restored. These are never skipped silently.
@@ -43,16 +55,33 @@ type Problem struct {
 
 // RestoreResult is the machine-readable restore summary.
 type RestoreResult struct {
-	OK            bool      `json:"ok"`
-	Error         string    `json:"error,omitempty"`
-	Backup        string    `json:"backup,omitempty"`
-	AsOf          string    `json:"as_of,omitempty"`
-	SourceVersion string    `json:"source_version,omitempty"`
-	Tables        int       `json:"tables,omitempty"`
-	Rows          int64     `json:"rows,omitempty"`
-	Incompatible  []Problem `json:"incompatible,omitempty"`
-	Warnings      []string  `json:"warnings,omitempty"`
+	OK            bool         `json:"ok"`
+	Error         string       `json:"error,omitempty"`
+	Backup        string       `json:"backup,omitempty"`
+	AsOf          string       `json:"as_of,omitempty"`
+	SourceVersion string       `json:"source_version,omitempty"`
+	Tables        int          `json:"tables,omitempty"`
+	Rows          int64        `json:"rows,omitempty"`
+	Incompatible  []Problem    `json:"incompatible,omitempty"`
+	Warnings      []string     `json:"warnings,omitempty"`
+	Plan          *RestorePlan `json:"plan,omitempty"`
 }
+
+// RestorePlan is read-only information gathered before a restore can mutate
+// a cluster. It is also returned by --plan for scripting and review.
+type RestorePlan struct {
+	OK      bool     `json:"ok"`
+	Drop    []string `json:"drop,omitempty"`
+	Checks  []string `json:"checks,omitempty"`
+	Reasons []string `json:"reasons,omitempty"`
+	Swap    []string `json:"swap,omitempty"`
+}
+
+type planRefusalError struct {
+	message string
+}
+
+func (e *planRefusalError) Error() string { return e.message }
 
 type restoreBundle struct {
 	root     Location
@@ -86,8 +115,29 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	defer db.Close(ctx)
 
+	plan, err := buildRestorePlan(ctx, db, bundle.objects, bundle.manifest, selected, opt.Force, opt.InPlace, opt.SwapRestore)
+	if err != nil {
+		return res, err
+	}
+	res.Plan = &plan
+	if opt.Plan {
+		if opt.PlanFormat == "text" {
+			printRestorePlan(plan)
+		}
+		if !plan.OK {
+			return res, &planRefusalError{message: "restore preflight refused: " + strings.Join(plan.Reasons, "; ")}
+		}
+		res.OK = true
+		return res, nil
+	}
+	if !plan.OK {
+		return res, fmt.Errorf("restore preflight refused: %s", strings.Join(plan.Reasons, "; "))
+	}
+	if len(plan.Swap) > 0 && !opt.InPlace {
+		return restoreAsideAndSwap(ctx, db, bundle, selected, opt, res, plan)
+	}
 	restore := func(ctx context.Context) error {
-		if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
+		if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force && opt.InPlace, opt.InPlace && opt.Load == "copy"); err != nil {
 			return err
 		}
 		if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
@@ -105,12 +155,254 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 		res, finishErr = finishRestore(ctx, db, bundle, selected, &res)
 		return finishErr
 	}
-	if opt.Force && opt.Load == "copy" {
+	if opt.InPlace && opt.Load == "copy" {
 		err = db.withTransaction(ctx, restore)
 	} else {
 		err = restore(ctx)
 	}
 	return res, err
+}
+
+func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, manifest Manifest, selected map[string]bool, force, inPlace, swapDefault bool) (RestorePlan, error) {
+	plan := RestorePlan{OK: true}
+	plan.Checks = append(plan.Checks, "backup checksums and manifest")
+	plan.Checks = append(plan.Checks, "target database permissions")
+	for _, database := range objects.Databases {
+		if !selected[database.Name] {
+			continue
+		}
+		result, err := planDatabase(ctx, db, objects, database.Name, force, inPlace, swapDefault)
+		if err != nil {
+			return plan, err
+		}
+		plan.Reasons = append(plan.Reasons, result.reasons...)
+		plan.Checks = append(plan.Checks, result.checks...)
+		if result.swap != "" {
+			plan.Swap = append(plan.Swap, result.swap)
+		}
+	}
+	plan.OK = len(plan.Reasons) == 0
+	for _, st := range objects.Statements {
+		if selected[st.Database] && droppableKind(st.Kind) {
+			plan.Drop = append(plan.Drop, st.Kind+" "+st.Object)
+		}
+	}
+	return plan, nil
+}
+
+type databasePlan struct {
+	reasons []string
+	checks  []string
+	swap    string
+}
+
+func planDatabase(ctx context.Context, db *database, objects ObjectsFile, name string, force, inPlace, swapDefault bool) (databasePlan, error) {
+	var result databasePlan
+	exists, err := databaseExists(ctx, db, name)
+	if err != nil {
+		return result, err
+	}
+	if !exists {
+		result.checks = append(result.checks, "database "+name+" will be created")
+		return result, nil
+	}
+	hasObjects, err := databaseHasUserObjects(ctx, db, name)
+	if err != nil {
+		return result, err
+	}
+	if !hasObjects {
+		return result, nil
+	}
+	if !force {
+		result.reasons = append(result.reasons, fmt.Sprintf("database %s is not empty; plain restore never replaces an existing database; use --force after reviewing this plan", name))
+		return result, nil
+	}
+	if inPlace || !swapDefault {
+		if !inPlace {
+			result.reasons = append(result.reasons, fmt.Sprintf("database %s cannot use swap because it is disabled; rerun with --force=in-place", name))
+			return result, nil
+		}
+		return result, nil
+	}
+	if err := db.use(ctx, name); err != nil {
+		return result, err
+	}
+	result.reasons = dependencyReasons(ctx, db, objects, name)
+	result.reasons = append(result.reasons, restoredDependencyReasons(objects, name)...)
+	if len(result.reasons) > 0 {
+		return result, nil
+	}
+	if err := databaseRenameBlocked(ctx, db, name); err != nil {
+		result.reasons = append(result.reasons, err.Error())
+		return result, nil
+	}
+	temp, _, err := swapNames(ctx, db, name)
+	if err != nil {
+		result.reasons = append(result.reasons, err.Error())
+		return result, nil
+	}
+	result.swap = name
+	result.checks = append(result.checks, fmt.Sprintf("database %s can be restored beside the existing copy as %s", name, temp))
+	return result, nil
+}
+
+func databaseRenameBlocked(ctx context.Context, db *database, name string) error {
+	rels, err := listRelations(ctx, db)
+	if err != nil {
+		return err
+	}
+	for _, rel := range rels {
+		if rel.Type == "view" || rel.Type == "materialized view" {
+			return fmt.Errorf("database %s cannot be renamed safely while %s.%s is present", name, rel.Schema, rel.Name)
+		}
+	}
+	if err := routinesBlockRename(ctx, db, name); err != nil {
+		return err
+	}
+	databases, err := listDatabases(ctx, db, nil)
+	if err != nil {
+		return err
+	}
+	for _, other := range databases {
+		if other == name || skippedDatabase(other) {
+			continue
+		}
+		if err := db.use(ctx, other); err != nil {
+			return err
+		}
+		if err := externalDatabaseDependencies(ctx, db, name, other); err != nil {
+			return err
+		}
+	}
+	if err := db.use(ctx, name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func routinesBlockRename(ctx context.Context, db *database, name string) error {
+	for _, table := range []string{"create_function_statements", "create_procedure_statements"} {
+		rows, err := db.query(ctx, "SELECT schema_name, "+strings.TrimSuffix(strings.TrimPrefix(table, "create_"), "_statements")+"_name FROM crdb_internal."+table)
+		if err != nil {
+			return fmt.Errorf("inspect routines in %s: %w", name, err)
+		}
+		for rows.Next() {
+			var schema, routine string
+			if err := rows.Scan(&schema, &routine); err != nil {
+				rows.Close()
+				return err
+			}
+			rows.Close()
+			return fmt.Errorf("database %s cannot be renamed safely while %s.%s is present", name, schema, routine)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	return nil
+}
+
+func externalDatabaseDependencies(ctx context.Context, db *database, target, database string) error {
+	rels, err := listRelations(ctx, db)
+	if err != nil {
+		return err
+	}
+	for _, rel := range rels {
+		if rel.Type != "view" && rel.Type != "materialized view" {
+			continue
+		}
+		create, err := showCreateRelation(ctx, db, rel)
+		if err != nil {
+			return err
+		}
+		if containsDatabaseReference(create, target) {
+			return fmt.Errorf("database %s cannot be renamed: %s.%s in database %s depends on it", target, rel.Schema, rel.Name, database)
+		}
+	}
+	for _, routine := range []string{"function", "procedure"} {
+		rows, err := db.query(ctx, "SELECT schema_name, "+routine+"_name, create_statement FROM crdb_internal.create_"+routine+"_statements")
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var schema, name, create string
+			if err := rows.Scan(&schema, &name, &create); err != nil {
+				rows.Close()
+				return err
+			}
+			if containsDatabaseReference(create, target) {
+				rows.Close()
+				return fmt.Errorf("database %s cannot be renamed: %s.%s in database %s depends on it", target, schema, name, database)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	return nil
+}
+
+func containsDatabaseReference(sql, database string) bool {
+	lower := strings.ToLower(sql)
+	return strings.Contains(lower, strings.ToLower(database)+".") ||
+		strings.Contains(lower, `"`+strings.ToLower(database)+`".`)
+}
+
+func restoredDependencyReasons(objects ObjectsFile, database string) []string {
+	var reasons []string
+	for _, st := range objects.Statements {
+		if st.Database != database {
+			continue
+		}
+		switch st.Kind {
+		case "view", "materialized_view", "function", "procedure":
+			reasons = append(reasons, fmt.Sprintf("restored %s %s may block database rename", st.Kind, st.Object))
+		}
+	}
+	return reasons
+}
+
+func dependencyReasons(ctx context.Context, db *database, objects ObjectsFile, name string) []string {
+	var reasons []string
+	if err := outsideForeignKeys(ctx, db, objects, name); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := outsideCatalogDependencies(ctx, db, objects, name); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	return reasons
+}
+
+func droppableKind(kind string) bool {
+	switch kind {
+	case "view", "materialized_view", "function", "procedure", "table", "sequence", "type":
+		return true
+	default:
+		return false
+	}
+}
+
+func printRestorePlan(plan RestorePlan) {
+	fmt.Printf("restore plan: %s\n", map[bool]string{true: "OK", false: "REFUSE"}[plan.OK])
+	for _, check := range plan.Checks {
+		fmt.Printf("check: %s\n", check)
+	}
+	if len(plan.Swap) == 0 {
+		for _, object := range plan.Drop {
+			fmt.Printf("drop: %s\n", object)
+		}
+	}
+	for _, database := range plan.Swap {
+		fmt.Printf("swap: %s\n", database)
+	}
+	for _, reason := range plan.Reasons {
+		fmt.Printf("reason: %s\n", reason)
+	}
+	fmt.Println("plan only; nothing changed")
 }
 
 func normalizeRestoreOptions(opt RestoreOptions) (RestoreOptions, error) {
@@ -207,9 +499,29 @@ func createSelectedDatabases(ctx context.Context, db *database, databases []Name
 		}
 		if p, ok := createDatabase(ctx, db, database); !ok {
 			problems = append(problems, p)
+		} else if err := waitForDatabase(ctx, db, database.Name); err != nil {
+			problems = append(problems, Problem{Object: database.Name, Kind: "database", Error: err.Error()})
 		}
 	}
 	return problems
+}
+
+func waitForDatabase(ctx context.Context, db *database, name string) error {
+	for attempt := 0; attempt < 20; attempt++ {
+		exists, err := databaseExists(ctx, db, name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("database %s was not visible after CREATE DATABASE", name)
 }
 
 func createDatabase(ctx context.Context, db *database, database NamedSQL) (Problem, bool) {
@@ -468,6 +780,11 @@ type importRequest struct {
 
 func loadImport(ctx context.Context, req importRequest) ([]string, error) {
 	var warnings []string
+	if req.opt.TestingMode {
+		if err := testingImportProbe(ctx, req.db); err != nil {
+			return nil, err
+		}
+	}
 	httpBase, closer, err := serveLocalBackup(req)
 	if err != nil {
 		return nil, err
@@ -483,32 +800,90 @@ func loadImport(ctx context.Context, req importRequest) ([]string, error) {
 	return warnings, nil
 }
 
+func testingImportProbe(ctx context.Context, db *database) error {
+	name := "__fgdb_backup_probe_" + strings.ToLower(strings.ReplaceAll(newBackupID(time.Now()), ".", ""))
+	if _, err := db.exec(ctx, "CREATE TABLE "+quoteIdent(name)+" (value STRING)"); err != nil {
+		return fmt.Errorf("testing-mode scratch import setup: %w", err)
+	}
+	cleanup := func() {
+		_, _ = db.exec(context.Background(), "DROP TABLE IF EXISTS "+quoteIdent(name))
+	}
+	if err := db.copyFrom(ctx, strings.NewReader("probe\n"), "COPY "+quoteIdent(name)+" (value) FROM STDIN"); err != nil {
+		cleanup()
+		return fmt.Errorf("testing-mode scratch import: %w", err)
+	}
+	cleanup()
+	return nil
+}
+
 func serveLocalBackup(req importRequest) (string, func(), error) {
 	if s3s, ok := req.store.(*s3Store); ok && s3s.implicitImport() {
 		return "", nil, nil
 	}
-	ln, err := net.Listen("tcp", req.opt.ImportListen)
+	addr := req.opt.ServeAddr
+	if addr == "" {
+		addr = req.opt.ImportListen
+	}
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return "", nil, fmt.Errorf("listen for IMPORT: %w", err)
 	}
-	var handler http.Handler
-	if req.root.Kind == "file" {
-		handler = http.FileServer(http.Dir(req.root.join(req.base)))
-	} else {
-		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			serveStoredObject(w, r, req)
-		})
+	token, err := serveToken()
+	if err != nil {
+		_ = ln.Close()
+		return "", nil, err
 	}
+	prefix := "/" + token + "/"
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, prefix) {
+			http.NotFound(w, r)
+			return
+		}
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+		if r.URL.Path == "" || strings.Contains(r.URL.Path, "..") {
+			http.NotFound(w, r)
+			return
+		}
+		if req.root.Kind == "file" {
+			path := req.root.join(req.base + "/" + strings.TrimPrefix(r.URL.Path, "/"))
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFile(w, r, path)
+			return
+		}
+		serveStoredObject(w, r, req)
+	})
 	srv := &http.Server{Handler: handler}
-	go func() { _ = srv.Serve(ln) }()
+	go func() {
+		if req.opt.ServeTLSCert != "" || req.opt.ServeTLSKey != "" {
+			_ = srv.ServeTLS(ln, req.opt.ServeTLSCert, req.opt.ServeTLSKey)
+			return
+		}
+		_ = srv.Serve(ln)
+	}()
 	closer := func() {
 		shut, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shut)
 	}
-	httpBase := "http://" + ln.Addr().String()
+	scheme := "http"
+	if req.opt.ServeTLSCert != "" || req.opt.ServeTLSKey != "" {
+		scheme = "https"
+	}
+	httpBase := scheme + "://" + ln.Addr().String() + prefix
 	logf("serving the backup at %s for IMPORT", httpBase)
 	return httpBase, closer, nil
+}
+
+func serveToken() (string, error) {
+	var raw [16]byte
+	if _, err := cryptorand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("create import URL token: %w", err)
+	}
+	return hex.EncodeToString(raw[:]), nil
 }
 
 func serveStoredObject(w http.ResponseWriter, r *http.Request, req importRequest) {
@@ -751,11 +1126,8 @@ func resolveBackup(ctx context.Context, root Location, src string) (Location, st
 }
 
 func looksLikeTimestamp(s string) bool {
-	if len(s) != len("20060102T150405Z") {
-		return false
-	}
-	_, err := time.Parse("20060102T150405Z", s)
-	return err == nil
+	_, ok := backupTime(s)
+	return ok
 }
 
 func openBackup(ctx context.Context, root Location, timestamp string) (Store, string, error) {

@@ -8,7 +8,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // arrayStreamReader converts marked array fields without retaining a whole
@@ -314,13 +316,7 @@ func (r *arrayStreamReader) openQuote(escaped bool) {
 
 func (r *arrayStreamReader) readQuoted(b byte) error {
 	if r.backslash {
-		r.backslash = false
-		if plain, ok := simpleSQLEscape(b); ok {
-			r.emitArrayByte(plain)
-		} else {
-			r.emitArrayByte(b)
-		}
-		return nil
+		return r.readQuotedEscape(b)
 	}
 	if r.quote {
 		r.quote = false
@@ -341,6 +337,73 @@ func (r *arrayStreamReader) readQuoted(b byte) error {
 		return nil
 	}
 	r.emitArrayByte(b)
+	return nil
+}
+
+func (r *arrayStreamReader) readQuotedEscape(b byte) error {
+	r.backslash = false
+	if plain, ok := simpleSQLEscape(b); ok {
+		r.emitArrayByte(plain)
+		return nil
+	}
+	switch {
+	case b == 'x':
+		value, err := r.readEscapeValue(2)
+		if err != nil {
+			return err
+		}
+		r.emitArrayByte(byte(value))
+	case b == 'u':
+		return r.emitUnicodeEscape(4)
+	case b == 'U':
+		return r.emitUnicodeEscape(8)
+	case b >= '0' && b <= '7':
+		value := b - '0'
+		for n := 1; n < 3; n++ {
+			next, err := r.in.ReadByte()
+			if err != nil {
+				if err == io.EOF {
+					r.emitArrayByte(value)
+					return nil
+				}
+				return err
+			}
+			if next < '0' || next > '7' {
+				r.emitArrayByte(value)
+				return r.readQuoted(next)
+			}
+			value = value*8 + next - '0'
+		}
+		r.emitArrayByte(value)
+	default:
+		r.emitArrayByte(b)
+	}
+	return nil
+}
+
+func (r *arrayStreamReader) readEscapeValue(digits int) (uint64, error) {
+	buf := make([]byte, digits)
+	if _, err := io.ReadFull(r.in, buf); err != nil {
+		return 0, fmt.Errorf("truncated string escape: %w", err)
+	}
+	value, err := strconv.ParseUint(string(buf), 16, 32)
+	if err != nil {
+		return 0, fmt.Errorf("bad string escape")
+	}
+	return value, nil
+}
+
+func (r *arrayStreamReader) emitUnicodeEscape(digits int) error {
+	value, err := r.readEscapeValue(digits)
+	if err != nil {
+		return err
+	}
+	if !utf8.ValidRune(rune(value)) {
+		return fmt.Errorf("bad unicode escape")
+	}
+	for _, b := range []byte(string(rune(value))) {
+		r.emitArrayByte(b)
+	}
 	return nil
 }
 
@@ -392,6 +455,10 @@ func (r *arrayStreamReader) readAfterDelimiter(b byte) error {
 }
 
 func (r *arrayStreamReader) emitArray(b byte) {
+	if b == '"' {
+		r.emit(b)
+		return
+	}
 	r.emitArrayByte(b)
 }
 
@@ -405,6 +472,9 @@ func (r *arrayStreamReader) emitArrayByte(b byte) {
 	switch b {
 	case '\\':
 		r.emitString(`\\\\`)
+	case '"':
+		r.emitString(`\\`)
+		r.emit('"')
 	case '\n':
 		r.emitString(`\n`)
 	case '\r':

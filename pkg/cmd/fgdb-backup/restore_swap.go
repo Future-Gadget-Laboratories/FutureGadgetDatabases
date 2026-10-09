@@ -9,28 +9,30 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
-func swapNames(ctx context.Context, db *database, name string) (string, error) {
-	suffix := time.Now().UTC().Format("20060102t150405")
+func swapNames(ctx context.Context, db *database, name string) (string, string, error) {
+	suffix := strings.ToLower(strings.ReplaceAll(newBackupID(time.Now()), ".", ""))
 	temp := strings.ToLower(name + "__fgdb_restore_" + suffix)
 	old := strings.ToLower(name + "__fgdb_old_" + suffix)
 	if err := safeSegment(temp); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := safeSegment(old); err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, candidate := range []string{temp, old} {
 		exists, err := databaseExists(ctx, db, candidate)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if exists {
-			return "", fmt.Errorf("swap name %s already exists; choose a later restore run", candidate)
+			return "", "", fmt.Errorf("swap name %s already exists; choose a later restore run", candidate)
 		}
 	}
-	return temp, nil
+	return temp, old, nil
 }
 
 func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions, res RestoreResult, plan RestorePlan) (RestoreResult, error) {
@@ -40,12 +42,12 @@ func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle
 	names := map[string]string{}
 	oldCopies := map[string]string{}
 	for _, oldName := range plan.Swap {
-		tempName, err := swapNames(ctx, db, oldName)
+		tempName, oldCopy, err := swapNames(ctx, db, oldName)
 		if err != nil {
 			return res, err
 		}
 		names[oldName] = tempName
-		oldCopies[oldName] = strings.ToLower(oldName + "__fgdb_old_" + time.Now().UTC().Format("20060102t150405"))
+		oldCopies[oldName] = oldCopy
 	}
 	for oldName := range selected {
 		if _, ok := names[oldName]; !ok {
@@ -58,34 +60,72 @@ func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle
 		tempSelected[tempName] = true
 	}
 	if err := restoreIntoEmpty(ctx, db, tempBundle, tempSelected, opt, &res); err != nil {
-		return res, err
+		if cleanupErr := cleanupSwapCopies(ctx, db, names); cleanupErr != nil {
+			return res, fmt.Errorf("%w; temporary restore databases remain: %s (cleanup failed: %v)", err, strings.Join(tempNames(names), ", "), cleanupErr)
+		}
+		return res, fmt.Errorf("%w; temporary restore databases were removed", err)
 	}
 	if _, err := db.exec(ctx, "BEGIN"); err != nil {
 		return res, fmt.Errorf("begin database swap: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = db.exec(context.Background(), "ROLLBACK")
-		}
-	}()
 	for oldName, tempName := range names {
 		oldCopy := oldCopies[oldName]
 		if _, err := db.exec(ctx, "ALTER DATABASE "+quoteIdent(oldName)+" RENAME TO "+quoteIdent(oldCopy)); err != nil {
-			return res, fmt.Errorf("rename old database for swap: %w", err)
+			return rollbackSwap(ctx, db, names, res, fmt.Errorf("rename old database for swap: %w", err))
 		}
 		if _, err := db.exec(ctx, "ALTER DATABASE "+quoteIdent(tempName)+" RENAME TO "+quoteIdent(oldName)); err != nil {
-			return res, fmt.Errorf("rename restored database for swap: %w", err)
+			return rollbackSwap(ctx, db, names, res, fmt.Errorf("rename restored database for swap: %w", err))
 		}
 	}
 	if _, err := db.exec(ctx, "COMMIT"); err != nil {
-		return res, fmt.Errorf("commit database swap: %w", err)
+		return rollbackSwap(ctx, db, names, res, fmt.Errorf("commit database swap: %w", err))
 	}
-	committed = true
 	for oldName, oldCopy := range oldCopies {
 		res.Warnings = append(res.Warnings, "the previous database "+oldName+" was kept as "+oldCopy)
 	}
 	return res, nil
+}
+
+func rollbackSwap(ctx context.Context, db *database, names map[string]string, res RestoreResult, cause error) (RestoreResult, error) {
+	_, _ = db.exec(context.Background(), "ROLLBACK")
+	if err := cleanupSwapCopies(ctx, db, names); err != nil {
+		return res, fmt.Errorf("%w; temporary restore databases remain: %s (cleanup failed: %v)", cause, strings.Join(tempNames(names), ", "), err)
+	}
+	return res, fmt.Errorf("%w; temporary restore databases were removed", cause)
+}
+
+func tempNames(names map[string]string) []string {
+	out := make([]string, 0, len(names))
+	for oldName, name := range names {
+		if oldName == name {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func cleanupSwapCopies(ctx context.Context, db *database, names map[string]string) error {
+	var first error
+	for oldName, temp := range names {
+		if oldName == temp {
+			continue
+		}
+		exists, err := databaseExists(ctx, db, temp)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if !exists {
+			continue
+		}
+		if _, err := db.exec(ctx, "DROP DATABASE "+quoteIdent(temp)+" CASCADE"); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 func restoreIntoEmpty(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions, res *RestoreResult) error {
@@ -198,7 +238,127 @@ func rewriteList(values []string, oldName, newName string) []string {
 }
 
 func rewriteDatabaseName(value, oldName, newName string) string {
-	value = strings.ReplaceAll(value, oldName+".", newName+".")
-	value = strings.ReplaceAll(value, `"`+oldName+`".`, `"`+newName+`".`)
-	return value
+	var out strings.Builder
+	last := 0
+	previous := ""
+	for i := 0; i < len(value); {
+		end, raw, quoted, ok := nextSQLName(value, i)
+		if !ok {
+			if end > i {
+				i = end
+			} else {
+				i++
+			}
+			continue
+		}
+		next := skipSQLSpace(value, end)
+		match := strings.EqualFold(raw, oldName) && (next < len(value) && value[next] == '.' || previous == "DATABASE")
+		if match {
+			out.WriteString(value[last:i])
+			if quoted {
+				out.WriteString(quoteIdent(newName))
+			} else {
+				out.WriteString(newName)
+			}
+			last = end
+		}
+		if !quoted {
+			previous = strings.ToUpper(raw)
+		} else {
+			previous = ""
+		}
+		i = end
+	}
+	out.WriteString(value[last:])
+	return out.String()
+}
+
+func nextSQLName(sql string, i int) (end int, name string, quoted, ok bool) {
+	if i >= len(sql) {
+		return i, "", false, false
+	}
+	switch sql[i] {
+	case '\'', '-':
+		return skipSQLLiteralOrComment(sql, i)
+	case '"':
+		end = skipSQLQuoted(sql, i)
+		if end == i {
+			return i, "", false, false
+		}
+		return end, strings.ReplaceAll(sql[i+1:end-1], `""`, `"`), true, true
+	case '$':
+		if end = skipSQLDollarQuote(sql, i); end != i {
+			return end, "", false, false
+		}
+	}
+	r, size := utf8.DecodeRuneInString(sql[i:])
+	if !unicode.IsLetter(r) && r != '_' {
+		return i, "", false, false
+	}
+	end = i + size
+	for end < len(sql) {
+		r, size = utf8.DecodeRuneInString(sql[end:])
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '$' {
+			break
+		}
+		end += size
+	}
+	return end, sql[i:end], false, true
+}
+
+func skipSQLSpace(sql string, i int) int {
+	for i < len(sql) && (sql[i] == ' ' || sql[i] == '\t' || sql[i] == '\n' || sql[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+func skipSQLQuoted(sql string, i int) int {
+	for i := i + 1; i < len(sql); i++ {
+		if sql[i] != '"' {
+			continue
+		}
+		if i+1 < len(sql) && sql[i+1] == '"' {
+			i++
+			continue
+		}
+		return i + 1
+	}
+	return len(sql)
+}
+
+func skipSQLDollarQuote(sql string, i int) int {
+	end := strings.IndexByte(sql[i+1:], '$')
+	if end < 0 {
+		return i
+	}
+	tag := sql[i : i+end+2]
+	closeAt := strings.Index(sql[i+end+2:], tag)
+	if closeAt < 0 {
+		return i
+	}
+	return i + end + 2 + closeAt + len(tag)
+}
+
+func skipSQLLiteralOrComment(sql string, i int) (int, string, bool, bool) {
+	if sql[i] == '\'' {
+		for j := i + 1; j < len(sql); j++ {
+			if sql[j] != '\'' {
+				continue
+			}
+			if j+1 < len(sql) && sql[j+1] == '\'' {
+				j++
+				continue
+			}
+			return j + 1, "", false, false
+		}
+		return len(sql), "", false, false
+	}
+	if i+1 < len(sql) && sql[i+1] == '-' {
+		if end := strings.IndexByte(sql[i+2:], '\n'); end >= 0 {
+			return i + end + 2, "", false, false
+		}
+		return len(sql), "", false, false
+	}
+	return i, "", false, false
 }

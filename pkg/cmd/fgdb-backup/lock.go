@@ -16,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type backupLeaseRecord struct {
@@ -32,6 +35,9 @@ type backupLease struct {
 	loc    Location
 	rel    string
 	record backupLeaseRecord
+	store  Store
+	etag   string
+	cancel context.CancelFunc
 	stop   chan struct{}
 	done   chan struct{}
 }
@@ -46,7 +52,10 @@ func newBackupID(now time.Time) string {
 	return now.UTC().Format("20060102T150405.000Z") + "-" + hex.EncodeToString(random[:])
 }
 
-func acquireBackupLease(ctx context.Context, loc Location, name, holder string, wait, lease time.Duration) (*backupLease, error) {
+func acquireBackupLease(ctx context.Context, loc Location, name, holder string, wait, lease time.Duration, stores ...Store) (*backupLease, error) {
+	if lease < 30*time.Second {
+		lease = 30 * time.Second
+	}
 	record := backupLeaseRecord{
 		FormatVersion: 1,
 		Holder:        holder,
@@ -57,6 +66,9 @@ func acquireBackupLease(ctx context.Context, loc Location, name, holder string, 
 		LeaseSeconds:  int64(lease / time.Second),
 	}
 	l := &backupLease{loc: loc, rel: name + "/LOCK.json", record: record, stop: make(chan struct{}), done: make(chan struct{})}
+	if len(stores) > 0 {
+		l.store = stores[0]
+	}
 	deadline := time.Now().Add(wait)
 	for {
 		acquired, current, err := tryCreateLease(ctx, l)
@@ -68,7 +80,16 @@ func acquireBackupLease(ctx context.Context, loc Location, name, holder string, 
 			return nil, err
 		}
 		if current.Holder == "" {
-			return nil, errors.New("backup lock disappeared while acquiring it")
+			if reclaimLease(ctx, l) {
+				continue
+			}
+			if wait <= 0 || time.Now().After(deadline) {
+				return nil, errors.New("backup lock is unreadable and did not expire")
+			}
+			if err := waitForLease(ctx, deadline); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if leaseExpired(current) {
 			if reclaimLease(ctx, l) {
@@ -91,7 +112,10 @@ func tryCreateLease(ctx context.Context, lease *backupLease) (bool, backupLeaseR
 		current, readErr := lease.read(ctx)
 		if readErr != nil {
 			if isNotFound(readErr) || os.IsNotExist(readErr) {
-				return false, backupLeaseRecord{}, err
+				return false, backupLeaseRecord{}, nil
+			}
+			if lease.loc.Kind == "file" && corruptLeaseExpired(lease) {
+				return false, backupLeaseRecord{}, nil
 			}
 			return false, backupLeaseRecord{}, fmt.Errorf("acquire backup lock: %w", readErr)
 		}
@@ -99,8 +123,29 @@ func tryCreateLease(ctx context.Context, lease *backupLease) (bool, backupLeaseR
 	}
 }
 
+func corruptLeaseExpired(lease *backupLease) bool {
+	info, err := os.Stat(filepath.Join(lease.loc.Root, filepath.FromSlash(lease.rel)))
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	age := time.Duration(lease.record.LeaseSeconds) * time.Second
+	return time.Now().After(info.ModTime().Add(age))
+}
+
 func reclaimLease(ctx context.Context, lease *backupLease) bool {
-	return lease.remove(ctx) == nil
+	if lease.loc.Kind == "file" {
+		path := filepath.Join(lease.loc.Root, filepath.FromSlash(lease.rel))
+		stale := path + ".reclaim." + lease.record.Holder
+		if err := os.Rename(path, stale); err != nil {
+			return false
+		}
+		defer os.Remove(stale)
+		return lease.create(ctx) == nil
+	}
+	if _, err := lease.read(ctx); err != nil {
+		return false
+	}
+	return lease.writeRenewal() == nil
 }
 
 func waitForLease(ctx context.Context, deadline time.Time) error {
@@ -137,6 +182,9 @@ func (l *backupLease) create(ctx context.Context) error {
 		}
 		defer f.Close()
 		_, err = f.Write(body)
+		if err == nil {
+			err = f.Sync()
+		}
 		return err
 	}
 	s, ok := l.locStore(ctx)
@@ -151,7 +199,11 @@ func (l *backupLease) create(ctx context.Context) error {
 		_ = abortWriter(w)
 		return err
 	}
-	return w.Close()
+	if err := w.Close(); err != nil {
+		return err
+	}
+	_, err = l.read(ctx)
+	return err
 }
 
 func (l *backupLease) read(ctx context.Context) (backupLeaseRecord, error) {
@@ -166,6 +218,18 @@ func (l *backupLease) read(ctx context.Context) (backupLeaseRecord, error) {
 	s, ok := l.locStore(ctx)
 	if !ok {
 		return out, errors.New("backup lock requires a local or S3 destination")
+	}
+	if s3s := s; s3s != nil {
+		object, err := s3s.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(s3s.bucket),
+			Key:    aws.String(s3s.key(l.rel)),
+		})
+		if err != nil {
+			return out, err
+		}
+		defer object.Body.Close()
+		l.etag = aws.ToString(object.ETag)
+		return out, json.NewDecoder(object.Body).Decode(&out)
 	}
 	r, err := s.Open(ctx, l.rel)
 	if err != nil {
@@ -194,7 +258,7 @@ func (l *backupLease) Release() error {
 	close(l.stop)
 	<-l.done
 	current, err := l.read(context.Background())
-	if err != nil && !isNotFound(err) {
+	if err != nil && !isNotFound(err) && !os.IsNotExist(err) {
 		return err
 	}
 	if current.Holder != l.record.Holder {
@@ -217,18 +281,34 @@ func (l *backupLease) renewLoop() {
 			return
 		case now := <-ticker.C:
 			l.record.RenewedAt = now.UTC()
-			_ = l.writeRenewal()
+			if err := l.writeRenewal(); err != nil && l.cancel != nil {
+				l.cancel()
+			}
 		}
 	}
 }
 
 func (l *backupLease) writeRenewal() error {
-	if l.loc.Kind != "file" {
-		return nil
-	}
 	body, err := json.Marshal(l.record)
 	if err != nil {
 		return err
+	}
+	if l.loc.Kind == "s3" {
+		s, ok := l.locStore(context.Background())
+		if !ok {
+			return errors.New("backup lock requires a local or S3 destination")
+		}
+		in := &s3.PutObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(s.key(l.rel)),
+			Body:   strings.NewReader(string(body)),
+		}
+		out, err := s.client.PutObject(context.Background(), in, putHeader("If-Match", l.etag))
+		if err != nil {
+			return err
+		}
+		l.etag = aws.ToString(out.ETag)
+		return nil
 	}
 	path := filepath.Join(l.loc.Root, filepath.FromSlash(l.rel))
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".LOCK.json.*")
@@ -261,6 +341,9 @@ func (l *backupLease) locStore(ctx context.Context) (*s3Store, bool) {
 	if l.loc.Kind != "s3" {
 		return nil, false
 	}
+	if s, ok := l.store.(*s3Store); ok {
+		return s, true
+	}
 	s, err := newS3Store(ctx, l.loc)
 	return s, err == nil
 }
@@ -288,7 +371,13 @@ func abortWriter(w interface{}) error {
 }
 
 func unlockBackup(ctx context.Context, loc Location, name string, force bool) error {
+	if err := safeSegment(name); err != nil {
+		return err
+	}
 	l := &backupLease{loc: loc, rel: strings.Trim(name, "/") + "/LOCK.json"}
+	if force {
+		return l.remove(ctx)
+	}
 	record, err := l.read(ctx)
 	if err != nil {
 		if isNotFound(err) || os.IsNotExist(err) {

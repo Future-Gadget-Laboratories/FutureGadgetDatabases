@@ -467,6 +467,22 @@ func TestArrayStreamMatchesLineRewriter(t *testing.T) {
 	}
 }
 
+func TestArrayStreamEscapesMatchReference(t *testing.T) {
+	literal := `ARRAY[e'say "hi"',e'a\x01b',e'\101',e'\u00C5ngstr\u00F6m',e'\U0001F600',NULL]::STRING[]`
+	line := "1\t" + escapePGCopy(literal) + "\n"
+	want, err := rewriteArrayLine([]byte(line), []string{"", "STRING[]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(newArrayStreamReader(strings.NewReader(line), []string{"", "STRING[]"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("streaming output %q, reference %q", got, want)
+	}
+}
+
 func TestArrayStreamMultipleArrayColumns(t *testing.T) {
 	input := "1\t" + escapePGCopy(`ARRAY['1',NULL,'2']::INT[]`) + "\t" +
 		escapePGCopy(`ARRAY['a',NULL,'b,c','d''e',e'a\\b']::TEXT[]`) + "\n"
@@ -487,6 +503,7 @@ func TestArrayStreamMultipleArrayColumns(t *testing.T) {
 func FuzzArrayStreamMatchesReference(f *testing.F) {
 	f.Add("alpha")
 	f.Add("quote ' and slash \\")
+	f.Add("double \" quote, unicode Ångström")
 	f.Fuzz(func(t *testing.T, value string) {
 		value = strings.ReplaceAll(value, `\`, `\\`)
 		value = strings.ReplaceAll(value, `'`, `''`)

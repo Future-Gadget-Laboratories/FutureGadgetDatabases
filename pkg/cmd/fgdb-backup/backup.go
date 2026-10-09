@@ -88,10 +88,12 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	runID := newBackupID(time.Now())
 	var lease *backupLease
 	if opt.Lock {
-		lease, err = acquireBackupLease(ctx, opt.Dest, src.name, runID, opt.LockWait, opt.LockLease)
+		lease, err = acquireBackupLease(ctx, opt.Dest, src.name, runID, opt.LockWait, opt.LockLease, src.store)
 		if err != nil {
 			return res, err
 		}
+		ctx, lease.cancel = context.WithCancel(ctx)
+		defer lease.cancel()
 		defer func() {
 			if releaseErr := lease.Release(); err == nil && releaseErr != nil {
 				err = fmt.Errorf("release backup lock: %w", releaseErr)

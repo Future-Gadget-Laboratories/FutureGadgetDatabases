@@ -34,6 +34,7 @@ func TestS3Multipart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.AllowUnsafeOverwrite = true
 	store, err := openStore(context.Background(), loc)
 	if err != nil {
 		t.Fatal(err)
@@ -164,6 +165,7 @@ func TestS3LatestUsesConfiguredEncryption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.AllowUnsafeOverwrite = true
 	store, err := openStore(context.Background(), loc)
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +199,7 @@ func fakeS3(t *testing.T) Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.AllowUnsafeOverwrite = true
 	store, err := openStore(context.Background(), loc)
 	if err != nil {
 		t.Fatal(err)

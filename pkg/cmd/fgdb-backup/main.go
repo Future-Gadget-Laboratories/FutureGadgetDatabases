@@ -90,8 +90,33 @@ func (s *stringList) Set(v string) error {
 	return nil
 }
 
+type forceModeFlag struct {
+	set   bool
+	value string
+}
+
+func (f *forceModeFlag) String() string { return f.value }
+
+func (f *forceModeFlag) Set(value string) error {
+	switch value {
+	case "true", "swap":
+		f.value = "swap"
+	case "in-place":
+		f.value = value
+	default:
+		return fmt.Errorf("--force must be used alone or set to in-place")
+	}
+	f.set = true
+	return nil
+}
+
+func (f *forceModeFlag) IsBoolFlag() bool { return true }
+
 func cmdBackup(args []string) int {
-	cfgPath := configPath(args)
+	cfgPath, configErr := configPath(args)
+	if configErr != nil {
+		return fail(false, configErr)
+	}
 	cfg, err := readBackupConfig(cfgPath)
 	if err != nil {
 		return fail(false, err)
@@ -112,14 +137,19 @@ func cmdBackup(args []string) int {
 	kms := fs.String("sse-kms-key-id", "", "KMS key id or ARN when --sse=aws:kms")
 	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", "S3-compatible endpoint, for example http://127.0.0.1:9000")
+	s3AuthDefault := cfg.Backup.S3CredentialMode
+	if s3AuthDefault == "" {
+		s3AuthDefault = "auto"
+	}
+	s3Auth := fs.String("s3-import-auth", s3AuthDefault, "S3 credential mode: auto, implicit, specified, or served")
 	extend := fs.String(flagExtendGCTTL, "", "temporarily raise gc.ttlseconds for this run, for example 12h")
 	split := fs.Int(flagSplitRows, 0, "split integer-primary-key tables into ranges of this many rows")
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
 	margin := fs.Duration(flagSafetyMargin, time.Minute, "fail before the snapshot's GC deadline gets this close")
 	skipGrants := fs.Bool("skip-grants", false, "skip grants if the source does not allow reading them; record the skip in the backup manifest")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
-	threads := fs.Int("threads", configInt(cfg.Backup.Threads, 1), "maximum Go processor threads")
-	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Backup.MemoryBytes, 1<<30), "soft memory limit in bytes")
+	threads := fs.Int("threads", configInt(cfg.Backup.Threads, 0), "maximum Go processor threads; 0 means no cap")
+	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Backup.MemoryBytes, 0), "soft memory limit in bytes; 0 means no cap")
 	lockDefault := configBool(cfg.Backup.Lock, true)
 	lock := fs.String("lock", map[bool]string{true: "on", false: "off"}[lockDefault], "same-name backup lock: on or off")
 	lockWaitDefault, err := configuredDuration(cfg.Backup.LockWait, "backup.lock_wait", 0)
@@ -151,10 +181,15 @@ func cmdBackup(args []string) int {
 	if *lock != "on" && *lock != "off" {
 		return fail(*asJSON, fmt.Errorf("--lock must be on or off"))
 	}
-	loc, err := parseLocation(*dest, *region, *endpoint, *sse, *kms, cfg.Backup.S3CredentialMode)
+	loc, err := parseLocation(*dest, *region, *endpoint, *sse, *kms, *s3Auth)
 	if err != nil {
 		return fail(*asJSON, err)
 	}
+	loc.FileMode, err = configuredFileMode(cfg.Backup.FileMode)
+	if err != nil {
+		return fail(*asJSON, err)
+	}
+	loc.AllowUnsafeOverwrite = configBool(cfg.Backup.AllowUnsafeOverwrite, false)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	res, err := runBackup(ctx, BackupOptions{
@@ -191,7 +226,10 @@ func cmdBackup(args []string) int {
 }
 
 func cmdRestore(args []string) int {
-	cfgPath := configPath(args)
+	cfgPath, configErr := configPath(args)
+	if configErr != nil {
+		return fail(false, configErr)
+	}
 	cfg, err := readBackupConfig(cfgPath)
 	if err != nil {
 		return fail(false, err)
@@ -206,18 +244,26 @@ func cmdRestore(args []string) int {
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
 	var dbs stringList
 	fs.Var(&dbs, "database", "database to restore; repeat the flag or use commas. Default: every database in the backup")
-	force := fs.Bool("force", false, "drop and recreate only the objects in the backup when the target database is not empty")
+	var force forceModeFlag
+	fs.Var(&force, "force", "force a non-empty restore; swap by default, or use --force=in-place as a last resort")
 	load := fs.String("load", "import", "import (IMPORT INTO) or copy (COPY FROM STDIN)")
 	listen := fs.String("import-listen", "127.0.0.1:0", "address the database dials when importing a local backup")
+	serveAddr := fs.String("serve-addr", "", "address used by the local import file server; remote clusters require an explicit non-loopback address")
+	serveTLSCert := fs.String("serve-tls-cert", "", "optional TLS certificate for the local import file server")
+	serveTLSKey := fs.String("serve-tls-key", "", "optional TLS private key for the local import file server")
 	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
-	importAuth := fs.String("s3-import-auth", "auto", "how the database reads S3: auto, implicit, or specified")
+	importAuthDefault := cfg.Restore.S3CredentialMode
+	if importAuthDefault == "" {
+		importAuthDefault = "auto"
+	}
+	importAuth := fs.String("s3-import-auth", importAuthDefault, "how the database reads S3: auto, implicit, specified, or served")
 	swap := fs.Bool("swap-restore", configBool(cfg.Restore.SwapRestore, true), "restore beside an existing database and swap names when possible")
 	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
 	planFormat := fs.String("plan-format", "text", "plan output: text or json")
 	testingMode := fs.Bool("testing-mode", configBool(cfg.Restore.TestingMode, false), "allow test-only S3 probes")
-	threads := fs.Int("threads", configInt(cfg.Backup.Threads, 1), "maximum Go processor threads")
-	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Backup.MemoryBytes, 1<<30), "soft memory limit in bytes")
+	threads := fs.Int("threads", configInt(cfg.Restore.Threads, 0), "maximum Go processor threads; 0 means no cap")
+	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Restore.MemoryBytes, 0), "soft memory limit in bytes; 0 means no cap")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -233,17 +279,11 @@ func cmdRestore(args []string) int {
 	if *planFormat != "text" && *planFormat != "json" {
 		return fail(*asJSON, fmt.Errorf("--plan-format must be text or json"))
 	}
-	if *testingMode {
-		// The mode is carried in RestoreOptions. It is intentionally not
-		// inferred from a development endpoint or environment variable.
-	}
-	if cfg.Restore.S3CredentialMode != "" && *importAuth == "auto" {
-		*importAuth = cfg.Restore.S3CredentialMode
-	}
 	loc, err := parseLocation(*src, *region, *endpoint, "", "", *importAuth)
 	if err != nil {
 		return fail(*asJSON, err)
 	}
+	loc.AllowUnsafeOverwrite = configBool(cfg.Restore.AllowUnsafeOverwrite, false)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	res, err := runRestore(ctx, RestoreOptions{
@@ -251,9 +291,13 @@ func cmdRestore(args []string) int {
 		Src:          loc.String(),
 		Location:     loc,
 		Databases:    dbs,
-		Force:        *force,
+		Force:        force.set,
+		InPlace:      force.value == "in-place" || (!force.set && configBool(cfg.Restore.InPlace, false)),
 		Load:         *load,
 		ImportListen: *listen,
+		ServeAddr:    *serveAddr,
+		ServeTLSCert: *serveTLSCert,
+		ServeTLSKey:  *serveTLSKey,
 		JSON:         *asJSON,
 		Plan:         *plan,
 		PlanFormat:   *planFormat,

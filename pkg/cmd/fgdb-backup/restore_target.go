@@ -13,7 +13,7 @@ import (
 // guardRestoreTargets refuses a database that already has user objects unless
 // --force is set. --force drops only objects that are in the backup, without
 // CASCADE, so a table outside the backup is not emptied.
-func guardRestoreTargets(ctx context.Context, db *database, objects ObjectsFile, selected map[string]bool, force bool) error {
+func guardRestoreTargets(ctx context.Context, db *database, objects ObjectsFile, selected map[string]bool, force, inTransaction bool) error {
 	for _, database := range objects.Databases {
 		if !selected[database.Name] {
 			continue
@@ -35,7 +35,7 @@ func guardRestoreTargets(ctx context.Context, db *database, objects ObjectsFile,
 		if !force {
 			return fmt.Errorf("refusing to restore into non-empty database %s. A failed restore can leave a partial database; rerun with --force to drop and recreate only the objects in this backup", database.Name)
 		}
-		if err := dropBackupObjects(ctx, db, objects, database.Name); err != nil {
+		if err := dropBackupObjects(ctx, db, objects, database.Name, inTransaction); err != nil {
 			return err
 		}
 	}
@@ -84,7 +84,7 @@ WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', '
 	return routines > 0, nil
 }
 
-func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, database string) error {
+func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, database string, inTransaction bool) error {
 	if err := db.use(ctx, database); err != nil {
 		return err
 	}
@@ -96,34 +96,34 @@ func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, d
 	if err := outsideCatalogDependencies(ctx, db, objects, database); err != nil {
 		return err
 	}
+	drop := func() error {
+		if err := dropKinds(ctx, db, objects, database, []string{"view", "materialized_view"}, dropViewSQL, true); err != nil {
+			return err
+		}
+		if err := dropRoutines(ctx, db, objects, database); err != nil {
+			return err
+		}
+		if err := dropTables(ctx, db, objects, database); err != nil {
+			return err
+		}
+		if err := dropKinds(ctx, db, objects, database, []string{"sequence"}, dropSequenceSQL, false); err != nil {
+			return err
+		}
+		return dropKinds(ctx, db, objects, database, []string{"type"}, dropTypeSQL, false)
+	}
+	if inTransaction {
+		return drop()
+	}
 	if _, err := db.exec(ctx, "BEGIN"); err != nil {
 		return fmt.Errorf("begin restore drop transaction: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = db.exec(context.Background(), "ROLLBACK")
-		}
-	}()
-	if err := dropKinds(ctx, db, objects, database, []string{"view", "materialized_view"}, dropViewSQL, true); err != nil {
-		return err
-	}
-	if err := dropRoutines(ctx, db, objects, database); err != nil {
-		return err
-	}
-	if err := dropTables(ctx, db, objects, database); err != nil {
-		return err
-	}
-	if err := dropKinds(ctx, db, objects, database, []string{"sequence"}, dropSequenceSQL, false); err != nil {
-		return err
-	}
-	if err := dropKinds(ctx, db, objects, database, []string{"type"}, dropTypeSQL, false); err != nil {
+	if err := drop(); err != nil {
+		_, _ = db.exec(context.Background(), "ROLLBACK")
 		return err
 	}
 	if _, err := db.exec(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("commit restore drop transaction: %w", err)
 	}
-	committed = true
 	return nil
 }
 

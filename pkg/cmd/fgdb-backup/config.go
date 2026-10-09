@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,31 +25,39 @@ type backupConfigFile struct {
 }
 
 type backupConfigValues struct {
-	Lock             *bool  `yaml:"lock"`
-	LockWait         string `yaml:"lock_wait"`
-	LockLease        string `yaml:"lock_lease"`
-	Threads          *int   `yaml:"threads"`
-	MemoryBytes      *int64 `yaml:"memory_bytes"`
-	TestingMode      *bool  `yaml:"testing_mode"`
-	S3CredentialMode string `yaml:"s3_credential_mode"`
+	Lock                 *bool  `yaml:"lock"`
+	LockWait             string `yaml:"lock_wait"`
+	LockLease            string `yaml:"lock_lease"`
+	Threads              *int   `yaml:"threads"`
+	MemoryBytes          *int64 `yaml:"memory_bytes"`
+	FileMode             string `yaml:"file_mode"`
+	AllowUnsafeOverwrite *bool  `yaml:"allow_unsafe_overwrite"`
+	S3CredentialMode     string `yaml:"s3_credential_mode"`
 }
 
 type restoreConfigValues struct {
-	SwapRestore      *bool  `yaml:"swap_restore"`
-	TestingMode      *bool  `yaml:"testing_mode"`
-	S3CredentialMode string `yaml:"s3_credential_mode"`
+	SwapRestore          *bool  `yaml:"swap_restore"`
+	InPlace              *bool  `yaml:"in_place"`
+	TestingMode          *bool  `yaml:"testing_mode"`
+	Threads              *int   `yaml:"threads"`
+	MemoryBytes          *int64 `yaml:"memory_bytes"`
+	AllowUnsafeOverwrite *bool  `yaml:"allow_unsafe_overwrite"`
+	S3CredentialMode     string `yaml:"s3_credential_mode"`
 }
 
-func configPath(args []string) string {
+func configPath(args []string) (string, error) {
 	for i, arg := range args {
+		if arg == "-config" || strings.HasPrefix(arg, "-config=") {
+			return "", errors.New("use --config; the single-dash -config form is not supported")
+		}
 		if arg == "--config" && i+1 < len(args) {
-			return args[i+1]
+			return args[i+1], nil
 		}
 		if strings.HasPrefix(arg, "--config=") {
-			return strings.TrimPrefix(arg, "--config=")
+			return strings.TrimPrefix(arg, "--config="), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func readBackupConfig(path string) (backupConfigFile, error) {
@@ -60,7 +69,9 @@ func readBackupConfig(path string) (backupConfigFile, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("read config %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(body, &cfg); err != nil {
+	decoder := yaml.NewDecoder(strings.NewReader(string(body)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, nil
@@ -78,6 +89,17 @@ func configuredDuration(value, name string, fallback time.Duration) (time.Durati
 		return 0, fmt.Errorf("%s must not be negative", name)
 	}
 	return d, nil
+}
+
+func configuredFileMode(value string) (os.FileMode, error) {
+	if value == "" {
+		return 0o640, nil
+	}
+	n, err := strconv.ParseUint(value, 8, 12)
+	if err != nil || n == 0 {
+		return 0, fmt.Errorf("backup.file_mode must be a non-zero octal mode")
+	}
+	return os.FileMode(n), nil
 }
 
 func configBool(value *bool, fallback bool) bool {
@@ -108,11 +130,20 @@ func validateConfig(cfg backupConfigFile) error {
 	if cfg.Restore.S3CredentialMode != "" && !validImportAuth(cfg.Restore.S3CredentialMode) {
 		return fmt.Errorf("restore.s3_credential_mode: unsupported value %q", cfg.Restore.S3CredentialMode)
 	}
-	if cfg.Backup.Threads != nil && *cfg.Backup.Threads < 1 {
-		return errors.New("backup.threads must be at least 1")
+	if cfg.Backup.Threads != nil && *cfg.Backup.Threads < 0 {
+		return errors.New("backup.threads must not be negative")
 	}
-	if cfg.Backup.MemoryBytes != nil && *cfg.Backup.MemoryBytes < 1 {
-		return errors.New("backup.memory_bytes must be positive")
+	if cfg.Backup.MemoryBytes != nil && *cfg.Backup.MemoryBytes < 0 {
+		return errors.New("backup.memory_bytes must not be negative")
+	}
+	if cfg.Restore.Threads != nil && *cfg.Restore.Threads < 0 {
+		return errors.New("restore.threads must not be negative")
+	}
+	if cfg.Restore.MemoryBytes != nil && *cfg.Restore.MemoryBytes < 0 {
+		return errors.New("restore.memory_bytes must not be negative")
+	}
+	if _, err := configuredFileMode(cfg.Backup.FileMode); err != nil {
+		return err
 	}
 	if _, err := configuredDuration(cfg.Backup.LockWait, "backup.lock_wait", 0); err != nil {
 		return err
