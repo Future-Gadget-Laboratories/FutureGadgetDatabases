@@ -263,6 +263,10 @@ func cmdRestore(args []string) int {
 		}
 		emit(*asJSON, res, false)
 		fmt.Fprintf(os.Stderr, "restore failed: %s\n", err)
+		var planErr *planRefusalError
+		if errors.As(err, &planErr) {
+			return 4
+		}
 		return 1
 	}
 	emit(*asJSON, res, true)

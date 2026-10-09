@@ -70,6 +70,12 @@ type RestorePlan struct {
 	Swap    []string `json:"swap,omitempty"`
 }
 
+type planRefusalError struct {
+	message string
+}
+
+func (e *planRefusalError) Error() string { return e.message }
+
 type restoreBundle struct {
 	root     Location
 	store    Store
@@ -112,7 +118,7 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 			printRestorePlan(plan)
 		}
 		if !plan.OK {
-			return res, fmt.Errorf("restore preflight refused: %s", strings.Join(plan.Reasons, "; "))
+			return res, &planRefusalError{message: "restore preflight refused: " + strings.Join(plan.Reasons, "; ")}
 		}
 		res.OK = true
 		return res, nil
