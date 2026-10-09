@@ -53,22 +53,7 @@ func newBackupID(now time.Time) string {
 }
 
 func acquireBackupLease(ctx context.Context, loc Location, name, holder string, wait, lease time.Duration, stores ...Store) (*backupLease, error) {
-	if lease < 30*time.Second {
-		lease = 30 * time.Second
-	}
-	record := backupLeaseRecord{
-		FormatVersion: 1,
-		Holder:        holder,
-		Host:          hostname(),
-		PID:           os.Getpid(),
-		AcquiredAt:    time.Now().UTC(),
-		RenewedAt:     time.Now().UTC(),
-		LeaseSeconds:  int64(lease / time.Second),
-	}
-	l := &backupLease{loc: loc, rel: name + "/LOCK.json", record: record, stop: make(chan struct{}), done: make(chan struct{})}
-	if len(stores) > 0 {
-		l.store = stores[0]
-	}
+	l := newBackupLease(loc, name, holder, lease, stores)
 	deadline := time.Now().Add(wait)
 	for {
 		acquired, current, err := tryCreateLease(ctx, l)
@@ -79,30 +64,61 @@ func acquireBackupLease(ctx context.Context, loc Location, name, holder string, 
 		if err != nil {
 			return nil, err
 		}
-		if current.Holder == "" {
-			if reclaimLease(ctx, l) {
-				continue
-			}
-			if wait <= 0 || time.Now().After(deadline) {
-				return nil, errors.New("backup lock is unreadable and did not expire")
-			}
-			if err := waitForLease(ctx, deadline); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if leaseExpired(current) {
-			if reclaimLease(ctx, l) {
-				continue
-			}
-		}
-		if wait <= 0 || time.Now().After(deadline) {
-			return nil, lockedError(name, current)
-		}
-		if err := waitForLease(ctx, deadline); err != nil {
+		retry, err := retryLease(ctx, l, name, current, wait, deadline)
+		if err != nil {
 			return nil, err
 		}
+		if retry {
+			continue
+		}
 	}
+}
+
+func newBackupLease(loc Location, name, holder string, lease time.Duration, stores []Store) *backupLease {
+	if lease < 30*time.Second {
+		lease = 30 * time.Second
+	}
+	now := time.Now().UTC()
+	record := backupLeaseRecord{
+		FormatVersion: 1,
+		Holder:        holder,
+		Host:          hostname(),
+		PID:           os.Getpid(),
+		AcquiredAt:    now,
+		RenewedAt:     now,
+		LeaseSeconds:  int64(lease / time.Second),
+	}
+	l := &backupLease{
+		loc: loc, rel: name + "/LOCK.json", record: record,
+		stop: make(chan struct{}), done: make(chan struct{}),
+	}
+	if len(stores) > 0 {
+		l.store = stores[0]
+	}
+	return l
+}
+
+func retryLease(ctx context.Context, lease *backupLease, name string, current backupLeaseRecord, wait time.Duration, deadline time.Time) (bool, error) {
+	if current.Holder == "" {
+		if reclaimLease(ctx, lease) {
+			return true, nil
+		}
+		return retryLeaseAfterWait(ctx, deadline, wait, errors.New("backup lock is unreadable and did not expire"))
+	}
+	if leaseExpired(current) && reclaimLease(ctx, lease) {
+		return true, nil
+	}
+	return retryLeaseAfterWait(ctx, deadline, wait, lockedError(name, current))
+}
+
+func retryLeaseAfterWait(ctx context.Context, deadline time.Time, wait time.Duration, terminal error) (bool, error) {
+	if wait <= 0 || time.Now().After(deadline) {
+		return false, terminal
+	}
+	if err := waitForLease(ctx, deadline); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func tryCreateLease(ctx context.Context, lease *backupLease) (bool, backupLeaseRecord, error) {

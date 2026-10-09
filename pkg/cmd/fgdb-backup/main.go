@@ -66,17 +66,20 @@ Use --json to print one JSON object on stdout. Progress lines go to stderr.
 }
 
 const (
-	flagS3Region     = "s3-region"
-	flagS3Endpoint   = "s3-endpoint"
-	flagExtendGCTTL  = "extend-gc-ttl"
-	flagSplitRows    = "split-rows"
-	flagPartSize     = "part-size"
-	flagSafetyMargin = "safety-margin"
-	flagJSON         = "json"
+	flagS3Region             = "s3-region"
+	flagS3Endpoint           = "s3-endpoint"
+	flagAllowUnsafeOverwrite = "allow-unsafe-overwrite"
+	flagExtendGCTTL          = "extend-gc-ttl"
+	flagSplitRows            = "split-rows"
+	flagPartSize             = "part-size"
+	flagSafetyMargin         = "safety-margin"
+	flagJSON                 = "json"
 
-	helpS3Region   = "S3 region. Default: AWS_REGION"
-	helpS3Endpoint = "S3-compatible endpoint"
-	helpJSON       = "print a JSON object on stdout"
+	helpS3Region             = "S3 region. Default: AWS_REGION"
+	helpS3Endpoint           = "S3-compatible endpoint"
+	helpJSON                 = "print a JSON object on stdout"
+	helpPostgresURL          = "PostgreSQL connection URL"
+	helpAllowUnsafeOverwrite = "allow S3 destinations that ignore If-None-Match"
 )
 
 type stringList []string
@@ -130,7 +133,7 @@ func cmdBackup(args []string) int {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.String("config", cfgPath, "YAML configuration file")
-	urlStr := fs.String("url", "", "PostgreSQL connection URL")
+	urlStr := fs.String("url", "", helpPostgresURL)
 	dest := fs.String("dest", "", "s3://bucket/prefix or a local directory")
 	var dbs stringList
 	fs.Var(&dbs, "database", "database to include; repeat the flag or use commas. Default: all user databases")
@@ -145,7 +148,7 @@ func cmdBackup(args []string) int {
 		s3AuthDefault = "auto"
 	}
 	s3Auth := fs.String("s3-import-auth", s3AuthDefault, "S3 credential mode: auto, implicit, specified, or served")
-	allowUnsafe := fs.Bool("allow-unsafe-overwrite", configBool(cfg.Backup.AllowUnsafeOverwrite, false), "allow S3 destinations that ignore If-None-Match")
+	allowUnsafe := fs.Bool(flagAllowUnsafeOverwrite, configBool(cfg.Backup.AllowUnsafeOverwrite, false), helpAllowUnsafeOverwrite)
 	extend := fs.String(flagExtendGCTTL, "", "temporarily raise gc.ttlseconds for this run, for example 12h")
 	split := fs.Int(flagSplitRows, 0, "split integer-primary-key tables into ranges of this many rows")
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
@@ -244,7 +247,7 @@ func cmdRestore(args []string) int {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.String("config", cfgPath, "YAML configuration file")
-	urlStr := fs.String("url", "", "PostgreSQL connection URL")
+	urlStr := fs.String("url", "", helpPostgresURL)
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
 	var dbs stringList
 	fs.Var(&dbs, "database", "database to restore; repeat the flag or use commas. Default: every database in the backup")
@@ -262,7 +265,7 @@ func cmdRestore(args []string) int {
 		importAuthDefault = "auto"
 	}
 	importAuth := fs.String("s3-import-auth", importAuthDefault, "how the database reads S3: auto, implicit, specified, or served")
-	allowUnsafe := fs.Bool("allow-unsafe-overwrite", configBool(cfg.Restore.AllowUnsafeOverwrite, false), "allow S3 destinations that ignore If-None-Match")
+	allowUnsafe := fs.Bool(flagAllowUnsafeOverwrite, configBool(cfg.Restore.AllowUnsafeOverwrite, false), helpAllowUnsafeOverwrite)
 	swap := fs.Bool("swap-restore", configBool(cfg.Restore.SwapRestore, true), "restore beside an existing database and swap names when possible")
 	retention := fs.Int("retention", configInt(cfg.Restore.Retention, 1), "number of old swapped database copies to keep")
 	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
@@ -335,7 +338,7 @@ func cmdVerify(args []string) int {
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
 	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
-	allowUnsafe := fs.Bool("allow-unsafe-overwrite", false, "allow S3 destinations that ignore If-None-Match")
+	allowUnsafe := fs.Bool(flagAllowUnsafeOverwrite, false, helpAllowUnsafeOverwrite)
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -427,7 +430,7 @@ func cmdUnlock(args []string) int {
 func cmdPrune(args []string) int {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	urlStr := fs.String("url", "", "PostgreSQL connection URL")
+	urlStr := fs.String("url", "", helpPostgresURL)
 	name := fs.String("name", "", "original database name")
 	keep := fs.Int("keep", 1, "number of old swapped copies to keep")
 	if err := fs.Parse(args); err != nil {

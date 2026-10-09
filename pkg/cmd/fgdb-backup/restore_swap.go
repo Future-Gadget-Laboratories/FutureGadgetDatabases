@@ -252,33 +252,49 @@ func rewriteDatabaseName(value, oldName, newName string) string {
 	for i := 0; i < len(value); {
 		end, raw, quoted, ok := nextSQLName(value, i)
 		if !ok {
-			if end > i {
-				i = end
-			} else {
-				i++
-			}
+			i = nextSQLPosition(i, end)
 			continue
 		}
-		next := skipSQLSpace(value, end)
-		match := strings.EqualFold(raw, oldName) && (next < len(value) && value[next] == '.' || previous == "DATABASE")
-		if match {
-			out.WriteString(value[last:i])
-			if quoted {
-				out.WriteString(quoteIdent(newName))
-			} else {
-				out.WriteString(newName)
-			}
+		if rewriteNameAt(&out, value, last, i, end, raw, quoted, previous, oldName, newName) {
 			last = end
 		}
-		if !quoted {
-			previous = strings.ToUpper(raw)
-		} else {
-			previous = ""
-		}
+		previous = previousSQLName(raw, quoted)
 		i = end
 	}
 	out.WriteString(value[last:])
 	return out.String()
+}
+
+func nextSQLPosition(start, end int) int {
+	if end > start {
+		return end
+	}
+	return start + 1
+}
+
+func rewriteNameAt(out *strings.Builder, value string, last, start, end int, raw string, quoted bool, previous, oldName, newName string) bool {
+	if !isDatabaseName(raw, value, end, previous, oldName) {
+		return false
+	}
+	out.WriteString(value[last:start])
+	if quoted {
+		out.WriteString(quoteIdent(newName))
+	} else {
+		out.WriteString(newName)
+	}
+	return true
+}
+
+func isDatabaseName(raw, value string, end int, previous, oldName string) bool {
+	next := skipSQLSpace(value, end)
+	return strings.EqualFold(raw, oldName) && ((next < len(value) && value[next] == '.') || previous == "DATABASE")
+}
+
+func previousSQLName(raw string, quoted bool) string {
+	if quoted {
+		return ""
+	}
+	return strings.ToUpper(raw)
 }
 
 func nextSQLName(sql string, i int) (end int, name string, quoted, ok bool) {

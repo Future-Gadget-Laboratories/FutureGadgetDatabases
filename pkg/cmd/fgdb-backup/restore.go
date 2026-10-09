@@ -116,7 +116,11 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	defer db.Close(ctx)
 
-	plan, err := buildRestorePlan(ctx, db, bundle.objects, bundle.manifest, selected, opt.Force, opt.InPlace, opt.SwapRestore)
+	plan, err := buildRestorePlan(ctx, restorePlanOptions{
+		db: db, objects: bundle.objects, manifest: bundle.manifest,
+		selected: selected, force: opt.Force, inPlace: opt.InPlace,
+		swapDefault: opt.SwapRestore,
+	})
 	if err != nil {
 		return res, err
 	}
@@ -164,15 +168,25 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	return res, err
 }
 
-func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, manifest Manifest, selected map[string]bool, force, inPlace, swapDefault bool) (RestorePlan, error) {
+type restorePlanOptions struct {
+	db          *database
+	objects     ObjectsFile
+	manifest    Manifest
+	selected    map[string]bool
+	force       bool
+	inPlace     bool
+	swapDefault bool
+}
+
+func buildRestorePlan(ctx context.Context, opt restorePlanOptions) (RestorePlan, error) {
 	plan := RestorePlan{OK: true}
 	plan.Checks = append(plan.Checks, "backup checksums and manifest")
 	plan.Checks = append(plan.Checks, "target database permissions")
-	for _, database := range objects.Databases {
-		if !selected[database.Name] {
+	for _, database := range opt.objects.Databases {
+		if !opt.selected[database.Name] {
 			continue
 		}
-		result, err := planDatabase(ctx, db, objects, database.Name, force, inPlace, swapDefault)
+		result, err := planDatabase(ctx, opt.db, opt.objects, database.Name, opt.force, opt.inPlace, opt.swapDefault)
 		if err != nil {
 			return plan, err
 		}
@@ -183,8 +197,8 @@ func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, ma
 		}
 	}
 	plan.OK = len(plan.Reasons) == 0
-	for _, st := range objects.Statements {
-		if selected[st.Database] && droppableKind(st.Kind) {
+	for _, st := range opt.objects.Statements {
+		if opt.selected[st.Database] && droppableKind(st.Kind) {
 			plan.Drop = append(plan.Drop, st.Kind+" "+st.Object)
 		}
 	}
@@ -306,6 +320,13 @@ func routinesBlockRename(ctx context.Context, db *database, name string) error {
 }
 
 func externalDatabaseDependencies(ctx context.Context, db *database, target, database string) error {
+	if err := externalRelationDependencies(ctx, db, target, database); err != nil {
+		return err
+	}
+	return externalRoutineDependencies(ctx, db, target, database)
+}
+
+func externalRelationDependencies(ctx context.Context, db *database, target, database string) error {
 	rels, err := listRelations(ctx, db)
 	if err != nil {
 		return err
@@ -322,6 +343,10 @@ func externalDatabaseDependencies(ctx context.Context, db *database, target, dat
 			return fmt.Errorf("database %s cannot be renamed: %s.%s in database %s depends on it", target, rel.Schema, rel.Name, database)
 		}
 	}
+	return nil
+}
+
+func externalRoutineDependencies(ctx context.Context, db *database, target, database string) error {
 	for _, routine := range []string{"function", "procedure"} {
 		rows, err := db.query(ctx, "SELECT schema_name, "+routine+"_name, create_statement FROM crdb_internal.create_"+routine+"_statements")
 		if err != nil {
@@ -821,11 +846,7 @@ func serveLocalBackup(req importRequest) (string, func(), error) {
 	if s3s, ok := req.store.(*s3Store); ok && s3s.implicitImport() {
 		return "", nil, nil
 	}
-	addr := req.opt.ServeAddr
-	if addr == "" {
-		addr = req.opt.ImportListen
-	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenForImport(req.opt)
 	if err != nil {
 		return "", nil, fmt.Errorf("listen for IMPORT: %w", err)
 	}
@@ -835,7 +856,30 @@ func serveLocalBackup(req importRequest) (string, func(), error) {
 		return "", nil, err
 	}
 	prefix := "/" + token + "/"
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := &http.Server{Handler: importHandler(req, prefix)}
+	go func() {
+		serveImportHTTP(srv, ln, req.opt)
+	}()
+	closer := func() {
+		shut, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shut)
+	}
+	httpBase := importScheme(req.opt) + "://" + ln.Addr().String() + prefix
+	logf("serving the backup at %s for IMPORT", httpBase)
+	return httpBase, closer, nil
+}
+
+func listenForImport(opt RestoreOptions) (net.Listener, error) {
+	addr := opt.ServeAddr
+	if addr == "" {
+		addr = opt.ImportListen
+	}
+	return net.Listen("tcp", addr)
+}
+
+func importHandler(req importRequest, prefix string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, prefix) {
 			http.NotFound(w, r)
 			return
@@ -846,37 +890,36 @@ func serveLocalBackup(req importRequest) (string, func(), error) {
 			return
 		}
 		if req.root.Kind == "file" {
-			path := req.root.join(req.base + "/" + strings.TrimPrefix(r.URL.Path, "/"))
-			info, err := os.Stat(path)
-			if err != nil || info.IsDir() {
-				http.NotFound(w, r)
-				return
-			}
-			http.ServeFile(w, r, path)
+			serveLocalImportFile(w, r, req)
 			return
 		}
 		serveStoredObject(w, r, req)
 	})
-	srv := &http.Server{Handler: handler}
-	go func() {
-		if req.opt.ServeTLSCert != "" || req.opt.ServeTLSKey != "" {
-			_ = srv.ServeTLS(ln, req.opt.ServeTLSCert, req.opt.ServeTLSKey)
-			return
-		}
-		_ = srv.Serve(ln)
-	}()
-	closer := func() {
-		shut, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shut)
+}
+
+func serveLocalImportFile(w http.ResponseWriter, r *http.Request, req importRequest) {
+	path := req.root.join(req.base + "/" + strings.TrimPrefix(r.URL.Path, "/"))
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
 	}
-	scheme := "http"
-	if req.opt.ServeTLSCert != "" || req.opt.ServeTLSKey != "" {
-		scheme = "https"
+	http.ServeFile(w, r, path)
+}
+
+func serveImportHTTP(srv *http.Server, ln net.Listener, opt RestoreOptions) {
+	if opt.ServeTLSCert != "" || opt.ServeTLSKey != "" {
+		_ = srv.ServeTLS(ln, opt.ServeTLSCert, opt.ServeTLSKey)
+		return
 	}
-	httpBase := scheme + "://" + ln.Addr().String() + prefix
-	logf("serving the backup at %s for IMPORT", httpBase)
-	return httpBase, closer, nil
+	_ = srv.Serve(ln)
+}
+
+func importScheme(opt RestoreOptions) string {
+	if opt.ServeTLSCert != "" || opt.ServeTLSKey != "" {
+		return "https"
+	}
+	return "http"
 }
 
 func serveToken() (string, error) {
