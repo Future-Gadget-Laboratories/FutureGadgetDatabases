@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -421,6 +422,48 @@ func TestArrayCopyRewrite(t *testing.T) {
 	if err != nil || string(nullRow) != "3\t\\N\t\\N\n" {
 		t.Fatalf("null row %q %v", nullRow, err)
 	}
+}
+
+func TestArrayStreamMatchesLineRewriter(t *testing.T) {
+	rows := []string{
+		"1\t" + escapePGCopy(`ARRAY['a',NULL,'b,c',e'd\'e',e'a\\b']::text[]`) + "\tplain\n",
+		"2\t" + escapePGCopy(`ARRAY[]::bigint[]`) + "\t\\N\n",
+	}
+	input := strings.Join(rows, "")
+	got, err := io.ReadAll(newArrayStreamReader(strings.NewReader(input), []string{"", "text[]", ""}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want bytes.Buffer
+	for _, row := range rows {
+		rewritten, err := rewriteArrayLine([]byte(row), []string{"", "text[]", ""})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = want.Write(rewritten)
+	}
+	if string(got) != want.String() {
+		t.Fatalf("streaming output:\n%s\nline output:\n%s", got, want.String())
+	}
+}
+
+func FuzzArrayStreamMatchesReference(f *testing.F) {
+	f.Add("alpha")
+	f.Add("quote ' and slash \\")
+	f.Fuzz(func(t *testing.T, value string) {
+		value = strings.ReplaceAll(value, `\`, `\\`)
+		value = strings.ReplaceAll(value, `'`, `''`)
+		literal := "ARRAY['" + value + "']::STRING[]"
+		line := "1\t" + escapePGCopy(literal) + "\n"
+		want, wantErr := rewriteArrayLine([]byte(line), []string{"", "STRING[]"})
+		got, gotErr := io.ReadAll(newArrayStreamReader(strings.NewReader(line), []string{"", "STRING[]"}))
+		if (wantErr != nil) != (gotErr != nil) {
+			t.Fatalf("reference error %v, stream error %v", wantErr, gotErr)
+		}
+		if wantErr == nil && string(got) != string(want) {
+			t.Fatalf("reference %q, stream %q", want, got)
+		}
+	})
 }
 
 func TestViewDropIsReverseDependencyOrder(t *testing.T) {

@@ -27,7 +27,7 @@ type arrayCopyReader struct {
 }
 
 func newArrayCopyReader(r io.Reader, kinds []string) io.Reader {
-	return &arrayCopyReader{in: bufio.NewReader(r), kinds: kinds}
+	return newArrayStreamReader(r, kinds)
 }
 
 func hasArrayColumn(kinds []string) bool {
