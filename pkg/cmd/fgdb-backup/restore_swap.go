@@ -150,7 +150,7 @@ func remapObjectsOnce(objects ObjectsFile, oldName, newName string) ObjectsFile 
 	for i := range out.SequenceValues {
 		out.SequenceValues[i].Database = newName
 		out.SequenceValues[i].Object = rewriteDatabaseName(out.SequenceValues[i].Object, oldName, newName)
-		out.SequenceValues[i].SQL = rewriteDatabaseName(out.SequenceValues[i].SQL, oldName, newName)
+		out.SequenceValues[i].SQL = sequenceRestoreSQLForDatabase(out.SequenceValues[i])
 	}
 	out.Grants = rewriteList(out.Grants, oldName, newName)
 	out.Zones = append([]ZoneStatement(nil), objects.Zones...)
@@ -160,6 +160,15 @@ func remapObjectsOnce(objects ObjectsFile, oldName, newName string) ObjectsFile 
 		out.Zones[i].SQL = rewriteDatabaseName(out.Zones[i].SQL, oldName, newName)
 	}
 	return out
+}
+
+func sequenceRestoreSQLForDatabase(seq SequenceValue) string {
+	parts := splitQualified(seq.Object)
+	if len(parts) < 2 {
+		return seq.SQL
+	}
+	target := quoteLiteral(qualified(seq.Database, parts[len(parts)-2], parts[len(parts)-1]))
+	return fmt.Sprintf("SELECT setval(%s::REGCLASS, %d, %t);", target, seq.LastValue, seq.IsCalled)
 }
 
 func remapStatements(stmts []Statement, oldName, newName string) []Statement {
