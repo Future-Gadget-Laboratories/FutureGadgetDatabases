@@ -16,6 +16,7 @@ esac
 EOF
 chmod +x "$tmp/bin/stat"
 # shellcheck source=token-input.sh
+# shellcheck disable=SC1091
 source "$ROOT/token-input.sh"
 PATH="$tmp/bin:$PATH" read_registration_token_file "$tmp/token"
 [[ "$REPLY_TOKEN" == token-from-file ]]

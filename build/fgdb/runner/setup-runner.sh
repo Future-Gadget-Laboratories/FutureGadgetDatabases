@@ -49,6 +49,7 @@ ENV_FILE=/etc/fgdb/runner.env
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CHECKSUMS_FILE=${SCRIPT_DIR}/checksums.txt
 # shellcheck source=token-input.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/token-input.sh"
 # Default cgroup and Bazel budgets. Lower them when the host runs
 # other services. See docs/fgdb/RUNNER.md.

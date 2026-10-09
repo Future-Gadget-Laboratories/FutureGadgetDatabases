@@ -15,9 +15,11 @@ read_registration_token_file() {
     printf 'error: token file must have mode 0400 or 0600\n' >&2
     return 1
   }
+  # shellcheck disable=SC2034
   IFS= read -r REPLY_TOKEN <"$path" || true
 }
 
 read_registration_token_stdin() {
+  # shellcheck disable=SC2034
   IFS= read -r REPLY_TOKEN || true
 }
