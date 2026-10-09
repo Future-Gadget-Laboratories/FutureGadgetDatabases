@@ -58,7 +58,7 @@ func classifyStatement(sql string) string {
 	if s == "" {
 		return "comment"
 	}
-	fields := strings.Fields(s)
+	fields := sqlFields(s)
 	n := len(fields)
 	if n > 4 {
 		n = 4
@@ -95,7 +95,7 @@ func classifyStatement(sql string) string {
 }
 
 func objectName(kind, sql string) string {
-	fields := strings.Fields(stripLeadingComments(sql))
+	fields := sqlFields(stripLeadingComments(sql))
 	upper := upperFields(fields)
 	switch kind {
 	case "schema", "type", "sequence", "table", "view", "materialized_view", "index", "function", "procedure":
@@ -148,10 +148,68 @@ func createObjectKeyword(word string) bool {
 
 func trimObjectToken(tok string) string {
 	tok = strings.TrimSpace(tok)
-	if i := strings.IndexAny(tok, ",("); i >= 0 {
-		tok = tok[:i]
-	}
 	return strings.TrimRight(tok, ",")
+}
+
+// sqlFields tokenizes the statement prefix without splitting quoted
+// identifiers. It also stops a token at the punctuation that cannot be part
+// of a CREATE object's name.
+func sqlFields(sql string) []string {
+	var fields []string
+	var b strings.Builder
+	inDouble := false
+	inSingle := false
+	flush := func() {
+		if b.Len() > 0 {
+			fields = append(fields, b.String())
+			b.Reset()
+		}
+	}
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+		if inDouble {
+			b.WriteByte(c)
+			if c == '"' {
+				if i+1 < len(sql) && sql[i+1] == '"' {
+					b.WriteByte(sql[i+1])
+					i++
+				} else {
+					inDouble = false
+				}
+			}
+			continue
+		}
+		if inSingle {
+			b.WriteByte(c)
+			if c == '\'' {
+				if i+1 < len(sql) && sql[i+1] == '\'' {
+					b.WriteByte(sql[i+1])
+					i++
+				} else {
+					inSingle = false
+				}
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inDouble = true
+			b.WriteByte(c)
+		case '\'':
+			inSingle = true
+			b.WriteByte(c)
+		case '(', ',':
+			flush()
+		default:
+			if unicode.IsSpace(rune(c)) {
+				flush()
+			} else {
+				b.WriteByte(c)
+			}
+		}
+	}
+	flush()
+	return fields
 }
 
 func safeSegment(name string) error {

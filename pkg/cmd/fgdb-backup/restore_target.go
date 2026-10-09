@@ -237,17 +237,20 @@ func dropViewSQL(st Statement) (string, error) {
 	if st.Object == "" {
 		return "", fmt.Errorf("missing object name")
 	}
-	return "DROP " + kind + " IF EXISTS " + st.Object, nil
+	name, err := quotedObjectName(st.Object, 2)
+	if err != nil {
+		return "", err
+	}
+	return "DROP " + kind + " IF EXISTS " + name, nil
 }
 
 func dropSequenceSQL(st Statement) (string, error) {
 	if st.Object == "" {
 		return "", fmt.Errorf("missing object name")
 	}
-	name := st.Object
-	if strings.Count(name, ".") > 1 {
-		parts := strings.Split(name, ".")
-		name = strings.Join(parts[len(parts)-2:], ".")
+	name, err := quotedObjectName(st.Object, 2)
+	if err != nil {
+		return "", err
 	}
 	return "DROP SEQUENCE IF EXISTS " + name, nil
 }
@@ -256,7 +259,11 @@ func dropTypeSQL(st Statement) (string, error) {
 	if st.Object == "" {
 		return "", fmt.Errorf("missing object name")
 	}
-	return "DROP TYPE IF EXISTS " + st.Object, nil
+	name, err := quotedObjectName(st.Object, 2)
+	if err != nil {
+		return "", err
+	}
+	return "DROP TYPE IF EXISTS " + name, nil
 }
 
 func dropRoutines(ctx context.Context, db *database, objects ObjectsFile, database string) error {
@@ -281,7 +288,11 @@ func dropTables(ctx context.Context, db *database, objects ObjectsFile, database
 		if st.Database != database || st.Kind != "table" || st.Object == "" {
 			continue
 		}
-		names = append(names, st.Object)
+		name, err := quotedObjectName(st.Object, 2)
+		if err != nil {
+			return err
+		}
+		names = append(names, name)
 	}
 	if len(names) == 0 {
 		return nil
@@ -294,4 +305,22 @@ func dropTables(ctx context.Context, db *database, objects ObjectsFile, database
 		return fmt.Errorf("drop tables in %s without cascading into unrelated tables: %w", database, err)
 	}
 	return nil
+}
+
+func quotedObjectName(object string, maxParts int) (string, error) {
+	parts := splitQualified(strings.TrimSpace(object))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("missing object name")
+	}
+	if maxParts > 0 && len(parts) > maxParts {
+		parts = parts[len(parts)-maxParts:]
+	}
+	quoted := make([]string, len(parts))
+	for i, part := range parts {
+		if part == "" {
+			return "", fmt.Errorf("invalid object name %q", object)
+		}
+		quoted[i] = quoteIdent(part)
+	}
+	return strings.Join(quoted, "."), nil
 }

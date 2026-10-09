@@ -87,6 +87,17 @@ func TestGCBudget(t *testing.T) {
 	}
 }
 
+func TestMinEffectiveTTLIncludesInheritedRangeDefault(t *testing.T) {
+	zones := []zoneRow{
+		{Level: "range", Object: rangeDefaultZone, Effective: 60},
+		{Level: "table", Database: "shop", Object: "TABLE shop.public.explicit", Effective: 3600},
+	}
+	got, object := minEffectiveTTL([]string{"shop"}, zones)
+	if got != 60 || object != rangeDefaultZone {
+		t.Fatalf("minimum ttl = %d on %q, want 60 on %q", got, object, rangeDefaultZone)
+	}
+}
+
 func TestPlanGCTTLRaises(t *testing.T) {
 	zones := []zoneRow{
 		{Level: "range", Object: rangeDefaultZone, Effective: 14400, FullSQL: "gc.ttlseconds = 14400"},
@@ -102,6 +113,23 @@ func TestPlanGCTTLRaises(t *testing.T) {
 	}
 	if !strings.Contains(changes[1].Revert, "gc.ttlseconds = 30") {
 		t.Fatalf("database change %#v", changes[1])
+	}
+}
+
+func TestPlanGCTTLRaisesInheritedRangeAndIndex(t *testing.T) {
+	zones := []zoneRow{
+		{Level: "range", Object: rangeDefaultZone, RawSQL: "ALTER RANGE default CONFIGURE ZONE USING gc.ttlseconds = 60", Effective: 60},
+		{Level: "index", Database: "shop", Schema: "public", Table: "events", Index: "events_pkey", Object: "INDEX shop.public.events@events_pkey", RawSQL: "ALTER INDEX shop.public.events@events_pkey CONFIGURE ZONE USING gc.ttlseconds = 120", Effective: 120},
+	}
+	changes := planGCTTLRaises(3600, []string{"shop"}, zones)
+	if len(changes) != 2 {
+		t.Fatalf("changes = %#v", changes)
+	}
+	if !strings.Contains(changes[0].Apply, "ALTER RANGE default") || !strings.Contains(changes[0].Revert, "60") {
+		t.Fatalf("range change %#v", changes[0])
+	}
+	if !strings.Contains(changes[1].Apply, "ALTER INDEX") || !strings.Contains(changes[1].Revert, "120") {
+		t.Fatalf("index change %#v", changes[1])
 	}
 }
 
@@ -161,6 +189,30 @@ func TestNullAndSequenceHelpers(t *testing.T) {
 	drop, err := dropRoutineStatement("function", "CREATE FUNCTION public.add(IN a INT8, IN b INT8) RETURNS INT8 LANGUAGE SQL AS $$ SELECT a + b; $$")
 	if err != nil || drop != "DROP FUNCTION IF EXISTS public.add(INT8, INT8);" {
 		t.Fatalf("drop function: %s %v", drop, err)
+	}
+}
+
+func TestQuotedObjectNamesStaySingleTokens(t *testing.T) {
+	sql := `CREATE TABLE "public"."table name.with.dot" ("id" INT PRIMARY KEY);`
+	if got := objectName("table", sql); got != `"public"."table name.with.dot"` {
+		t.Fatalf("object name %q", got)
+	}
+	drop, err := dropSequenceSQL(Statement{Object: `"public"."sequence.name"`})
+	if err != nil || drop != `DROP SEQUENCE IF EXISTS "public"."sequence.name"` {
+		t.Fatalf("drop sequence: %s %v", drop, err)
+	}
+	if got := quotedObjectName(`"public"."table name.with.dot"`, 2); got != `"public"."table name.with.dot"` {
+		t.Fatalf("quoted object name %q", got)
+	}
+}
+
+func TestRoutineNameWithParenthesisIsNotSplitEarly(t *testing.T) {
+	got, err := dropRoutineStatement("function", `CREATE FUNCTION "public"."fn(name)"(IN value INT) RETURNS INT LANGUAGE SQL AS 'SELECT value'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `DROP FUNCTION IF EXISTS "public"."fn(name)"(INT);` {
+		t.Fatalf("drop routine: %s", got)
 	}
 }
 

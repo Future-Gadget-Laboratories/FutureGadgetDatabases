@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -137,6 +138,47 @@ func TestS3PartLimit(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("object that hit the part limit was published")
+	}
+}
+
+func TestS3LatestUsesConfiguredEncryption(t *testing.T) {
+	var encryption string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `<Error><Code>NoSuchKey</Code></Error>`)
+		case http.MethodPut:
+			encryption = r.Header.Get("X-Amz-Server-Side-Encryption")
+			w.Header().Set("ETag", `"latest"`)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("AWS_ACCESS_KEY_ID", "testkey")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "testsecret")
+	t.Setenv("AWS_REGION", "us-east-1")
+	loc, err := parseLocation("s3://lab/fgdb", "us-east-1", server.URL, "AES256", "", "specified")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openStore(context.Background(), loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3s := store.(*s3Store)
+	err = s3s.putLatest(context.Background(), "lab/latest.json", LatestPointer{
+		FormatVersion: formatVersion,
+		Timestamp:     "20261008T120000Z",
+		Complete:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encryption != "AES256" {
+		t.Fatalf("latest pointer encryption = %q, want AES256", encryption)
 	}
 }
 

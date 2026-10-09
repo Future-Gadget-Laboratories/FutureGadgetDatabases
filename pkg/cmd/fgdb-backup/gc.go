@@ -96,6 +96,14 @@ func planGCTTLRaises(desired int, databases []string, zones []zoneRow) []gcChang
 	}
 	def, dbZone := indexZoneTTL(zones)
 	changes := tableTTLChanges(desired, zones)
+	if rangeNeedsRaise(databases, dbZone) && def > 0 && def < desired {
+		for _, z := range zones {
+			if z.Level == "range" {
+				changes = append([]gcChange{ttlNumberChange(z, desired, def)}, changes...)
+				break
+			}
+		}
+	}
 	return append(changes, databaseTTLChanges(desired, databases, def, dbZone)...)
 }
 
@@ -116,16 +124,34 @@ func indexZoneTTL(zones []zoneRow) (int, map[string]zoneRow) {
 func tableTTLChanges(desired int, zones []zoneRow) []gcChange {
 	var changes []gcChange
 	for _, z := range zones {
-		if z.Level != "table" {
+		switch z.Level {
+		case "table", "index", "partition":
+		default:
 			continue
 		}
-		own, hasOwn := parseGCTTL(z.RawSQL)
-		if !hasOwn || own >= desired {
+		own := z.Effective
+		if own == 0 {
+			var ok bool
+			own, ok = parseGCTTL(z.RawSQL)
+			if !ok {
+				continue
+			}
+		}
+		if own >= desired {
 			continue
 		}
 		changes = append(changes, ttlNumberChange(z, desired, own))
 	}
 	return changes
+}
+
+func rangeNeedsRaise(databases []string, dbZone map[string]zoneRow) bool {
+	for _, database := range databases {
+		if _, ok := dbZone[database]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func ttlNumberChange(z zoneRow, desired, own int) gcChange {

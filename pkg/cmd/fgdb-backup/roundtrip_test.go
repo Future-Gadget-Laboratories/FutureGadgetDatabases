@@ -631,7 +631,7 @@ func startNode(t *testing.T, bin, dir, addr, httpAddr string, insecure bool, ext
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		args := []string{"sql", "--host=" + addr, "-e", "SELECT 1"}
 		if insecure {
-			args = append([]string{"sql", "--insecure", "--host=" + addr, "-e", "SELECT 1"})
+			args = []string{"sql", "--insecure", "--host=" + addr, "-e", "SELECT 1"}
 		} else {
 			certs := ""
 			for _, e := range extra {

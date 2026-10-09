@@ -448,11 +448,13 @@ func (s *s3Store) putLatest(ctx context.Context, rel string, ptr LatestPointer) 
 		if found {
 			header, value = "If-Match", etag
 		}
-		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+		in := &s3.PutObjectInput{
 			Bucket: aws.String(s.bucket),
 			Key:    aws.String(key),
 			Body:   bytes.NewReader(body),
-		}, putHeader(header, value))
+		}
+		s.applySSE(&in.ServerSideEncryption, &in.SSEKMSKeyId)
+		_, err = s.client.PutObject(ctx, in, putHeader(header, value))
 		if err == nil {
 			return nil
 		}

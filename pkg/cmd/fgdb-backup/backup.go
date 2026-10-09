@@ -90,7 +90,7 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
-	asOfText, budget, err := snapshotBudget(ctx, db, src.zones, opt.SafetyMargin)
+	asOfText, budget, err := snapshotBudget(ctx, db, src.dbs, src.zones, opt.SafetyMargin)
 	if err != nil {
 		return res, err
 	}
@@ -255,7 +255,7 @@ func logRevertSQL(revertSQL []string) {
 	}
 }
 
-func snapshotBudget(ctx context.Context, db *database, zones []zoneRow, margin time.Duration) (string, gcBudget, error) {
+func snapshotBudget(ctx context.Context, db *database, databases []string, zones []zoneRow, margin time.Duration) (string, gcBudget, error) {
 	asOfText, err := db.captureAsOf(ctx)
 	if err != nil {
 		return "", gcBudget{}, err
@@ -264,7 +264,7 @@ func snapshotBudget(ctx context.Context, db *database, zones []zoneRow, margin t
 	if err != nil {
 		return "", gcBudget{}, fmt.Errorf("timestamp %q from the source: %w", asOfText, err)
 	}
-	minTTL, minObj := minEffectiveTTL(zones)
+	minTTL, minObj := minEffectiveTTL(databases, zones)
 	if minTTL <= 0 {
 		return "", gcBudget{}, fmt.Errorf("could not read gc.ttlseconds for the databases being backed up")
 	}
@@ -1409,23 +1409,28 @@ func markIndexZone(z *zoneRow) {
 	}
 }
 
-func minEffectiveTTL(zones []zoneRow) (int, string) {
-	// Prefer table and database effective configs over the bare default,
-	// but if a target has no zone, the default still applies.
-	min, obj := lowestTTL(zones, zoneHasTarget(zones))
+func minEffectiveTTL(databases []string, zones []zoneRow) (int, string) {
+	// A database without its own zone inherits the range default. Keep that
+	// default in the calculation even when another database or table has an
+	// explicit zone.
+	dbZones := map[string]bool{}
+	for _, z := range zones {
+		if z.Level == "database" {
+			dbZones[z.Database] = true
+		}
+	}
+	hasInheritedDatabase := false
+	for _, database := range databases {
+		if !dbZones[database] {
+			hasInheritedDatabase = true
+			break
+		}
+	}
+	min, obj := lowestTTL(zones, !hasInheritedDatabase)
 	if min == 0 {
 		return rangeDefaultTTL(zones)
 	}
 	return min, obj
-}
-
-func zoneHasTarget(zones []zoneRow) bool {
-	for _, z := range zones {
-		if isTargetLevel(z.Level) {
-			return true
-		}
-	}
-	return false
 }
 
 func isTargetLevel(level string) bool {
