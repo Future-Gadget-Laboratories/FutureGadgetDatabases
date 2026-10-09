@@ -1094,6 +1094,7 @@ func resolveBackup(ctx context.Context, root Location, src string) (Location, st
 		if err != nil {
 			return Location{}, "", err
 		}
+		parentLoc.AllowUnsafeOverwrite = root.AllowUnsafeOverwrite
 		store, err := openStore(ctx, parentLoc)
 		if err != nil {
 			return Location{}, "", err
@@ -1121,6 +1122,7 @@ func resolveBackup(ctx context.Context, root Location, src string) (Location, st
 		if err != nil {
 			return Location{}, "", err
 		}
+		parentLoc.AllowUnsafeOverwrite = root.AllowUnsafeOverwrite
 		return parentLoc, baseName, nil
 	}
 	return root, "", fmt.Errorf("restore --src must be a backup timestamp directory or a path ending in /latest")
