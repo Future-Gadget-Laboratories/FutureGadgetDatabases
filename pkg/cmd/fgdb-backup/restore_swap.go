@@ -34,20 +34,27 @@ func swapNames(ctx context.Context, db *database, name string) (string, error) {
 }
 
 func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions, res RestoreResult, plan RestorePlan) (RestoreResult, error) {
-	if len(plan.Swap) != 1 || len(selected) != 1 {
-		return res, fmt.Errorf("swap restore currently requires one selected database")
+	if len(plan.Swap) == 0 || len(plan.Swap) != len(selected) {
+		return res, fmt.Errorf("swap restore requires every selected database to pass the preflight")
 	}
-	oldName := plan.Swap[0]
-	tempName, err := swapNames(ctx, db, oldName)
-	if err != nil {
-		return res, err
+	names := map[string]string{}
+	oldCopies := map[string]string{}
+	for _, oldName := range plan.Swap {
+		tempName, err := swapNames(ctx, db, oldName)
+		if err != nil {
+			return res, err
+		}
+		names[oldName] = tempName
+		oldCopies[oldName] = oldName + "__fgdb_old_" + time.Now().UTC().Format("20060102T150405")
 	}
-	tempBundle := remapBundle(bundle, oldName, tempName)
-	tempSelected := map[string]bool{tempName: true}
+	tempBundle := remapBundleNames(bundle, names)
+	tempSelected := make(map[string]bool, len(names))
+	for _, tempName := range names {
+		tempSelected[tempName] = true
+	}
 	if err := restoreIntoEmpty(ctx, db, tempBundle, tempSelected, opt, &res); err != nil {
 		return res, err
 	}
-	oldCopy := oldName + "__fgdb_old_" + time.Now().UTC().Format("20060102T150405")
 	if _, err := db.exec(ctx, "BEGIN"); err != nil {
 		return res, fmt.Errorf("begin database swap: %w", err)
 	}
@@ -57,17 +64,22 @@ func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle
 			_, _ = db.exec(context.Background(), "ROLLBACK")
 		}
 	}()
-	if _, err := db.exec(ctx, "ALTER DATABASE "+quoteIdent(oldName)+" RENAME TO "+quoteIdent(oldCopy)); err != nil {
-		return res, fmt.Errorf("rename old database for swap: %w", err)
-	}
-	if _, err := db.exec(ctx, "ALTER DATABASE "+quoteIdent(tempName)+" RENAME TO "+quoteIdent(oldName)); err != nil {
-		return res, fmt.Errorf("rename restored database for swap: %w", err)
+	for oldName, tempName := range names {
+		oldCopy := oldCopies[oldName]
+		if _, err := db.exec(ctx, "ALTER DATABASE "+quoteIdent(oldName)+" RENAME TO "+quoteIdent(oldCopy)); err != nil {
+			return res, fmt.Errorf("rename old database for swap: %w", err)
+		}
+		if _, err := db.exec(ctx, "ALTER DATABASE "+quoteIdent(tempName)+" RENAME TO "+quoteIdent(oldName)); err != nil {
+			return res, fmt.Errorf("rename restored database for swap: %w", err)
+		}
 	}
 	if _, err := db.exec(ctx, "COMMIT"); err != nil {
 		return res, fmt.Errorf("commit database swap: %w", err)
 	}
 	committed = true
-	res.Warnings = append(res.Warnings, "the previous database was kept as "+oldCopy)
+	for oldName, oldCopy := range oldCopies {
+		res.Warnings = append(res.Warnings, "the previous database "+oldName+" was kept as "+oldCopy)
+	}
 	return res, nil
 }
 
@@ -87,43 +99,55 @@ func restoreIntoEmpty(ctx context.Context, db *database, bundle restoreBundle, s
 	return err
 }
 
-func remapBundle(bundle restoreBundle, oldName, newName string) restoreBundle {
+func remapBundleNames(bundle restoreBundle, names map[string]string) restoreBundle {
 	out := bundle
-	out.manifest = remapManifest(bundle.manifest, oldName, newName)
-	out.objects = remapObjects(bundle.objects, oldName, newName)
+	out.manifest = appendManifestNames(bundle.manifest, names)
+	out.objects = appendObjectsNames(bundle.objects, names)
 	return out
 }
 
-func remapManifest(manifest Manifest, oldName, newName string) Manifest {
+func appendManifestNames(manifest Manifest, names map[string]string) Manifest {
 	out := manifest
-	out.Databases = []string{newName}
-	out.Name = newName
+	out.Databases = append([]string(nil), manifest.Databases...)
+	for i, name := range out.Databases {
+		if replacement, ok := names[name]; ok {
+			out.Databases[i] = replacement
+		}
+	}
 	for i := range out.Tables {
-		out.Tables[i].Database = newName
+		if replacement, ok := names[out.Tables[i].Database]; ok {
+			out.Tables[i].Database = replacement
+		}
 	}
 	return out
 }
 
-func remapObjects(objects ObjectsFile, oldName, newName string) ObjectsFile {
+func appendObjectsNames(objects ObjectsFile, names map[string]string) ObjectsFile {
 	out := objects
-	out.Databases = nil
-	for _, database := range objects.Databases {
-		if database.Name != oldName {
-			continue
+	out.Databases = append([]NamedSQL(nil), objects.Databases...)
+	for i := range out.Databases {
+		if replacement, ok := names[out.Databases[i].Name]; ok {
+			out.Databases[i].Name = replacement
+			out.Databases[i].SQL = "CREATE DATABASE " + quoteIdent(replacement) + ";"
 		}
-		out.Databases = append(out.Databases, NamedSQL{
-			Name: newName,
-			SQL:  "CREATE DATABASE " + quoteIdent(newName) + ";",
-		})
 	}
-	out.Statements = remapStatements(objects.Statements, oldName, newName)
+	out.Statements = append([]Statement(nil), objects.Statements...)
+	for oldName, newName := range names {
+		out = remapObjectsOnce(out, oldName, newName)
+	}
+	return out
+}
+
+func remapObjectsOnce(objects ObjectsFile, oldName, newName string) ObjectsFile {
+	out := objects
+	out.Statements = remapStatements(out.Statements, oldName, newName)
 	out.SequenceValues = append([]SequenceValue(nil), objects.SequenceValues...)
 	for i := range out.SequenceValues {
 		out.SequenceValues[i].Database = newName
 		out.SequenceValues[i].Object = rewriteDatabaseName(out.SequenceValues[i].Object, oldName, newName)
 		out.SequenceValues[i].SQL = rewriteDatabaseName(out.SequenceValues[i].SQL, oldName, newName)
 	}
-	out.Grants = rewriteList(objects.Grants, oldName, newName)
+	out.Grants = rewriteList(out.Grants, oldName, newName)
 	out.Zones = append([]ZoneStatement(nil), objects.Zones...)
 	for i := range out.Zones {
 		out.Zones[i].Database = newName
