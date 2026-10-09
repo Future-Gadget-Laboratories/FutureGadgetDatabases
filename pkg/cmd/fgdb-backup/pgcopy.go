@@ -258,30 +258,14 @@ func splitNameArgs(s string) (string, string, bool) {
 }
 
 func findOpenParen(s string) int {
-	inDouble := false
-	inSingle := false
+	quotes := sqlQuoteState{}
 	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '"':
-			if !inSingle {
-				if inDouble && i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDouble = !inDouble
-			}
-		case '\'':
-			if !inDouble {
-				if inSingle && i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingle = !inSingle
-			}
-		case '(':
-			if !inDouble && !inSingle {
-				return i
-			}
+		if next, quoted := quotes.consume(s, i); quoted {
+			i = next
+			continue
+		}
+		if s[i] == '(' {
+			return i
 		}
 	}
 	return -1

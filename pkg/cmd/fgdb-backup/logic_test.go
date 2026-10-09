@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,65 @@ func TestClassifyAndOrder(t *testing.T) {
 	}
 	if got := objectName("table", stmts[3]); got != "public.customers" {
 		t.Fatalf("object name %q", got)
+	}
+}
+
+func TestFindOpenParen(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{name: "empty", input: "", want: -1},
+		{name: "plain", input: "name(args)", want: 4},
+		{name: "nested", input: "name(a (b))", want: 4},
+		{name: "quoted identifier", input: `"fn(name)"(value)`, want: 10},
+		{name: "escaped identifier quote", input: `"fn""(name)"(value)`, want: 12},
+		{name: "escaped string quote", input: `'it''s (x)'(value)`, want: 11},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := findOpenParen(test.input); got != test.want {
+				t.Fatalf("findOpenParen(%q) = %d, want %d", test.input, got, test.want)
+			}
+		})
+	}
+}
+
+func TestSQLFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "empty", input: "", want: nil},
+		{
+			name:  "quoted identifiers",
+			input: `CREATE TABLE "public"."table name" ("col name" STRING)`,
+			want:  []string{"CREATE", "TABLE", `"public"."table name"`, `"col name"`, "STRING"},
+		},
+		{
+			name:  "escaped identifier quotes",
+			input: `CREATE TABLE "a""b" ("c""d" STRING)`,
+			want:  []string{"CREATE", "TABLE", `"a""b"`, `"c""d"`, "STRING"},
+		},
+		{
+			name:  "escaped string quotes",
+			input: `CREATE VIEW "v" AS SELECT 'it''s (x,y)'`,
+			want:  []string{"CREATE", "VIEW", `"v"`, "AS", "SELECT", `'it''s (x,y)'`},
+		},
+		{
+			name:  "nested parentheses",
+			input: `CREATE TABLE t (amount DECIMAL(10,2), nested STRING)`,
+			want:  []string{"CREATE", "TABLE", "t", "amount", "DECIMAL", "10", "2", "nested", "STRING"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := sqlFields(test.input); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("sqlFields(%q) = %#v, want %#v", test.input, got, test.want)
+			}
+		})
 	}
 }
 

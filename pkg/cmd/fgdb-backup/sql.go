@@ -151,65 +151,86 @@ func trimObjectToken(tok string) string {
 	return strings.TrimRight(tok, ",")
 }
 
+type sqlQuoteState struct {
+	inDouble bool
+	inSingle bool
+}
+
+func (s *sqlQuoteState) consume(input string, i int) (int, bool) {
+	if s.inDouble {
+		return s.consumeQuoted(input, i, '"', &s.inDouble)
+	}
+	if s.inSingle {
+		return s.consumeQuoted(input, i, '\'', &s.inSingle)
+	}
+	switch input[i] {
+	case '"':
+		s.inDouble = true
+		return i, true
+	case '\'':
+		s.inSingle = true
+		return i, true
+	default:
+		return i, false
+	}
+}
+
+func (s *sqlQuoteState) consumeQuoted(input string, i int, quote byte, active *bool) (int, bool) {
+	if input[i] == quote {
+		if i+1 < len(input) && input[i+1] == quote {
+			return i + 1, true
+		}
+		*active = false
+	}
+	return i, true
+}
+
+type sqlFieldScanner struct {
+	fields []string
+	token  strings.Builder
+}
+
+func (s *sqlFieldScanner) consume(c byte) {
+	switch c {
+	case '(', ',':
+		s.flush()
+	default:
+		if unicode.IsSpace(rune(c)) {
+			s.flush()
+		} else {
+			s.token.WriteByte(c)
+		}
+	}
+}
+
+func (s *sqlFieldScanner) flush() {
+	if s.token.Len() == 0 {
+		return
+	}
+	s.fields = append(s.fields, s.token.String())
+	s.token.Reset()
+}
+
 // sqlFields tokenizes the statement prefix without splitting quoted
 // identifiers. It also stops a token at the punctuation that cannot be part
 // of a CREATE object's name.
 func sqlFields(sql string) []string {
-	var fields []string
-	var b strings.Builder
-	inDouble := false
-	inSingle := false
-	flush := func() {
-		if b.Len() > 0 {
-			fields = append(fields, b.String())
-			b.Reset()
-		}
-	}
+	scanner := sqlFieldScanner{}
+	quotes := sqlQuoteState{}
 	for i := 0; i < len(sql); i++ {
-		c := sql[i]
-		if inDouble {
-			b.WriteByte(c)
-			if c == '"' {
-				if i+1 < len(sql) && sql[i+1] == '"' {
-					b.WriteByte(sql[i+1])
-					i++
-				} else {
-					inDouble = false
-				}
+		if next, quoted := quotes.consume(sql, i); quoted {
+			start := i
+			scanner.token.WriteByte(sql[i])
+			i = next
+			if next != start {
+				scanner.token.WriteByte(sql[next])
 			}
 			continue
 		}
-		if inSingle {
-			b.WriteByte(c)
-			if c == '\'' {
-				if i+1 < len(sql) && sql[i+1] == '\'' {
-					b.WriteByte(sql[i+1])
-					i++
-				} else {
-					inSingle = false
-				}
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inDouble = true
-			b.WriteByte(c)
-		case '\'':
-			inSingle = true
-			b.WriteByte(c)
-		case '(', ',':
-			flush()
-		default:
-			if unicode.IsSpace(rune(c)) {
-				flush()
-			} else {
-				b.WriteByte(c)
-			}
-		}
+		scanner.consume(sql[i])
 	}
-	flush()
-	return fields
+	scanner.flush()
+	return scanner.fields
 }
 
 func safeSegment(name string) error {
