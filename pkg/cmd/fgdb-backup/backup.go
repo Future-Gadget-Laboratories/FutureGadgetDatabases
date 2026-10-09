@@ -111,7 +111,7 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
-	attachGrantsAndZones(ctx, db, src.dbs, artifactZones, &objects, &warnings)
+	attachGrantsAndZones(ctx, db, asOfText, src.dbs, artifactZones, &objects, &warnings)
 
 	peak, err := writeBackupFiles(ctx, backupArtifact{
 		src: src, opt: opt, base: base, ts: ts, asOfText: asOfText, minTTL: budget.minTTL,
@@ -340,7 +340,12 @@ func backupOneDatabase(ctx context.Context, work *backupWork, database string) e
 }
 
 func appendDatabaseDDL(ctx context.Context, db *database, database, asOfText string, budget gcBudget, objects *ObjectsFile) error {
-	createDB, err := showCreateDatabase(ctx, db, database)
+	var createDB string
+	err := db.withSnapshot(ctx, asOfText, func(ctx context.Context) error {
+		var err error
+		createDB, err = showCreateDatabase(ctx, db, database)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -449,8 +454,15 @@ func copyTableError(budget gcBudget, err error) error {
 	return err
 }
 
-func attachGrantsAndZones(ctx context.Context, db *database, dbs []string, artifactZones []zoneRow, objects *ObjectsFile, warnings *[]string) {
-	grantSQL, grantWarn := readGrants(ctx, db, dbs)
+func attachGrantsAndZones(ctx context.Context, db *database, asOf string, dbs []string, artifactZones []zoneRow, objects *ObjectsFile, warnings *[]string) {
+	var grantSQL, grantWarn []string
+	if err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		grantSQL, grantWarn = readGrants(ctx, db, dbs)
+		return err
+	}); err != nil {
+		grantWarn = append(grantWarn, "grants were not read from the backup snapshot: "+err.Error())
+	}
 	*warnings = append(*warnings, grantWarn...)
 	objects.Grants = grantSQL
 	for _, z := range artifactZones {
