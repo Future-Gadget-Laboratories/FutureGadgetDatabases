@@ -347,9 +347,29 @@ func createSelectedDatabases(ctx context.Context, db *database, databases []Name
 		}
 		if p, ok := createDatabase(ctx, db, database); !ok {
 			problems = append(problems, p)
+		} else if err := waitForDatabase(ctx, db, database.Name); err != nil {
+			problems = append(problems, Problem{Object: database.Name, Kind: "database", Error: err.Error()})
 		}
 	}
 	return problems
+}
+
+func waitForDatabase(ctx context.Context, db *database, name string) error {
+	for attempt := 0; attempt < 20; attempt++ {
+		exists, err := databaseExists(ctx, db, name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("database %s was not visible after CREATE DATABASE", name)
 }
 
 func createDatabase(ctx context.Context, db *database, database NamedSQL) (Problem, bool) {
