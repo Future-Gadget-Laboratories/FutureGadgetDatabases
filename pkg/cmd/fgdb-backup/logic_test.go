@@ -201,7 +201,8 @@ func TestQuotedObjectNamesStaySingleTokens(t *testing.T) {
 	if err != nil || drop != `DROP SEQUENCE IF EXISTS "public"."sequence.name"` {
 		t.Fatalf("drop sequence: %s %v", drop, err)
 	}
-	if got := quotedObjectName(`"public"."table name.with.dot"`, 2); got != `"public"."table name.with.dot"` {
+	got, err := quotedObjectName(`"public"."table name.with.dot"`, 2)
+	if err != nil || got != `"public"."table name.with.dot"` {
 		t.Fatalf("quoted object name %q", got)
 	}
 }
