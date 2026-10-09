@@ -28,7 +28,7 @@ CREATE VIEW shop.public.v2 AS SELECT id, n FROM shop.public.v1;
 	runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", dest, "--database", "shop", "--name", "views")
 	src := filepath.Join(dest, "views", "latest")
 	runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", src)
-	runTool(t, tool, "restore", "--json", "--force", "--url", dstURL, "--src", src)
+	runTool(t, tool, "restore", "--json", "--force=in-place", "--url", dstURL, "--src", src)
 	got := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT id, n FROM shop.public.v2;`))
 	if !strings.Contains(got, "1") || !strings.Contains(got, "10") {
 		t.Fatalf("second --force did not restore the dependent view: %s", got)
@@ -55,6 +55,34 @@ CREATE VIEW plain AS SELECT id, n FROM mv;
 	got := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT id, n FROM shop.public.plain;`))
 	if !strings.Contains(got, "1") || !strings.Contains(got, "7") {
 		t.Fatalf("plain view over a materialized view: %s", got)
+	}
+}
+
+func TestSuccessfulSwapRestoreKeepsRollbackCopy(t *testing.T) {
+	bin := cockroachBin(t)
+	tool := buildTool(t)
+	base := t.TempDir()
+	srcURL, dstURL, srcAddr, dstAddr := startNamedPair(t, bin, base, "127.0.0.1:26297", "127.0.0.1:26299", "127.0.0.1:18127", "127.0.0.1:18129")
+	sql(t, bin, srcAddr, true, `
+CREATE DATABASE shop;
+CREATE TABLE shop.public.items (id INT PRIMARY KEY, value STRING);
+INSERT INTO shop.public.items VALUES (1, 'from backup');
+`)
+	sql(t, bin, dstAddr, true, `
+CREATE DATABASE shop;
+CREATE TABLE shop.public.items (id INT PRIMARY KEY, value STRING);
+INSERT INTO shop.public.items VALUES (1, 'old value');
+`)
+	dest := filepath.Join(base, "backups")
+	runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", dest, "--database", "shop", "--name", "swap")
+	runTool(t, tool, "restore", "--json", "--force", "--url", dstURL, "--src", filepath.Join(dest, "swap", "latest"))
+	got := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT value FROM shop.public.items;`))
+	if got != "from backup" {
+		t.Fatalf("swapped database contains %q", got)
+	}
+	old := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT database_name FROM [SHOW DATABASES] WHERE database_name LIKE 'shop__fgdb_old_%';`))
+	if old == "" {
+		t.Fatal("successful swap did not retain an old database copy")
 	}
 }
 

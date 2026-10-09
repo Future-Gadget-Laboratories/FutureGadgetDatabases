@@ -281,7 +281,7 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 		t.Fatal("restore did not refuse a swap blocked by dependent views")
 	}
 	sql(t, bin, dstAddr, true, `CREATE TABLE shop.public.keeper (id INT PRIMARY KEY); INSERT INTO shop.public.keeper VALUES (7);`)
-	forced := runTool(t, tool, "restore", "--json", "--force", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
+	forced := runTool(t, tool, "restore", "--json", "--force=in-place", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
 	var fres RestoreResult
 	if err := json.Unmarshal(forced, &fres); err != nil {
 		t.Fatalf("force restore json: %v\n%s", err, forced)
