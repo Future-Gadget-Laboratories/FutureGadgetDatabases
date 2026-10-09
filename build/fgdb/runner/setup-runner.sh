@@ -48,6 +48,8 @@ RUNNER_INSTALL_DIR=/opt/fgdb-actions-runner
 ENV_FILE=/etc/fgdb/runner.env
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CHECKSUMS_FILE=${SCRIPT_DIR}/checksums.txt
+# shellcheck source=token-input.sh
+source "${SCRIPT_DIR}/token-input.sh"
 # Default cgroup and Bazel budgets. Lower them when the host runs
 # other services. See docs/fgdb/RUNNER.md.
 CPU_QUOTA=${FGDB_CPU_QUOTA:-2400%}
@@ -255,14 +257,12 @@ if [[ -n "$TOKEN_FILE" && "$TOKEN_STDIN" -eq 1 ]]; then
   die "--token-file and --token-stdin cannot be used together"
 fi
 if [[ -n "$TOKEN_FILE" ]]; then
-  [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" ]] || die "token file must be a regular, non-symlink file"
-  [[ "$(stat -c '%u' "$TOKEN_FILE")" == "0" ]] || die "token file must be owned by root"
-  mode=$(stat -c '%a' "$TOKEN_FILE")
-  [[ "$mode" == "400" || "$mode" == "600" ]] || die "token file must have mode 0400 or 0600"
-  IFS= read -r TOKEN <"$TOKEN_FILE" || true
+  read_registration_token_file "$TOKEN_FILE" || exit 1
+  TOKEN=$REPLY_TOKEN
 fi
 if [[ "$TOKEN_STDIN" -eq 1 ]]; then
-  IFS= read -r TOKEN || true
+  read_registration_token_stdin
+  TOKEN=$REPLY_TOKEN
 fi
 
 log() {
