@@ -1,5 +1,5 @@
 # Custom runner label used by .github/workflows/fgdb-oss-release.yml.
-# labcluster3 is registered with this label. It is not a GitHub-hosted runner.
+# The self-hosted build runner is registered with this label. It is not a GitHub-hosted runner.
 self-hosted-runner:
   labels:
     - fgdb-build

@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 #
-# Prepare labcluster3 as the FutureGadgetDatabases Actions runner.
+# Prepare a self-hosted GitHub Actions runner for FutureGadgetDatabases.
 #
 # The runner is a dedicated user (fgdb-runner), in a systemd slice that leaves
-# CPU and RAM for slurmctld, slurmd, and Ollama. The Bazel cache, output base,
-# and runner work directory stay on a local disk with at least 150 GiB free.
-# When the root filesystem qualifies, they go in /var/cache/fgdb. Network
-# filesystems and backup mounts are never chosen.
+# CPU and RAM for the operating system and other local services. The Bazel
+# cache, output base, and runner work directory stay on a local disk with at
+# least 150 GiB free. When the root filesystem qualifies, they go in
+# /var/cache/fgdb. Network filesystems and backup mounts are never chosen.
 #
 # Idempotent. Prints the plan, then applies it. Pass --dry-run to stop after
 # the plan. A registration token is required only when the runner is not
 # already configured (or when --replace is set). The token is never written
 # into the plan, the env file, or the logs.
 #
-#   sudo ./build/fgdb/runner/setup-labcluster3.sh --token "$TOKEN"
+#   sudo ./build/fgdb/runner/setup-runner.sh --token "$TOKEN"
+#
+# Host-specific values are parameters. The runner name defaults to
+# "<short hostname>-fgdb". Override it with FGDB_RUNNER_NAME or --name.
+# Slice and Bazel limits default as below; override them with the FGDB_*
+# variables or the matching flags. The label stays fgdb-build.
 #
 # Token (one hour, do not commit it). Repo runner, default:
 #   gh api --method POST \
@@ -30,8 +35,12 @@ set -euo pipefail
 
 # ---- defaults (change these, or pass the matching flags) ----
 RUNNER_USER=fgdb-runner
-RUNNER_NAME=labcluster3-fgdb
-RUNNER_LABELS=fgdb-build
+if [[ -n "${FGDB_RUNNER_NAME:-}" ]]; then
+  RUNNER_NAME=$FGDB_RUNNER_NAME
+else
+  RUNNER_NAME="$(hostname -s 2>/dev/null || hostname)-fgdb"
+fi
+RUNNER_LABELS=${FGDB_RUNNER_LABELS:-fgdb-build}
 RUNNER_URL=https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases
 RUNNER_VERSION=2.338.0
 RUNNER_SHA256=af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
@@ -39,12 +48,13 @@ BAZELISK_VERSION=1.29.0
 BAZELISK_SHA256=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
 RUNNER_INSTALL_DIR=/opt/fgdb-actions-runner
 ENV_FILE=/etc/fgdb/runner.env
-# 24 of 36 threads; 80G soft / 96G hard of 123 GB. See docs/fgdb/RUNNER.md.
-CPU_QUOTA=2400%
-MEMORY_HIGH=80G
-MEMORY_MAX=96G
-LOCAL_CPU=24
-LOCAL_RAM_MB=81920
+# Default cgroup and Bazel budgets. Lower them when the host runs
+# other services. See docs/fgdb/RUNNER.md.
+CPU_QUOTA=${FGDB_CPU_QUOTA:-2400%}
+MEMORY_HIGH=${FGDB_MEMORY_HIGH:-80G}
+MEMORY_MAX=${FGDB_MEMORY_MAX:-96G}
+LOCAL_CPU=${FGDB_LOCAL_CPU:-24}
+LOCAL_RAM_MB=${FGDB_LOCAL_RAM_MB:-81920}
 MIN_FREE_BYTES=$((150 * 1024 * 1024 * 1024))
 MIN_RAM_KB=$((30 * 1024 * 1024))
 
@@ -57,7 +67,7 @@ TOKEN=${GH_RUNNER_REGISTRATION_TOKEN:-}
 
 usage() {
   cat <<EOF
-usage: setup-labcluster3.sh [options]
+usage: setup-runner.sh [options]
 
   --token TOKEN          GitHub Actions registration token (or GH_RUNNER_REGISTRATION_TOKEN)
   --url URL              Runner URL (repo default, or the org URL)
@@ -233,15 +243,10 @@ choose_cache_root() {
 }
 
 host_short=$(hostname -s 2>/dev/null || hostname)
-case "$host_short" in
-  labcluster0*)
-    die "refusing to install the fgdb-build runner on ${host_short}. Use labcluster3, not labcluster0-test."
-    ;;
-esac
 
 ram_kb=$(mem_kb)
 if (( ram_kb < MIN_RAM_KB )) && (( ALLOW_SMALL_HOST == 0 )); then
-  die "this host has $((ram_kb / 1024 / 1024)) GiB RAM; the OSS build needs at least 30 GiB. Refusing (labcluster0-test is 14 GiB). Pass --allow-small-host only to test the script."
+  die "this host has $((ram_kb / 1024 / 1024)) GiB RAM; the OSS build needs at least 30 GiB. Pass --allow-small-host only to test the script."
 fi
 
 if [[ -n "$CACHE_DIR_OVERRIDE" ]]; then
@@ -314,7 +319,7 @@ log "  bazel output base: ${output_base}"
 log "  free space seen:   $((free_bytes / 1024 / 1024 / 1024)) GiB"
 log "  systemd slice:     fgdb-runner.slice CPUQuota=${CPU_QUOTA} MemoryHigh=${MEMORY_HIGH} MemoryMax=${MEMORY_MAX}"
 log "  bazel resources:   local_cpu=${LOCAL_CPU} local_ram_mb=${LOCAL_RAM_MB} (${ENV_FILE})"
-log "  coexistence:       slice caps the runner so slurmctld, slurmd, and Ollama keep the remaining CPU and RAM"
+log "  coexistence:       slice caps the runner so the OS and other local services keep the remaining CPU and RAM"
 log "  will not:          print the token, dist-upgrade the host, or install ccache"
 
 if (( DRY_RUN == 1 )); then
@@ -413,7 +418,7 @@ install -d -m 0755 -o "$RUNNER_USER" -g "$RUNNER_USER" \
 install -d -m 0755 /etc/fgdb
 
 cat >"$ENV_FILE" <<EOF
-# Written by setup-labcluster3.sh. Sourced by the runner service.
+# Written by setup-runner.sh. Sourced by the runner service.
 FGDB_BAZEL_DISK_CACHE=${disk_cache}
 FGDB_BAZEL_OUTPUT_BASE=${output_base}
 FGDB_LOCAL_CPU=${LOCAL_CPU}
@@ -525,4 +530,4 @@ log "  slice:  fgdb-runner.slice (${CPU_QUOTA}, memory high ${MEMORY_HIGH}, max 
 log "  cache:  ${disk_cache}"
 log "  output: ${output_base}"
 log "Confirm the runner is Idle in GitHub with labels self-hosted and ${RUNNER_LABELS}."
-log "Do not point a build at the labcluster0-test / self-hosted-ci runner."
+log "The release workflow asks for both labels. A runner that only has self-hosted will not pick up the job."

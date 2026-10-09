@@ -1,76 +1,76 @@
-# Cleanroom reimplementation at Future Gadget Laboratories (FGDb)
+# Clean-room reimplementation at Future Gadget Laboratories (FGDb)
 
 **Audience:** hobbyists, junior engineers, and anyone contributing to FutureGadgetDatabases (FGDb / Future Gadget Laboratories).
 
-**Not legal advice.** This document describes an engineering process used in industry to reduce copyright and trade-secret contamination risk. Laws and licenses differ by country and by product. When in doubt, stop and get counsel review before touching proprietary materials.
+**Not legal advice.** This document describes an engineering process used to keep a reimplementation separate from proprietary source. Laws and licenses differ by country and by product. When in doubt, stop and get counsel review before using materials you are not allowed to copy.
 
 ---
 
-## What “cleanroom” means here
+## What “clean-room” means here
 
-A **cleanroom** (also called a **Chinese wall** or **two-team** process) is how you rebuild *behavior* of a system without copying its *expression* (source, comments, internal structure, distinctive naming, proprietary algorithms as written).
+A **clean-room** (also called a **two-team** process) is how you rebuild *behavior* of a system without copying its *expression* (source, comments, internal structure, distinctive naming).
 
-Classic industry pattern (Phoenix BIOS era, still cited today):
+The pattern used here:
 
-1. One group (**spec / analysis / “dirty” team**) may lawfully study the target and write a **functional specification** — what inputs produce what outputs, error codes, timing constraints, wire formats, SQL semantics, etc. They do **not** paste proprietary code into that spec.
-2. A separate group (**implementers / “clean” team**) has **never** seen the proprietary source, binaries under analysis, disassembly dumps, or contaminated notes. They implement **only** from the approved spec plus public references (standards, published docs, our own OSS tree).
-3. Ideally a **gatekeeper / monitor** reviews every handoff from analysis → implementers so expression (code snippets, comment text, distinctive structure) does not leak into the clean side.
-4. You **document** who saw what, when, and which artifacts crossed the wall. If someone contaminates the clean side, you **refuse and discard** that work and start over clean — you do not “edit it a little.”
+1. One group (**spec writers**) studies **public behavior and public documentation** and writes a **functional specification** — what inputs produce what outputs, error codes, timing constraints, wire formats, SQL semantics, and so on. They do **not** paste proprietary code into that spec.
+2. A separate group (**implementers**) has **never** seen the proprietary source or notes copied from it. They implement **only** from the approved spec plus public references (standards, published docs, our own OSS tree).
+3. A **maintainer** reviews every handoff from spec writers to implementers so expression (code snippets, comment text, distinctive structure) does not leak into the implementation.
+4. You **document** who wrote the spec, who implemented it, and which spec version was used. If proprietary source gets into the implementer side, you **refuse and discard** that work and start over — you do not “edit it a little.”
 
-Cleanroom is useful as evidence of **independent creation** for **copyright**. It does **not** bypass **patents**, and it does **not** override **license contracts** that forbid reverse engineering, decompilation, or competitive use. Treat those as separate constraints.
+This process is useful as evidence of **independent creation** for **copyright**. It does **not** bypass **patents**, and it does **not** override **license terms**. Treat those as separate constraints.
 
 ---
 
 ## When this process applies at FGDb
 
-| Situation | Cleanroom required? |
+| Situation | Clean-room required? |
 |-----------|---------------------|
 | Work entirely inside our OSS fork of CockroachDB **v23.2.15** (Apache after BSL conversion) and public standards | No. Ordinary OSS contribution rules apply. |
-| Porting or reimplementing behavior that exists only in CockroachDB **Enterprise / CCL** code, or in trees under the **CockroachDB Software License (CSL)** (generally **v23.2.16+** patches after the CSL switch, and **24.3+**) | **Yes.** Analysis may use approved RE tooling on an isolated FGL server; implementation must be cleanroom. |
+| Reimplementing behavior that exists only in CockroachDB **Enterprise / CCL** code, or in trees under the **CockroachDB Software License (CSL)** (generally **v23.2.16+** patches after the CSL switch, and **24.3+**) | **Yes.** Spec writers use public documentation and public behavior. Implementers work only from the approved spec. |
 | Someone pastes “just a snippet” of proprietary CRDB source into chat, a PR, or an issue | **Stop.** Treat as contamination. Do not merge. Discard or quarantine. |
 | Checking out a CSL/`enterprise` tree into an **implementer** workspace “for reference” | **Forbidden.** That collapses the wall. |
 
-**Hard product rule:** FGDb’s licensed base is **CockroachDB OSS v23.2.15 only** (post-conversion Apache). We never copy proprietary Enterprise/CSL code from later trees into FGDb. Features that later CRDB released under proprietary terms are candidates for **cleanroom reimplementation**, not for cherry-picks from forbidden trees.
+**Hard product rule:** FGDb’s licensed base is **CockroachDB OSS v23.2.15 only** (post-conversion Apache). We never copy proprietary Enterprise/CSL code from later trees into FGDb. Features that later CRDB released under proprietary terms are candidates for **clean-room reimplementation from public behavior and public documentation**, not for cherry-picks from forbidden trees.
 
 ---
 
 ## Roles (keep them separate)
 
-### Spec / analysis team (“dirty” for that feature)
+### Spec writers
 
-- May observe lawful materials: public docs, OSS v23.2.15, and — when Vincent has authorized a feature — **local** Decode / Ghidra / black-box observation on the **FGL analysis server**.
-- Writes **behavior-only** specs: APIs, wire formats, SQL/error semantics, invariants, acceptance tests described as *observable* results.
-- Must **not** include: proprietary source lines, decompiled pseudocode that mirrors structure/names, comment text from the target, or “copy this function” guidance.
-- Declares in writing (or ticket metadata) that they viewed restricted materials for this feature.
+- Read public docs, OSS v23.2.15, published SQL behavior, and tests you can run against a build you are allowed to use.
+- Write **behavior-only** specs: APIs, wire formats, SQL/error semantics, invariants, acceptance tests described as *observable* results.
+- Must **not** include: proprietary source lines, comment text from a proprietary tree, internal symbol names taken from that tree, or “copy this function” guidance.
+- Record, in the ticket or the spec header, who wrote the spec for this feature.
 
-### Implementer team (“clean”)
+### Implementers
 
-- Sees **only**: approved specs, public standards, FGDb’s OSS tree, and public CRDB OSS materials that are already in our allowed lineage.
-- Never mounts analysis disks, never clones CSL trees, never opens Ghidra projects, never accepts pasted proprietary source.
+- See **only**: approved specs, public standards, FGDb’s OSS tree, and public CRDB OSS materials that are already in our allowed lineage.
+- Never clone CSL or enterprise trees, and never accept pasted proprietary source.
 - Every non-trivial change should cite a **spec clause** or public standard — not “I saw it in enterprise.”
 
-### Gatekeeper / steward (often Vincent or a designated steward)
+### Maintainer
 
 - Reviews specs before they reach implementers: strip expression leakage.
 - Owns contamination response: quarantine, discard, re-spec if needed.
-- Approves consequential commits/PRs that land cleanroom work in the public repo (**Vincent OK required**).
+- Approves commits and pull requests that land clean-room work in the public repo.
 
-In a hobby lab we may not hire an independent third-party monitor like a Fortune-500 cleanroom. That is a known gap versus the “gold standard.” Compensate with **strict artifact separation**, **written refuse/discard rules**, and **no consequential landing without Vincent OK**. Do not pretend a weaker setup is the same as a fully audited corporate cleanroom.
+A hobby project may not hire an independent third-party monitor. That is a known gap versus a fully audited commercial clean-room. Compensate with **strict artifact separation**, **written refuse/discard rules**, and **no landing of this work without a maintainer’s approval**.
 
 ---
 
 ## Process steps (feature-sized)
 
 1. **Scope.** Name the feature and why it is not already in OSS v23.2.15. Confirm it is not a forbidden cherry-pick.
-2. **Authorize analysis.** Only on the FGL analysis environment. Record who is contaminated for this feature.
-3. **Observe.** Prefer black-box (inputs/outputs, SQL tests, network traces). Use Decode/Ghidra only as needed for behavior inference — not as a copy-paste source.
-4. **Write the spec.** Behavior, edge cases, compatibility matrices. No proprietary source. Prefer tables and “when X then Y” over prose that restates algorithms line-by-line.
-5. **Gatekeeper pass.** Someone who understands both contamination risk and the feature reviews the spec. Reject or rewrite if it smells like expression.
-6. **Handoff.** Only the approved spec (and public refs) enters implementer channels/repos.
+2. **Assign spec writers.** Record who is writing the spec for this feature.
+3. **Describe public behavior.** Use published docs, SQL tests, and inputs and outputs you can observe from a program you are allowed to run.
+4. **Write the spec.** Behavior, edge cases, compatibility matrices. No proprietary source. Prefer tables and “when X then Y” over prose that restates someone else’s implementation line-by-line.
+5. **Maintainer pass.** Someone who understands both contamination risk and the feature reviews the spec. Reject or rewrite it if it contains copied expression.
+6. **Handoff.** Only the approved spec (and public refs) enters implementer channels and repos.
 7. **Implement** in FGDb from the spec. New code, new tests. License spirit: as close to BSD/Apache as our project policy allows.
-8. **Conformance.** Black-box tests that prove *behavior* match without comparing to proprietary source trees.
-9. **Record.** Keep: spec version hash, who analyzed, who implemented, gatekeeper notes, test evidence. Treat this as the audit trail.
-10. **Land only with Vincent OK.** No silent push of cleanroom features to GitHub.
+8. **Conformance.** Tests that prove *behavior* matches the spec, without comparing the new code to proprietary source trees.
+9. **Record.** Keep: spec version hash, who wrote the spec, who implemented, maintainer notes, test evidence. Treat this as the audit trail.
+10. **Land only with maintainer approval.** No silent push of clean-room features to GitHub.
 
 ---
 
@@ -79,9 +79,9 @@ In a hobby lab we may not hire an independent third-party monitor like a Fortune
 - Copying, translating, or “lightly rewriting” proprietary CRDB Enterprise/CSL source into FGDb.
 - Checking out CSL or enterprise trees into **implementer** workspaces (including “read-only” clones, zip dumps, or “just for grep”).
 - Pasting proprietary source into Discord, GitHub issues/PRs, agent chats, or specs.
-- Asking an AI agent that has been shown proprietary source to “now write the FGDb version” in the same session without a fresh clean context and approved spec.
-- Shipping intermediate RE artifacts (Ghidra databases, decompilation dumps) into the public repo or implementer trees.
-- Using cleanroom as an excuse to ignore **license terms** or **patents**. If a license forbids the analysis you want, do not do that analysis.
+- Asking an AI agent that has been shown proprietary source to “now write the FGDb version” in the same session without a fresh clean context and an approved spec.
+- Putting proprietary source, or notes copied from it, into the public repo or implementer trees.
+- Using this process as an excuse to ignore **license terms** or **patents**.
 
 ---
 
@@ -90,26 +90,25 @@ In a hobby lab we may not hire an independent third-party monitor like a Fortune
 ### Good
 
 - Spec says: “Statement `ALTER …` must return error code `XYZ` when the table is offline; retry after lease transfer succeeds.” Implementers write new Go from that rule and add SQL tests.
-- Analysis team on FGL server notes wire-frame field widths from observation; gatekeeper rewrites notes into a field table with no symbol names from the proprietary binary; implementers code the codec from the table.
+- Spec writers turn a published description into a field table. A maintainer checks that the table has no symbol names taken from proprietary source. Implementers code the codec from the table.
 
 ### Bad (refuse / discard)
 
 - Contributor opens a PR titled “Port backup encryption from crl-enterprise” with files clearly derived from a CSL tree.
 - Chat paste: “Here’s the enterprise function, just change the package name.”
-- Implementer agent is given a Ghidra decompilation and told to “clean it up into FGDb style.”
-- Spec contains a 40-line pseudocode block that is recognizably the same control flow and variable names as proprietary source.
+- An implementer is handed proprietary source, or notes copied from it, and told to “clean it up into FGDb style.”
+- Spec contains a 40-line block that is recognizably the same control flow and variable names as proprietary source.
 
-When bad happens: **stop**, mark the branch/workspace contaminated, **do not merge**, open a contamination report for the steward, and re-do from an approved clean spec if the feature still matters.
+When that happens: **stop**, mark the branch or workspace contaminated, **do not merge**, tell a maintainer, and start again from an approved spec if the feature still matters.
 
 ---
 
 ## Limits (read this twice)
 
 - **Copyright ≠ patents.** Independent implementation can still infringe a patent.
-- **Fair use / interoperability** case law (e.g. U.S. cases discussing intermediate copying for interoperability) is **fact-specific** and **jurisdiction-specific**. Do not assume “Sega says we can decompile anything.”
-- **Contracts win fights.** A license that bans reverse engineering can create liability even when copyright doctrine might otherwise be friendlier. CSL and enterprise terms are not the BSL→Apache story of v23.2.15.
-- **Paper walls fail.** Courts have rejected “we had a cleanroom” claims when operational separation was not real (see commentary on *IBM v LzLabs* / related UK proceedings in [SOURCES.md](SOURCES.md)). Separation must be practiced, not merely named.
-- **This lab doc is not a substitute for a lawyer.** Before large-scale RE of proprietary CRDB, get counsel review.
+- **License terms still apply.** CSL and enterprise terms are not the BSL→Apache story of v23.2.15. If a license does not let you copy the material, do not copy it.
+- **Paper walls fail.** Calling the process a clean-room does not help when the two groups were not actually separate. Separation has to be practiced.
+- **This page is not a substitute for a lawyer.** Before a large feature that is not described by the public OSS docs, get counsel review.
 
 ---
 

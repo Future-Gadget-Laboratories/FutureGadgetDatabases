@@ -1,23 +1,24 @@
-# labcluster3 Actions runner
+# Self-hosted Actions runner
 
 The `cockroach-oss` compile runs on a self-hosted GitHub Actions runner with
-the labels `self-hosted` and `fgdb-build`. That runner is labcluster3
-(Xeon, 18 cores / 36 threads, 123 GB RAM, Ubuntu 26.04).
+the labels `self-hosted` and `fgdb-build`.
 
-Do not register this runner on labcluster0-test, and do not point the build
-at the `self-hosted-ci` label. That machine has 14 GB of RAM and is the
-shared org CI runner.
-
-The script is `build/fgdb/runner/setup-labcluster3.sh`. It is idempotent.
+The script is `build/fgdb/runner/setup-runner.sh`. It is idempotent.
 It prints a plan, then applies it. `--dry-run` stops after the plan.
+
+Register that runner on a machine with at least 30 GiB of RAM and 150 GiB
+free on a local disk. The script refuses a smaller machine unless you pass
+`--allow-small-host` to test the script itself. Do not point the compile at
+`ubuntu-latest`. The workflow asks for both `self-hosted` and `fgdb-build`,
+so a runner that only has `self-hosted` will not pick up the job.
 
 ## What it sets up
 
 - A system user, `fgdb-runner`. The runner service runs as that user.
   `./dev` refuses to run as root.
 - Docker (`docker.io` from Ubuntu) and the `docker` group. The script does
-  not `dist-upgrade` the host, so Slurm and Ollama are left on the packages
-  already installed.
+  not `dist-upgrade` the host, so packages already installed on the machine
+  stay as they are.
 - Bazelisk 1.29.0 at `/usr/local/bin/bazel`. The tree's `.bazelversion` is
   `cockroachdb/6.2.1`. Bazelisk 1.10.1 from `build/bootstrap/bootstrap-debian.sh`
   cannot resolve that fork version; 1.29.0 can. Bazel then downloads the
@@ -31,25 +32,36 @@ It prints a plan, then applies it. `--dry-run` stops after the plan.
 - A systemd slice, `fgdb-runner.slice`, and a drop-in on the runner service
   (`Nice=10`, `CPUWeight=50`, `IOWeight=50`, `LimitNOFILE=1048576`).
 
-## CPU, memory, and the other services
+## CPU and memory
 
-labcluster3 also runs `slurmctld`, `slurmd`, and Ollama. The slice is a hard
-cap on the runner cgroup, not a nice-only hint:
+The slice is a hard cap on the runner cgroup, so the operating system and
+other local services still have CPU and RAM. Defaults:
 
-| Knob | Default | Leaves for Slurm, Ollama, and the OS |
+| Knob | Default | Meaning |
 | --- | --- | --- |
-| `CPUQuota` | `2400%` (24 threads) | 12 threads |
+| `CPUQuota` | `2400%` | 24 CPUs |
 | `MemoryHigh` | `80G` | soft pressure above this |
-| `MemoryMax` | `96G` | about 27 GB outside the cgroup |
+| `MemoryMax` | `96G` | hard cap |
 
-The same numbers are written to `/etc/fgdb/runner.env` as
-`FGDB_LOCAL_CPU` and `FGDB_LOCAL_RAM_MB` so Bazel does not schedule more
-work than the slice allows. Change them together: the variables at the top
-of `setup-labcluster3.sh`, or `--cpu-quota`, `--memory-high`, `--memory-max`,
-`--local-cpu`, and `--local-ram-mb`. Re-run the script after changing them.
+The same budget is written to `/etc/fgdb/runner.env` as `FGDB_LOCAL_CPU`
+(default `24`) and `FGDB_LOCAL_RAM_MB` (default `81920`) so Bazel does not
+schedule more work than the slice allows. Change them together.
 
-If the linker is killed by the cgroup, raise `MemoryMax` before retrying.
-Do not remove the slice to get a green build.
+Environment variables, read before the flags:
+
+| Variable | Flag |
+| --- | --- |
+| `FGDB_RUNNER_NAME` | `--name` (default is `<short hostname>-fgdb`) |
+| `FGDB_RUNNER_LABELS` | `--labels` (default `fgdb-build`) |
+| `FGDB_CPU_QUOTA` | `--cpu-quota` |
+| `FGDB_MEMORY_HIGH` | `--memory-high` |
+| `FGDB_MEMORY_MAX` | `--memory-max` |
+| `FGDB_LOCAL_CPU` | `--local-cpu` |
+| `FGDB_LOCAL_RAM_MB` | `--local-ram-mb` |
+
+Re-run the script after changing them. If the linker is killed by the
+cgroup, raise `MemoryMax` before retrying. Do not remove the slice to get
+a green build.
 
 ## Bazel cache disk
 
@@ -60,8 +72,7 @@ can fill up with files that were never meant to be kept.
 If you leave out `--cache-dir`, the script picks the directory:
 
 1. It uses `/var/cache/fgdb` when the root filesystem is a local disk and
-   has at least 150 GiB free. That is the normal choice. On labcluster3 the
-   cache is `/var/cache/fgdb`.
+   has at least 150 GiB free. That is the normal choice.
 2. If the root disk is smaller than that, it uses the local filesystem with
    the most free space, under `<that mount>/fgdb`.
 3. It never picks a network filesystem, even when that disk has more free
@@ -110,18 +121,24 @@ gh api --method POST \
   --jq .token
 ```
 
-On labcluster3, from a checkout of this repository:
+On the build machine, from a checkout of this repository:
 
 ```bash
-sudo ./build/fgdb/runner/setup-labcluster3.sh --token "$TOKEN"
+sudo ./build/fgdb/runner/setup-runner.sh --token "$TOKEN"
 ```
 
 Org registration:
 
 ```bash
-sudo ./build/fgdb/runner/setup-labcluster3.sh \
+sudo ./build/fgdb/runner/setup-runner.sh \
   --token "$TOKEN" \
   --url https://github.com/Future-Gadget-Laboratories
+```
+
+A different runner name:
+
+```bash
+sudo FGDB_RUNNER_NAME=fgdb-build ./build/fgdb/runner/setup-runner.sh --token "$TOKEN"
 ```
 
 A later run without `--token` is safe once
