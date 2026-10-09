@@ -12,9 +12,9 @@ import (
 )
 
 func swapNames(ctx context.Context, db *database, name string) (string, error) {
-	suffix := time.Now().UTC().Format("20060102T150405")
-	temp := name + "__fgdb_restore_" + suffix
-	old := name + "__fgdb_old_" + suffix
+	suffix := time.Now().UTC().Format("20060102t150405")
+	temp := strings.ToLower(name + "__fgdb_restore_" + suffix)
+	old := strings.ToLower(name + "__fgdb_old_" + suffix)
 	if err := safeSegment(temp); err != nil {
 		return "", err
 	}
@@ -45,7 +45,7 @@ func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle
 			return res, err
 		}
 		names[oldName] = tempName
-		oldCopies[oldName] = oldName + "__fgdb_old_" + time.Now().UTC().Format("20060102T150405")
+		oldCopies[oldName] = strings.ToLower(oldName + "__fgdb_old_" + time.Now().UTC().Format("20060102t150405"))
 	}
 	for oldName := range selected {
 		if _, ok := names[oldName]; !ok {
