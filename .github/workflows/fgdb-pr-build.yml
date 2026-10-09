@@ -11,8 +11,9 @@
 # until a runner with that label exists. Registering that runner is a
 # separate prerequisite; this workflow does not do it.
 #
-# Each pull request and commit gets its own Bazel output base. The disk
-# cache is separate from the release cache and separate per pull request.
+# Each pull request and commit gets its own Bazel output base and disk
+# cache. Both paths include the pull request number and the head sha.
+# Cleanup removes only that commit's directories.
 # The build job is given no secrets.
 #
 # Knobs (edit here):
@@ -246,17 +247,18 @@ jobs:
             echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
             exit 1
           fi
-          # Sibling directories, not inside the release cache. The output
-          # base is per pull request and commit. The disk cache is per
-          # pull request and is not the release cache.
-          pr_cache="${FGDB_BAZEL_DISK_CACHE%/}-pr-${PR_NUMBER}"
-          pr_base="${FGDB_BAZEL_OUTPUT_BASE%/}-pr-${PR_NUMBER}-${PR_HEAD_SHA}"
+          # Sibling directories, not inside the release cache. Both are
+          # per pull request and commit, so one run cannot delete a
+          # directory another commit of this pull request is using.
+          run_suffix="-pr-${PR_NUMBER}-${PR_HEAD_SHA}"
+          pr_cache="${FGDB_BAZEL_DISK_CACHE%/}${run_suffix}"
+          pr_base="${FGDB_BAZEL_OUTPUT_BASE%/}${run_suffix}"
           if [[ "$pr_cache" == "$FGDB_BAZEL_DISK_CACHE" || "$pr_base" == "$FGDB_BAZEL_OUTPUT_BASE" ]]; then
             echo "refusing to reuse the release Bazel directories" >&2
             exit 1
           fi
           case "$pr_cache" in
-            /*-pr-"${PR_NUMBER}") ;;
+            /*-pr-"${PR_NUMBER}"-"${PR_HEAD_SHA}") ;;
             *)
               echo "refusing disk cache path" >&2
               exit 1
@@ -307,7 +309,7 @@ jobs:
             --test_output=errors \
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
 
-      - name: Remove the workspace and this pull request's Bazel directories
+      - name: Remove the workspace and this commit's Bazel directories
         if: always()
         env:
           CLEAN_WORKSPACE: ${{ github.workspace }}
@@ -324,8 +326,10 @@ jobs:
             exit 1
           fi
           # Read the runner file again so cleanup does not follow a cache
-          # path rewritten by the build. If the file is absent, strip the
-          # per-PR suffix off the variables this job already set.
+          # path rewritten by the build. If the file is absent, strip this
+          # commit's suffix off the variables this job already set.
+          # The suffix includes the head sha, so this step never removes a
+          # directory shared by every commit of the pull request.
           if [[ -f /etc/fgdb/runner.env ]]; then
             set -a
             # shellcheck disable=SC1091
@@ -334,27 +338,18 @@ jobs:
           fi
           root_cache=${FGDB_BAZEL_DISK_CACHE:-}
           root_base=${FGDB_BAZEL_OUTPUT_BASE:-}
-          cache_suffix="-pr-${PR_NUMBER}"
-          base_suffix="-pr-${PR_NUMBER}-${PR_HEAD_SHA}"
+          run_suffix="-pr-${PR_NUMBER}-${PR_HEAD_SHA}"
           case "$root_cache" in
-            *"$cache_suffix") root_cache=${root_cache%"$cache_suffix"} ;;
+            *"$run_suffix") root_cache=${root_cache%"$run_suffix"} ;;
           esac
           case "$root_base" in
-            *"$base_suffix") root_base=${root_base%"$base_suffix"} ;;
+            *"$run_suffix") root_base=${root_base%"$run_suffix"} ;;
           esac
 
           remove_pr_dir() {
             local dir=$1
-            local suffix=$2
             case "$dir" in
-              /*-pr-"${PR_NUMBER}"*) ;;
-              *)
-                echo "refusing to remove ${dir}" >&2
-                exit 1
-                ;;
-            esac
-            case "$dir" in
-              *"$suffix") ;;
+              /*-pr-"${PR_NUMBER}"-"${PR_HEAD_SHA}") ;;
               *)
                 echo "refusing to remove ${dir}" >&2
                 exit 1
@@ -370,18 +365,18 @@ jobs:
           }
 
           if [[ "$root_base" == /* && "$root_base" != "/" ]]; then
-            pr_base="${root_base%/}${base_suffix}"
+            pr_base="${root_base%/}${run_suffix}"
             if [[ -d "$pr_base" ]] && command -v bazel >/dev/null 2>&1; then
               # Stop this commit's Bazel server before deleting its directory.
               timeout 30 bazel --output_base="$pr_base" shutdown || true
             fi
-            remove_pr_dir "$pr_base" "$base_suffix"
+            remove_pr_dir "$pr_base"
           else
             echo "Bazel output base root is unset; skipping that directory."
           fi
           if [[ "$root_cache" == /* && "$root_cache" != "/" ]]; then
-            pr_cache="${root_cache%/}${cache_suffix}"
-            remove_pr_dir "$pr_cache" "$cache_suffix"
+            pr_cache="${root_cache%/}${run_suffix}"
+            remove_pr_dir "$pr_cache"
           else
             echo "Bazel disk cache root is unset; skipping that directory."
           fi
