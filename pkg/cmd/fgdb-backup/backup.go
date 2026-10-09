@@ -41,6 +41,8 @@ type BackupOptions struct {
 	ConfigPath   string
 }
 
+const databaseGrantPrefix = "DATABASE "
+
 // BackupResult is the machine-readable backup summary.
 type BackupResult struct {
 	OK            bool     `json:"ok"`
@@ -131,7 +133,15 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
-	if err := attachGrantsAndZones(ctx, db, asOfText, src.dbs, artifactZones, opt.SkipGrants, &objects, &warnings); err != nil {
+	if err := attachGrantsAndZones(ctx, grantZoneOptions{
+		db:            db,
+		asOf:          asOfText,
+		dbs:           src.dbs,
+		artifactZones: artifactZones,
+		skipGrants:    opt.SkipGrants,
+		objects:       &objects,
+		warnings:      &warnings,
+	}); err != nil {
 		return res, err
 	}
 
@@ -482,18 +492,28 @@ func copyTableError(budget gcBudget, err error) error {
 	return err
 }
 
-func attachGrantsAndZones(ctx context.Context, db *database, asOf string, dbs []string, artifactZones []zoneRow, skipGrants bool, objects *ObjectsFile, warnings *[]string) error {
-	grantSQL, grantWarn, err := readGrants(ctx, db, asOf, dbs, skipGrants)
+type grantZoneOptions struct {
+	db            *database
+	asOf          string
+	dbs           []string
+	artifactZones []zoneRow
+	skipGrants    bool
+	objects       *ObjectsFile
+	warnings      *[]string
+}
+
+func attachGrantsAndZones(ctx context.Context, opt grantZoneOptions) error {
+	grantSQL, grantWarn, err := readGrants(ctx, opt.db, opt.asOf, opt.dbs, opt.skipGrants)
 	if err != nil {
 		return err
 	}
-	*warnings = append(*warnings, grantWarn...)
-	objects.Grants = grantSQL
-	for _, z := range artifactZones {
+	*opt.warnings = append(*opt.warnings, grantWarn...)
+	opt.objects.Grants = grantSQL
+	for _, z := range opt.artifactZones {
 		if z.Level == "range" || strings.TrimSpace(z.RawSQL) == "" {
 			continue
 		}
-		objects.Zones = append(objects.Zones, ZoneStatement{
+		opt.objects.Zones = append(opt.objects.Zones, ZoneStatement{
 			Object:   z.Object,
 			Database: z.Database,
 			Level:    z.Level,
@@ -1116,18 +1136,24 @@ func readGrants(ctx context.Context, db *database, asOf string, dbs []string, sk
 		grants = append(grants, "CREATE USER IF NOT EXISTS "+quoteIdent(user)+";")
 	}
 	var memberships []string
-	if err := readGrantSnapshotInto(ctx, db, asOf, "role memberships", skip, func(ctx context.Context) ([]string, error) {
-		return readMemberships(ctx, db)
-	}, &memberships, &warnings); err != nil {
+	if err := readGrantSnapshotInto(ctx, grantSnapshotOptions{
+		db: db, asOf: asOf, label: "role memberships", skip: skip,
+		read: func(ctx context.Context) ([]string, error) { return readMemberships(ctx, db) },
+		out:  &memberships, warnings: &warnings,
+	}); err != nil {
 		return nil, warnings, err
 	}
 	grants = append(grants, memberships...)
 
 	for _, database := range dbs {
 		var stmts []string
-		if err := readGrantSnapshotInto(ctx, db, asOf, "database grants for "+database, skip, func(ctx context.Context) ([]string, error) {
-			return readGrantQuery(ctx, db, "SHOW GRANTS ON DATABASE "+quoteIdent(database), "DATABASE "+quoteIdent(database))
-		}, &stmts, &warnings); err != nil {
+		if err := readGrantSnapshotInto(ctx, grantSnapshotOptions{
+			db: db, asOf: asOf, label: "database grants for " + database, skip: skip,
+			read: func(ctx context.Context) ([]string, error) {
+				return readGrantQuery(ctx, db, "SHOW GRANTS ON "+databaseGrantPrefix+quoteIdent(database), databaseGrantPrefix+quoteIdent(database))
+			},
+			out: &stmts, warnings: &warnings,
+		}); err != nil {
 			return nil, warnings, err
 		}
 		rels, err := readRelationsSnapshot(ctx, db, asOf, database, skip, &warnings)
@@ -1135,9 +1161,15 @@ func readGrants(ctx context.Context, db *database, asOf string, dbs []string, sk
 			return nil, warnings, err
 		}
 		for _, rel := range rels {
-			if err := readGrantSnapshotInto(ctx, db, asOf, "table grants for "+database+"."+rel.Schema+"."+rel.Name, skip, func(ctx context.Context) ([]string, error) {
-				return readGrantQuery(ctx, db, "SHOW GRANTS ON TABLE "+qualified(database, rel.Schema, rel.Name), "")
-			}, &stmts, &warnings); err != nil {
+			if err := readGrantSnapshotInto(ctx, grantSnapshotOptions{
+				db: db, asOf: asOf,
+				label: "table grants for " + database + "." + rel.Schema + "." + rel.Name,
+				skip:  skip,
+				read: func(ctx context.Context) ([]string, error) {
+					return readGrantQuery(ctx, db, "SHOW GRANTS ON TABLE "+qualified(database, rel.Schema, rel.Name), "")
+				},
+				out: &stmts, warnings: &warnings,
+			}); err != nil {
 				return nil, warnings, err
 			}
 		}
@@ -1171,20 +1203,22 @@ func readGrantSnapshot[T any](
 	return value, nil
 }
 
-func readGrantSnapshotInto(
-	ctx context.Context,
-	db *database,
-	asOf, label string,
-	skip bool,
-	read func(context.Context) ([]string, error),
-	out *[]string,
-	warnings *[]string,
-) error {
-	value, err := readGrantSnapshot(ctx, db, asOf, label, skip, read, warnings)
+type grantSnapshotOptions struct {
+	db       *database
+	asOf     string
+	label    string
+	skip     bool
+	read     func(context.Context) ([]string, error)
+	out      *[]string
+	warnings *[]string
+}
+
+func readGrantSnapshotInto(ctx context.Context, opt grantSnapshotOptions) error {
+	value, err := readGrantSnapshot(ctx, opt.db, opt.asOf, opt.label, opt.skip, opt.read, opt.warnings)
 	if err != nil {
 		return err
 	}
-	*out = append(*out, value...)
+	*opt.out = append(*opt.out, value...)
 	return nil
 }
 
@@ -1299,7 +1333,7 @@ func skipMembership(role, member string) bool {
 }
 
 func grantsForDatabase(ctx context.Context, db *database, database string) ([]string, error) {
-	out, err := readGrantQuery(ctx, db, "SHOW GRANTS ON DATABASE "+quoteIdent(database), "DATABASE "+quoteIdent(database))
+	out, err := readGrantQuery(ctx, db, "SHOW GRANTS ON "+databaseGrantPrefix+quoteIdent(database), databaseGrantPrefix+quoteIdent(database))
 	if err != nil {
 		return nil, err
 	}
@@ -1529,7 +1563,7 @@ func zoneKind(z *zoneRow, want map[string]bool) string {
 func markDatabaseZone(z *zoneRow) {
 	z.Level = "database"
 	if z.Object == "" {
-		z.Object = "DATABASE " + z.Database
+		z.Object = databaseGrantPrefix + z.Database
 	}
 }
 
