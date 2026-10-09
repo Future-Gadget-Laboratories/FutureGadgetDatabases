@@ -67,6 +67,7 @@ type RestorePlan struct {
 	Drop    []string `json:"drop,omitempty"`
 	Checks  []string `json:"checks,omitempty"`
 	Reasons []string `json:"reasons,omitempty"`
+	Swap    []string `json:"swap,omitempty"`
 }
 
 type restoreBundle struct {
@@ -101,7 +102,7 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	defer db.Close(ctx)
 
-	plan, err := buildRestorePlan(ctx, db, bundle.objects, bundle.manifest, selected, opt.Force)
+	plan, err := buildRestorePlan(ctx, db, bundle.objects, bundle.manifest, selected, opt.Force, opt.SwapRestore)
 	if err != nil {
 		return res, err
 	}
@@ -118,6 +119,9 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	if !plan.OK {
 		return res, fmt.Errorf("restore preflight refused: %s", strings.Join(plan.Reasons, "; "))
+	}
+	if len(plan.Swap) > 0 && !opt.Force {
+		return restoreAsideAndSwap(ctx, db, bundle, selected, opt, res, plan)
 	}
 	if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
 		return res, err
@@ -136,7 +140,7 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	return finishRestore(ctx, db, bundle, selected, &res)
 }
 
-func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, manifest Manifest, selected map[string]bool, force bool) (RestorePlan, error) {
+func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, manifest Manifest, selected map[string]bool, force, swapDefault bool) (RestorePlan, error) {
 	plan := RestorePlan{OK: true}
 	plan.Checks = append(plan.Checks, "backup checksums and manifest")
 	plan.Checks = append(plan.Checks, "target database permissions")
@@ -159,7 +163,7 @@ func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, ma
 		if !hasObjects {
 			continue
 		}
-		if !force {
+		if !force && !swapDefault {
 			plan.OK = false
 			plan.Reasons = append(plan.Reasons, fmt.Sprintf("database %s is not empty; use --force after reviewing this plan", database.Name))
 			continue
@@ -170,6 +174,20 @@ func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, ma
 		if err := outsideForeignKeys(ctx, db, objects, database.Name); err != nil {
 			plan.OK = false
 			plan.Reasons = append(plan.Reasons, err.Error())
+		}
+		if err := outsideCatalogDependencies(ctx, db, objects, database.Name); err != nil {
+			plan.OK = false
+			plan.Reasons = append(plan.Reasons, err.Error())
+		}
+		if !force && plan.OK {
+			temp, err := swapNames(ctx, db, database.Name)
+			if err != nil {
+				plan.OK = false
+				plan.Reasons = append(plan.Reasons, err.Error())
+			} else {
+				plan.Swap = append(plan.Swap, database.Name)
+				plan.Checks = append(plan.Checks, fmt.Sprintf("database %s can be restored beside the existing copy as %s", database.Name, temp))
+			}
 		}
 	}
 	for _, st := range objects.Statements {

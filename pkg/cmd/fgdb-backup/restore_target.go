@@ -93,6 +93,9 @@ func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, d
 	if err := outsideForeignKeys(ctx, db, objects, database); err != nil {
 		return err
 	}
+	if err := outsideCatalogDependencies(ctx, db, objects, database); err != nil {
+		return err
+	}
 	if _, err := db.exec(ctx, "BEGIN"); err != nil {
 		return fmt.Errorf("begin restore drop transaction: %w", err)
 	}
@@ -163,6 +166,65 @@ WHERE f.contype = 'f'
 		}
 	}
 	return rows.Err()
+}
+
+func outsideCatalogDependencies(ctx context.Context, db *database, objects ObjectsFile, database string) error {
+	backup := backupObjectKeys(objects, database)
+	rels, err := listRelations(ctx, db)
+	if err != nil {
+		return fmt.Errorf("list dependencies in %s: %w", database, err)
+	}
+	for _, rel := range rels {
+		if rel.Type != "view" && rel.Type != "materialized view" {
+			continue
+		}
+		key := rel.Schema + "." + rel.Name
+		if backup[key] {
+			continue
+		}
+		create, err := showCreateRelation(ctx, db, rel)
+		if err != nil {
+			return err
+		}
+		for target := range backup {
+			if containsRelationReference(create, target) {
+				return fmt.Errorf("refusing to restore into %s. %s.%s depends on %s and is not in the backup", database, rel.Schema, rel.Name, target)
+			}
+		}
+	}
+	return nil
+}
+
+func backupObjectKeys(objects ObjectsFile, database string) map[string]bool {
+	keys := map[string]bool{}
+	for _, st := range objects.Statements {
+		if st.Database == database && (st.Kind == "table" || st.Kind == "type" || st.Kind == "sequence") {
+			if key := relationKey(st.Object); key != "" {
+				keys[key] = true
+			}
+		}
+	}
+	return keys
+}
+
+func showCreateRelation(ctx context.Context, db *database, rel tableRef) (string, error) {
+	var create string
+	q := "SELECT create_statement FROM [SHOW CREATE TABLE " + quoteIdent(rel.Schema) + "." + quoteIdent(rel.Name) + "]"
+	if err := db.queryRow(ctx, q).Scan(&create); err != nil {
+		return "", fmt.Errorf("inspect dependencies of %s.%s: %w", rel.Schema, rel.Name, err)
+	}
+	return create, nil
+}
+
+func containsRelationReference(create, key string) bool {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	lower := strings.ToLower(create)
+	plain := strings.ToLower(parts[0] + "." + parts[1])
+	quoted := strings.ToLower(`"` + parts[0] + `"."` + parts[1] + `"`)
+	return strings.Contains(lower, plain) || strings.Contains(lower, quoted)
 }
 
 func relationKey(object string) string {
