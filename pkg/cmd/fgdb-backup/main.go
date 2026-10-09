@@ -117,6 +117,8 @@ func cmdBackup(args []string) int {
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
 	margin := fs.Duration(flagSafetyMargin, time.Minute, "fail before the snapshot's GC deadline gets this close")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
+	threads := fs.Int("threads", configInt(cfg.Backup.Threads, 1), "maximum Go processor threads")
+	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Backup.MemoryBytes, 1<<30), "soft memory limit in bytes")
 	lockDefault := configBool(cfg.Backup.Lock, true)
 	lock := fs.String("lock", map[bool]string{true: "on", false: "off"}[lockDefault], "same-name backup lock: on or off")
 	lockWaitDefault, err := configuredDuration(cfg.Backup.LockWait, "backup.lock_wait", 0)
@@ -136,6 +138,7 @@ func cmdBackup(args []string) int {
 		usage()
 		return 2
 	}
+	applyResourceCaps(*threads, *memoryBytes)
 	var extendDur time.Duration
 	if *extend != "" {
 		var err error
@@ -211,6 +214,8 @@ func cmdRestore(args []string) int {
 	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
 	planFormat := fs.String("plan-format", "text", "plan output: text or json")
 	testingMode := fs.Bool("testing-mode", configBool(cfg.Restore.TestingMode, false), "allow test-only S3 probes")
+	threads := fs.Int("threads", configInt(cfg.Backup.Threads, 1), "maximum Go processor threads")
+	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Backup.MemoryBytes, 1<<30), "soft memory limit in bytes")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -219,6 +224,7 @@ func cmdRestore(args []string) int {
 		usage()
 		return 2
 	}
+	applyResourceCaps(*threads, *memoryBytes)
 	if *planFormat != "text" && *planFormat != "json" {
 		return fail(*asJSON, fmt.Errorf("--plan-format must be text or json"))
 	}

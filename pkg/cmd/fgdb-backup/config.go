@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -127,5 +129,14 @@ func validImportAuth(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func applyResourceCaps(threads int, memoryBytes int64) {
+	if threads > 0 {
+		runtime.GOMAXPROCS(threads)
+	}
+	if memoryBytes > 0 {
+		debug.SetMemoryLimit(memoryBytes)
 	}
 }
