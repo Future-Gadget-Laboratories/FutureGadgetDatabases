@@ -96,14 +96,6 @@ func planGCTTLRaises(desired int, databases []string, zones []zoneRow) []gcChang
 	}
 	def, dbZone := indexZoneTTL(zones)
 	changes := tableTTLChanges(desired, zones)
-	if rangeNeedsRaise(databases, dbZone) && def > 0 && def < desired {
-		for _, z := range zones {
-			if z.Level == "range" {
-				changes = append([]gcChange{ttlNumberChange(z, desired, def)}, changes...)
-				break
-			}
-		}
-	}
 	return append(changes, databaseTTLChanges(desired, databases, def, dbZone)...)
 }
 
@@ -143,15 +135,6 @@ func tableTTLChanges(desired int, zones []zoneRow) []gcChange {
 		changes = append(changes, ttlNumberChange(z, desired, own))
 	}
 	return changes
-}
-
-func rangeNeedsRaise(databases []string, dbZone map[string]zoneRow) bool {
-	for _, database := range databases {
-		if _, ok := dbZone[database]; !ok {
-			return true
-		}
-	}
-	return false
 }
 
 func ttlNumberChange(z zoneRow, desired, own int) gcChange {

@@ -125,11 +125,11 @@ func TestPlanGCTTLRaisesInheritedRangeAndIndex(t *testing.T) {
 	if len(changes) != 2 {
 		t.Fatalf("changes = %#v", changes)
 	}
-	if !strings.Contains(changes[0].Apply, "ALTER RANGE default") || !strings.Contains(changes[0].Revert, "60") {
-		t.Fatalf("range change %#v", changes[0])
+	if !strings.Contains(changes[0].Apply, "ALTER INDEX") || !strings.Contains(changes[0].Revert, "120") {
+		t.Fatalf("index change %#v", changes[0])
 	}
-	if !strings.Contains(changes[1].Apply, "ALTER INDEX") || !strings.Contains(changes[1].Revert, "120") {
-		t.Fatalf("index change %#v", changes[1])
+	if !strings.Contains(changes[1].Apply, `ALTER DATABASE "shop"`) {
+		t.Fatalf("database inheritance change %#v", changes[1])
 	}
 }
 
