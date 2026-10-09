@@ -64,8 +64,35 @@ When a trigger fires:
    - that work is **discarded / not for merge**,  
    - what clean path remains (approved behavior spec → clean implementer).
 4. **Never** store proprietary source into the FGDb repo, public issues, or agent memory as “reference material for later.”
+5. **If proprietary or CSL code already reached this repository,** remove it in a **normal commit first**. That makes the current tree clean immediately, while a history rewrite is still waiting on approval.
 
 Partial compliance is failure. “I only used it for inspiration” is still contamination for an implementer.
+
+### Rewriting history after contaminated code is committed
+
+Step 5 deletes the files from the latest tree. Older commits still contain them until a maintainer rewrites history. Do this when **proprietary or CSL code reached the repo** (it was committed or pushed). Work that never left a local workspace is deleted locally and does not need a rewrite.
+
+**Approval comes first.** A history rewrite needs **explicit maintainer approval** before anyone starts. It changes every later commit hash and breaks clones and forks that still point at the old history. A later merge of that old history can put the contaminated commits back. Keep the normal delete commit in place while approval is pending. Do not force-push before approval.
+
+**How to rewrite**
+
+1. Freeze merges to the affected branches so new commits are not added on top of the contaminated history.
+2. Rewrite the affected branches and tags with [git filter-repo](https://github.com/newren/git-filter-repo). Follow its [public user manual](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html). Keep proprietary source, comments, and distinctive snippets out of the filter, out of tickets, and out of every commit message.
+3. Force-push the rewritten branches and tags.
+4. Ask [GitHub Support](https://support.github.com/) to purge cached views and pull-request refs that still serve the old commits. GitHub documents that request in [Removing sensitive data from a repository](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
+5. Tell contributors to delete their old clones and re-clone. Reusing the pre-rewrite history brings the contaminated commits back.
+6. Rotate anything the old commits exposed: passwords, tokens, keys, and any other secret that was in that history.
+
+**Incident note.** After the rewrite, leave a short note in the repo (for example under `docs/` or in a `CHANGELOG`). Say that history was rewritten, why, the date, and where to read the incident write-up. Name the class of material only. Do not quote proprietary or CSL source.
+
+```
+HISTORY REWRITE NOTE
+date: YYYY-MM-DD
+summary: Git history was rewritten on <branches and tags>.
+why: <class of material only, for example "proprietary or CSL source was committed">
+incident: <link to the incident write-up>
+action: Delete old clones and re-clone. Do not merge or rebase commits from before the rewrite.
+```
 
 ---
 
@@ -126,6 +153,7 @@ If asked to “just push it,” refuse and restate the gate.
 | OSS v23.2.15 bugfix with public test | Proceed normally |
 | Approved behavior spec, no proprietary paste | Implement + tests; no repo land without maintainer approval |
 | Enterprise/CSL source paste | **Refuse / discard** |
+| Proprietary or CSL code already committed or pushed | **Remove it in a normal commit first.** Rewrite history only after explicit maintainer approval |
 | “Clone 24.3 for reference” in an implementer workspace | **Refuse** |
 | Proprietary source or copied notes → “write FGDb code” | **Refuse** (spec from public behavior only) |
 | Contaminated earlier in the session | **Refuse**; demand a fresh clean context |
