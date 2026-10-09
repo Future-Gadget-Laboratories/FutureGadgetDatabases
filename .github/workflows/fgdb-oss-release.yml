@@ -418,8 +418,8 @@ jobs:
 
   image:
     name: Publish GHCR image
-    needs: build
-    if: needs.build.outputs.publish == 'true'
+    needs: [build, release]
+    if: needs.build.outputs.publish == 'true' && needs.release.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

@@ -31,11 +31,6 @@ type RestoreOptions struct {
 	Load         string
 	ImportListen string
 	JSON         bool
-	Plan         bool
-	PlanFormat   string
-	SwapRestore  bool
-	TestingMode  bool
-	ConfigPath   string
 }
 
 // Problem is one object that could not be restored. These are never skipped silently.
@@ -48,33 +43,16 @@ type Problem struct {
 
 // RestoreResult is the machine-readable restore summary.
 type RestoreResult struct {
-	OK            bool         `json:"ok"`
-	Error         string       `json:"error,omitempty"`
-	Backup        string       `json:"backup,omitempty"`
-	AsOf          string       `json:"as_of,omitempty"`
-	SourceVersion string       `json:"source_version,omitempty"`
-	Tables        int          `json:"tables,omitempty"`
-	Rows          int64        `json:"rows,omitempty"`
-	Incompatible  []Problem    `json:"incompatible,omitempty"`
-	Warnings      []string     `json:"warnings,omitempty"`
-	Plan          *RestorePlan `json:"plan,omitempty"`
+	OK            bool      `json:"ok"`
+	Error         string    `json:"error,omitempty"`
+	Backup        string    `json:"backup,omitempty"`
+	AsOf          string    `json:"as_of,omitempty"`
+	SourceVersion string    `json:"source_version,omitempty"`
+	Tables        int       `json:"tables,omitempty"`
+	Rows          int64     `json:"rows,omitempty"`
+	Incompatible  []Problem `json:"incompatible,omitempty"`
+	Warnings      []string  `json:"warnings,omitempty"`
 }
-
-// RestorePlan is read-only information gathered before a restore can mutate
-// a cluster. It is also returned by --plan for scripting and review.
-type RestorePlan struct {
-	OK      bool     `json:"ok"`
-	Drop    []string `json:"drop,omitempty"`
-	Checks  []string `json:"checks,omitempty"`
-	Reasons []string `json:"reasons,omitempty"`
-	Swap    []string `json:"swap,omitempty"`
-}
-
-type planRefusalError struct {
-	message string
-}
-
-func (e *planRefusalError) Error() string { return e.message }
 
 type restoreBundle struct {
 	root     Location
@@ -108,166 +86,31 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	defer db.Close(ctx)
 
-	plan, err := buildRestorePlan(ctx, db, bundle.objects, bundle.manifest, selected, opt.Force, opt.SwapRestore)
-	if err != nil {
-		return res, err
-	}
-	res.Plan = &plan
-	if opt.Plan {
-		if opt.PlanFormat == "text" {
-			printRestorePlan(plan)
+	restore := func(ctx context.Context) error {
+		if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
+			return err
 		}
-		if !plan.OK {
-			return res, &planRefusalError{message: "restore preflight refused: " + strings.Join(plan.Reasons, "; ")}
+		if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
+			return err
 		}
-		res.OK = true
-		return res, nil
-	}
-	if !plan.OK {
-		return res, fmt.Errorf("restore preflight refused: %s", strings.Join(plan.Reasons, "; "))
-	}
-	if len(plan.Swap) > 0 && !opt.Force {
-		return restoreAsideAndSwap(ctx, db, bundle, selected, opt, res, plan)
-	}
-	if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
-		return res, err
-	}
-	if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
-		return res, err
-	}
-	if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
-		return res, err
-	}
-	warnings, err := loadSelected(ctx, db, bundle, selected, opt)
-	if err != nil {
-		return res, err
-	}
-	res.Warnings = append(res.Warnings, warnings...)
-	return finishRestore(ctx, db, bundle, selected, &res)
-}
-
-func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, manifest Manifest, selected map[string]bool, force, swapDefault bool) (RestorePlan, error) {
-	plan := RestorePlan{OK: true}
-	plan.Checks = append(plan.Checks, "backup checksums and manifest")
-	plan.Checks = append(plan.Checks, "target database permissions")
-	for _, database := range objects.Databases {
-		if !selected[database.Name] {
-			continue
+		if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
+			return err
 		}
-		result, err := planDatabase(ctx, db, objects, database.Name, force, swapDefault)
+		warnings, err := loadSelected(ctx, db, bundle, selected, opt)
 		if err != nil {
-			return plan, err
+			return err
 		}
-		plan.Reasons = append(plan.Reasons, result.reasons...)
-		plan.Checks = append(plan.Checks, result.checks...)
-		if result.swap != "" {
-			plan.Swap = append(plan.Swap, result.swap)
-		}
+		res.Warnings = append(res.Warnings, warnings...)
+		var finishErr error
+		res, finishErr = finishRestore(ctx, db, bundle, selected, &res)
+		return finishErr
 	}
-	plan.OK = len(plan.Reasons) == 0
-	for _, st := range objects.Statements {
-		if selected[st.Database] && droppableKind(st.Kind) {
-			plan.Drop = append(plan.Drop, st.Kind+" "+st.Object)
-		}
+	if opt.Force && opt.Load == "copy" {
+		err = db.withTransaction(ctx, restore)
+	} else {
+		err = restore(ctx)
 	}
-	return plan, nil
-}
-
-type databasePlan struct {
-	reasons []string
-	checks  []string
-	swap    string
-}
-
-func planDatabase(ctx context.Context, db *database, objects ObjectsFile, name string, force, swapDefault bool) (databasePlan, error) {
-	var result databasePlan
-	exists, err := databaseExists(ctx, db, name)
-	if err != nil {
-		return result, err
-	}
-	if !exists {
-		result.checks = append(result.checks, "database "+name+" will be created")
-		return result, nil
-	}
-	hasObjects, err := databaseHasUserObjects(ctx, db, name)
-	if err != nil {
-		return result, err
-	}
-	if !hasObjects {
-		return result, nil
-	}
-	if !force && !swapDefault {
-		result.reasons = append(result.reasons, fmt.Sprintf("database %s is not empty; use --force after reviewing this plan", name))
-		return result, nil
-	}
-	if err := db.use(ctx, name); err != nil {
-		return result, err
-	}
-	result.reasons = dependencyReasons(ctx, db, objects, name)
-	if len(result.reasons) > 0 || force {
-		return result, nil
-	}
-	if err := databaseRenameBlocked(ctx, db, name); err != nil {
-		result.reasons = append(result.reasons, err.Error())
-		return result, nil
-	}
-	temp, err := swapNames(ctx, db, name)
-	if err != nil {
-		result.reasons = append(result.reasons, err.Error())
-		return result, nil
-	}
-	result.swap = name
-	result.checks = append(result.checks, fmt.Sprintf("database %s can be restored beside the existing copy as %s", name, temp))
-	return result, nil
-}
-
-func databaseRenameBlocked(ctx context.Context, db *database, name string) error {
-	rels, err := listRelations(ctx, db)
-	if err != nil {
-		return err
-	}
-	for _, rel := range rels {
-		if rel.Type == "view" || rel.Type == "materialized view" {
-			return fmt.Errorf("database %s cannot be renamed safely while %s.%s is present", name, rel.Schema, rel.Name)
-		}
-	}
-	return nil
-}
-
-func dependencyReasons(ctx context.Context, db *database, objects ObjectsFile, name string) []string {
-	var reasons []string
-	if err := outsideForeignKeys(ctx, db, objects, name); err != nil {
-		reasons = append(reasons, err.Error())
-	}
-	if err := outsideCatalogDependencies(ctx, db, objects, name); err != nil {
-		reasons = append(reasons, err.Error())
-	}
-	return reasons
-}
-
-func droppableKind(kind string) bool {
-	switch kind {
-	case "view", "materialized_view", "function", "procedure", "table", "sequence", "type":
-		return true
-	default:
-		return false
-	}
-}
-
-func printRestorePlan(plan RestorePlan) {
-	fmt.Printf("restore plan: %s\n", map[bool]string{true: "OK", false: "REFUSE"}[plan.OK])
-	for _, check := range plan.Checks {
-		fmt.Printf("check: %s\n", check)
-	}
-	for _, object := range plan.Drop {
-		fmt.Printf("drop: %s\n", object)
-	}
-	for _, database := range plan.Swap {
-		fmt.Printf("swap: %s\n", database)
-	}
-	for _, reason := range plan.Reasons {
-		fmt.Printf("reason: %s\n", reason)
-	}
+	return res, err
 }
 
 func normalizeRestoreOptions(opt RestoreOptions) (RestoreOptions, error) {
@@ -364,29 +207,9 @@ func createSelectedDatabases(ctx context.Context, db *database, databases []Name
 		}
 		if p, ok := createDatabase(ctx, db, database); !ok {
 			problems = append(problems, p)
-		} else if err := waitForDatabase(ctx, db, database.Name); err != nil {
-			problems = append(problems, Problem{Object: database.Name, Kind: "database", Error: err.Error()})
 		}
 	}
 	return problems
-}
-
-func waitForDatabase(ctx context.Context, db *database, name string) error {
-	for attempt := 0; attempt < 20; attempt++ {
-		exists, err := databaseExists(ctx, db, name)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-	return fmt.Errorf("database %s was not visible after CREATE DATABASE", name)
 }
 
 func createDatabase(ctx context.Context, db *database, database NamedSQL) (Problem, bool) {
@@ -928,8 +751,11 @@ func resolveBackup(ctx context.Context, root Location, src string) (Location, st
 }
 
 func looksLikeTimestamp(s string) bool {
-	_, ok := backupTime(s)
-	return ok
+	if len(s) != len("20060102T150405Z") {
+		return false
+	}
+	_, err := time.Parse("20060102T150405Z", s)
+	return err == nil
 }
 
 func openBackup(ctx context.Context, root Location, timestamp string) (Store, string, error) {

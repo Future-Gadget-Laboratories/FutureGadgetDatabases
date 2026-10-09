@@ -92,6 +92,11 @@ func TestSQLFields(t *testing.T) {
 			input: `CREATE TABLE t (amount DECIMAL(10,2), nested STRING)`,
 			want:  []string{"CREATE", "TABLE", "t", "amount", "DECIMAL", "10", "2)", "nested", "STRING)"},
 		},
+		{
+			name:  "non-ASCII identifiers",
+			input: "CREATE TABLE public.voilà (хлеб STRING, 寿司 INT)",
+			want:  []string{"CREATE", "TABLE", "public.voilà", "хлеб", "STRING", "寿司", "INT)"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -191,6 +196,21 @@ func TestPlanGCTTLRaisesInheritedRangeAndIndex(t *testing.T) {
 	}
 	if !strings.Contains(changes[1].Apply, `ALTER DATABASE "shop"`) {
 		t.Fatalf("database inheritance change %#v", changes[1])
+	}
+}
+
+func TestPlanGCTTLSkipsInheritedObjectTTL(t *testing.T) {
+	zones := []zoneRow{{
+		Level:     "table",
+		Database:  "shop",
+		Schema:    "public",
+		Table:     "events",
+		Object:    "TABLE shop.public.events",
+		RawSQL:    "ALTER TABLE shop.public.events CONFIGURE ZONE USING num_replicas = 3",
+		Effective: 60,
+	}}
+	if got := planGCTTLRaises(3600, []string{"shop"}, zones); len(got) != 0 {
+		t.Fatalf("inherited table zone produced changes: %#v", got)
 	}
 }
 

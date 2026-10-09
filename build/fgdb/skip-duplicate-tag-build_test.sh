@@ -21,8 +21,8 @@ cat >"${tmp}/runs.json" <<'EOF'
       "id": 100,
       "head_sha": "same",
       "event": "workflow_dispatch",
-      "name": "FGDB OSS publish=true",
-      "display_title": "v23.2.15",
+      "name": "FGDB OSS release",
+      "display_title": "FGDB OSS v23.2.15 publish=true",
       "status": "completed",
       "conclusion": "success"
     },
@@ -30,8 +30,26 @@ cat >"${tmp}/runs.json" <<'EOF'
       "id": 101,
       "head_sha": "same",
       "event": "workflow_dispatch",
-      "name": "FGDB OSS publish=true",
-      "display_title": "v23.2.15-fgdb.1",
+      "name": "FGDB OSS release",
+      "display_title": "FGDB OSS v23.2.15-fgdb.1 publish=true",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 102,
+      "head_sha": "same",
+      "event": "workflow_dispatch",
+      "name": "FGDB OSS release",
+      "display_title": "FGDB OSS v23.2.15-fgdb.10 publish=true",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "id": 103,
+      "head_sha": "other",
+      "event": "workflow_dispatch",
+      "name": "FGDB OSS release",
+      "display_title": "FGDB OSS v23.2.15 publish=true",
       "status": "completed",
       "conclusion": "success"
     }
@@ -53,6 +71,7 @@ run() {
 
 [[ "$(run v23.2.15-oss)" == true ]]
 [[ "$(run v23.2.15-fgdb.1)" == true ]]
+[[ "$(run v23.2.15-fgdb.10)" == true ]]
 
 python3 - "${tmp}/runs.json" <<'PY'
 import json
@@ -60,11 +79,12 @@ import sys
 
 path = sys.argv[1]
 payload = json.load(open(path))
-payload["workflow_runs"] = [payload["workflow_runs"][1]]
+payload["workflow_runs"] = [payload["workflow_runs"][2]]
 json.dump(payload, open(path, "w"))
 PY
 
 [[ "$(run v23.2.15-oss)" == false ]]
-[[ "$(run v23.2.15-fgdb.1)" == true ]]
+[[ "$(run v23.2.15-fgdb.1)" == false ]]
+[[ "$(run v23.2.15-fgdb.10)" == true ]]
 
 echo "duplicate-tag-build tests passed"
