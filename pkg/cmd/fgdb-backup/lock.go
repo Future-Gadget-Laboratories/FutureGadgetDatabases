@@ -59,34 +59,66 @@ func acquireBackupLease(ctx context.Context, loc Location, name, holder string, 
 	l := &backupLease{loc: loc, rel: name + "/LOCK.json", record: record, stop: make(chan struct{}), done: make(chan struct{})}
 	deadline := time.Now().Add(wait)
 	for {
-		err := l.create(ctx)
-		if err == nil {
+		acquired, current, err := tryCreateLease(ctx, l)
+		if acquired {
 			go l.renewLoop()
 			return l, nil
 		}
-		current, readErr := l.read(ctx)
-		if readErr != nil && !isNotFound(readErr) {
-			return nil, fmt.Errorf("acquire backup lock: %w", readErr)
-		}
-		if current.Holder == "" {
+		if err != nil {
 			return nil, err
 		}
+		if current.Holder == "" {
+			return nil, errors.New("backup lock disappeared while acquiring it")
+		}
 		if leaseExpired(current) {
-			if removeErr := l.remove(ctx); removeErr == nil {
+			if reclaimLease(ctx, l) {
 				continue
 			}
 		}
 		if wait <= 0 || time.Now().After(deadline) {
-			return nil, fmt.Errorf("backup %q is locked by %s on %s (pid %d, renewed %s); use --lock-wait or unlock after checking the holder", name, current.Holder, current.Host, current.PID, current.RenewedAt.Format(time.RFC3339))
+			return nil, lockedError(name, current)
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
+		if err := waitForLease(ctx, deadline); err != nil {
+			return nil, err
 		}
 	}
+}
+
+func tryCreateLease(ctx context.Context, lease *backupLease) (bool, backupLeaseRecord, error) {
+	if err := lease.create(ctx); err == nil {
+		return true, backupLeaseRecord{}, nil
+	} else {
+		current, readErr := lease.read(ctx)
+		if readErr != nil {
+			if isNotFound(readErr) || os.IsNotExist(readErr) {
+				return false, backupLeaseRecord{}, err
+			}
+			return false, backupLeaseRecord{}, fmt.Errorf("acquire backup lock: %w", readErr)
+		}
+		return false, current, nil
+	}
+}
+
+func reclaimLease(ctx context.Context, lease *backupLease) bool {
+	return lease.remove(ctx) == nil
+}
+
+func waitForLease(ctx context.Context, deadline time.Time) error {
+	if time.Now().After(deadline) {
+		return context.DeadlineExceeded
+	}
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func lockedError(name string, record backupLeaseRecord) error {
+	return fmt.Errorf("backup %q is locked by %s on %s (pid %d, renewed %s); use --lock-wait or unlock after checking the holder", name, record.Holder, record.Host, record.PID, record.RenewedAt.Format(time.RFC3339))
 }
 
 func (l *backupLease) create(ctx context.Context) error {
