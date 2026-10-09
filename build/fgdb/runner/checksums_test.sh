@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright 2026 Future Gadget Laboratories.
+#
+# Licensed under the Apache License, Version 2.0. See licenses/APL.txt.
+
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

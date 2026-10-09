@@ -11,7 +11,10 @@
 # Idempotent. Prints the plan, then applies it. Pass --dry-run to stop after
 # the plan. A registration token is required only when the runner is not
 # already configured (or when --replace is set). The token is never written
-# into the plan, the env file, or the logs.
+# into the plan, the env file, or the logs. The registration program receives
+# it in ACTIONS_RUNNER_INPUT_TOKEN, not as a command-line argument.
+#
+# Runner self-update stays on unless the config file sets auto_update: false.
 #
 #   sudo ./build/fgdb/runner/setup-runner.sh --token-file /root/runner.token
 #
@@ -51,6 +54,12 @@ CHECKSUMS_FILE=${SCRIPT_DIR}/checksums.txt
 # shellcheck source=token-input.sh
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/token-input.sh"
+# shellcheck source=read-config.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/read-config.sh"
+# shellcheck source=runner-unit.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/runner-unit.sh"
 # Default cgroup and Bazel budgets. Lower them when the host runs
 # other services. See docs/fgdb/RUNNER.md.
 CPU_QUOTA=${FGDB_CPU_QUOTA:-2400%}
@@ -77,9 +86,9 @@ usage() {
   cat <<EOF
 usage: setup-runner.sh [options]
 
-  --token TOKEN          GitHub Actions registration token (or GH_RUNNER_REGISTRATION_TOKEN)
-  --token-file PATH      read a root-owned 0400/0600 token file
-  --token-stdin          read one token line from stdin
+  --token-file PATH      read a root-owned token file (mode 0400 or 0600)
+  --token-stdin          read one token line from stdin (hidden on a terminal)
+  --token TOKEN          deprecated; visible in shell history and process listings
   --config PATH          read static setup settings from YAML
   --url URL              Runner URL (repo default, or the org URL)
   --name NAME            Runner name (default ${RUNNER_NAME})
@@ -101,12 +110,6 @@ EOF
 
 need_arg() {
   [[ $# -ge 2 ]] || die "$1 needs a value"
-}
-
-yaml_value() {
-  local key=$1
-  [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 0
-  awk -F: -v key="$key" '$1 == key { sub(/^[[:space:]]+/, "", $2); print $2; exit }' "$CONFIG_PATH"
 }
 
 die() {
@@ -134,24 +137,8 @@ done
 
 if [[ -n "$CONFIG_PATH" ]]; then
   [[ -f "$CONFIG_PATH" ]] || die "config file does not exist: $CONFIG_PATH"
-  value=$(yaml_value cache_path); [[ -n "$value" ]] && CACHE_DIR_OVERRIDE=$value
-  value=$(yaml_value local_cpu); [[ -n "$value" ]] && LOCAL_CPU=$value
-  value=$(yaml_value local_ram_mb); [[ -n "$value" ]] && LOCAL_RAM_MB=$value
-  value=$(yaml_value cpu_quota); [[ -n "$value" ]] && CPU_QUOTA=$value
-  value=$(yaml_value memory_high); [[ -n "$value" ]] && MEMORY_HIGH=$value
-  value=$(yaml_value memory_max); [[ -n "$value" ]] && MEMORY_MAX=$value
-  value=$(yaml_value runner_version); [[ -n "$value" ]] && RUNNER_VERSION=$value
-  value=$(yaml_value bazelisk_version); [[ -n "$value" ]] && BAZELISK_VERSION=$value
-  value=$(yaml_value auto_update)
-  [[ "$value" == "false" ]] && AUTO_UPDATE=0
-  mapfile -t configured_filesystems < <(awk '
-    /^allowed_filesystems:/ { on = 1; next }
-    on && /^[^[:space:]-]/ { exit }
-    on && /^[[:space:]]*-[[:space:]]*/ { sub(/^[[:space:]]*-[[:space:]]*/, ""); print }
-  ' "$CONFIG_PATH")
-  if (( ${#configured_filesystems[@]} > 0 )); then
-    ALLOWED_FILESYSTEMS=("${configured_filesystems[@]}")
-  fi
+  parse_runner_config "$CONFIG_PATH"
+  apply_runner_config
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -266,6 +253,9 @@ if [[ "$TOKEN_STDIN" -eq 1 ]]; then
   TOKEN=$REPLY_TOKEN
 fi
 
+cache_check=${SCRIPT_DIR}/check-cache-dir.sh
+require_cache_check_script "$cache_check"
+
 log() {
   printf '%s\n' "$*"
 }
@@ -375,13 +365,8 @@ else
   read -r cache_root free_bytes < <(choose_cache_root)
 fi
 
-if [[ -x "$SCRIPT_DIR/check-cache-dir.sh" ]]; then
-  fstype_args=()
-  for fstype in "${ALLOWED_FILESYSTEMS[@]}"; do
-    fstype_args+=(--allow-fstype "$fstype")
-  done
-  bash "$SCRIPT_DIR/check-cache-dir.sh" "${fstype_args[@]}" "$cache_root" 150
-fi
+build_cache_check_args "$cache_root" 150
+bash "$cache_check" "${CACHE_CHECK_ARGS[@]}"
 
 if (( free_bytes < MIN_FREE_BYTES )); then
   die "need at least 150 GiB free for the Bazel cache; best candidate has $((free_bytes / 1024 / 1024 / 1024)) GiB (${cache_root})"
@@ -402,7 +387,7 @@ if (( REPLACE == 1 )) || (( runner_configured == 0 )); then
   need_token=1
 fi
 if (( need_token == 1 )) && [[ -z "$TOKEN" ]] && (( DRY_RUN == 0 )); then
-  die "a registration token is required (pass --token or set GH_RUNNER_REGISTRATION_TOKEN). It is not required on later runs once ${RUNNER_INSTALL_DIR}/.runner exists."
+  die "$(registration_token_required_error "$RUNNER_INSTALL_DIR")"
 fi
 
 token_state="not set"
@@ -429,6 +414,8 @@ log "  packages:          build tools, docker.io, jq, python3 (no dist-upgrade, 
 log "  bazel disk cache:  ${disk_cache}"
 log "  bazel output base: ${output_base}"
 log "  free space seen:   $((free_bytes / 1024 / 1024 / 1024)) GiB"
+log "  cache filesystems: ${ALLOWED_FILESYSTEMS[*]}"
+log "  runner auto-update: $([[ $AUTO_UPDATE -eq 1 ]] && echo on || echo off)"
 log "  systemd slice:     fgdb-runner.slice CPUQuota=${CPU_QUOTA} MemoryHigh=${MEMORY_HIGH} MemoryMax=${MEMORY_MAX}"
 log "  bazel resources:   local_cpu=${LOCAL_CPU} local_ram_mb=${LOCAL_RAM_MB} (${ENV_FILE})"
 log "  coexistence:       slice caps the runner so the OS and other local services keep the remaining CPU and RAM"
@@ -620,6 +607,7 @@ fi
 
 dropin_dir="/etc/systemd/system/${existing_unit}.d"
 install -d -m 0755 "$dropin_dir"
+exec_pre=$(build_exec_start_pre "$output_base" 50)
 cat >"${dropin_dir}/10-fgdb-limits.conf" <<EOF
 [Unit]
 After=network-online.target docker.service
@@ -627,7 +615,7 @@ Wants=network-online.target
 
 [Service]
 Slice=fgdb-runner.slice
-ExecStartPre=/usr/local/lib/fgdb/check-cache-dir.sh ${output_base} 50
+ExecStartPre=${exec_pre}
 Nice=10
 CPUWeight=50
 IOWeight=50

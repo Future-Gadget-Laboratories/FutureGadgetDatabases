@@ -34,6 +34,9 @@ jobs:
           bash build/fgdb/runner/check-cache-dir_test.sh
           bash build/fgdb/runner/checksums_test.sh
           bash build/fgdb/runner/token-input_test.sh
+          bash build/fgdb/runner/read-config_test.sh
+          bash build/fgdb/runner/update-checksums_test.sh
+          bash build/fgdb/runner/runner-unit_test.sh
 
   integration:
     runs-on: ubuntu-latest

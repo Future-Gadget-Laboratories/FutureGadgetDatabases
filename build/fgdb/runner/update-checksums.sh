@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
+# Refresh one pin in checksums.txt.
+#
+# The downloaded file is never trusted by itself. The Actions Runner hash
+# has to match the linux-x64 value in that version's GitHub release notes.
+# The Bazelisk hash has to match the published bazelisk-linux-amd64.sha256
+# file. checksums.txt stays mode 0644.
+
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 MAP=${ROOT}/checksums.txt
+# shellcheck source=checksum-notes.sh
+# shellcheck disable=SC1091
+source "${ROOT}/checksum-notes.sh"
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -31,21 +41,35 @@ esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 artifact=${tmp}/${filename}
-curl -fsSL "$url" -o "$artifact"
+curl -fsSL "$url" -o "$artifact" || die "could not download ${url}"
 sha=$(sha256sum "$artifact" | awk '{print $1}')
 
 if [[ "$component" == actions-runner ]]; then
-  notes=$(curl -fsSL "https://api.github.com/repos/actions/runner/releases/tags/v${version}")
-  published=$(printf '%s' "$notes" | jq -r '.body' | tr -d '\r' | awk -v file="$filename" '
-    index($0, file) { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9a-fA-F]{64}$/) { print tolower($i); exit } }')
-  [[ "$published" == "$sha" ]] || die "download hash ${sha} does not match publisher hash ${published:-<missing>}"
+  notes_json=$(curl -fsSL "https://api.github.com/repos/actions/runner/releases/tags/v${version}") ||
+    die "could not download the Actions Runner release notes for ${version}"
+  body=$(printf '%s' "$notes_json" | jq -r '.body') ||
+    die "could not parse the Actions Runner release notes for ${version}"
+  [[ -n "$body" && "$body" != null ]] ||
+    die "the Actions Runner release notes for ${version} are empty"
+  published=$(runner_linux_x64_sha "$body" "$filename") ||
+    die "the release notes for ${version} do not contain a linux-x64 checksum between BEGIN SHA and END SHA"
+else
+  sidecar=$(curl -fsSL "${url}.sha256") ||
+    die "could not download the published Bazelisk checksum for ${version}. Refusing to trust the binary download by itself."
+  published=$(bazelisk_sidecar_sha "$sidecar") ||
+    die "the published Bazelisk checksum for ${version} is not a sha256 hash. Refusing to trust the binary download by itself."
 fi
+[[ "$published" == "$sha" ]] ||
+  die "download hash ${sha} does not match publisher hash ${published}"
 
 tmp_map=$(mktemp)
-awk -v c="$component" -v v="$version" -v p="$platform" -v f="$filename" -v h="$sha" '
+awk -v c="$component" -v v="$version" -v p="$platform" -v h="$sha" -v f="$filename" '
   $1 == c && $2 == v && $3 == p { next }
   { print }
   END { printf "%s %s %s %s %s\n", c, v, p, h, f }
 ' "$MAP" >"$tmp_map"
-mv "$tmp_map" "$MAP"
+chmod 0644 "$tmp_map"
+cat "$tmp_map" >"$MAP"
+rm -f "$tmp_map"
+chmod 0644 "$MAP"
 printf 'updated %s %s %s %s\n' "$component" "$version" "$platform" "$sha"
