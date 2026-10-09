@@ -1,0 +1,104 @@
+name: FGDB PR build
+
+# Builds a pull request on the self-hosted build runner (label fgdb-build),
+# but only after a repository admin marks it ready for review.
+#
+# pull_request_target: this file and the gate always come from the base branch,
+# so a pull request cannot edit them. The pull request's code is checked out by
+# the exact commit the admin saw, without credentials, and is only built and tested.
+# PR builds use their own Bazel output base and disk cache, so release builds
+# never read artifacts that a PR build produced.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: fgdb-pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  EXPECT_GO: go1.21.12
+
+jobs:
+  gate:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: Future-Gadget-Laboratories/ci-templates/.github/workflows/ready-gate.yml@main
+
+  build:
+    name: Build cockroach-oss (PR)
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
+    runs-on: [self-hosted, fgdb-build]
+    timeout-minutes: 480
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout build tooling from the base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: tooling
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: build/fgdb
+
+      - name: Checkout the pull request commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ needs.gate.outputs.head_sha }}
+          path: src
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Use the PR cache paths
+        run: |
+          set -euo pipefail
+          if [[ -f /etc/fgdb/runner.env ]]; then
+            set -a
+            # shellcheck disable=SC1091
+            . /etc/fgdb/runner.env
+            set +a
+          fi
+          if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
+            echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
+            echo "Run build/fgdb/runner/setup-runner.sh on the build runner first." >&2
+            exit 1
+          fi
+          # Separate from the release caches unless the runner names its own PR paths.
+          pr_cache=${FGDB_BAZEL_DISK_CACHE_PR:-${FGDB_BAZEL_DISK_CACHE%/}-pr}
+          pr_base=${FGDB_BAZEL_OUTPUT_BASE_PR:-${FGDB_BAZEL_OUTPUT_BASE%/}-pr}
+          mkdir -p "$pr_cache" "$pr_base"
+          {
+            echo "FGDB_BAZEL_DISK_CACHE=${pr_cache}"
+            echo "FGDB_BAZEL_OUTPUT_BASE=${pr_base}"
+            echo "FGDB_LOCAL_CPU=${FGDB_LOCAL_CPU:-24}"
+            echo "FGDB_LOCAL_RAM_MB=${FGDB_LOCAL_RAM_MB:-81920}"
+          } >> "$GITHUB_ENV"
+
+      - name: Write Bazel user config
+        env:
+          FGDB_BUILD_CHANNEL: fgl-oss
+        run: bash tooling/build/fgdb/write-bazelrc-user.sh "${PWD}/src"
+
+      - name: Build oss and geos
+        run: bash tooling/build/fgdb/build-oss.sh "${PWD}/src"
+
+      - name: Verify the binary is CCL-free
+        env:
+          FGDB_EXPECT_GO: ${{ env.EXPECT_GO }}
+        run: bash tooling/build/fgdb/verify-oss-binary.sh "${PWD}/src/cockroach-oss"
+
+      - name: Disallowed-imports test
+        run: |
+          set -euo pipefail
+          cd src
+          bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test \
+            --test_output=errors \
+            --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
