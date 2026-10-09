@@ -104,6 +104,7 @@ func cmdBackup(args []string) int {
 	split := fs.Int(flagSplitRows, 0, "split integer-primary-key tables into ranges of this many rows")
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
 	margin := fs.Duration(flagSafetyMargin, time.Minute, "fail before the snapshot's GC deadline gets this close")
+	skipGrants := fs.Bool("skip-grants", false, "skip grants if the source does not allow reading them; record the skip in the backup manifest")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -136,6 +137,7 @@ func cmdBackup(args []string) int {
 		PartSize:     *part,
 		SafetyMargin: *margin,
 		ExtendGCTTL:  extendDur,
+		SkipGrants:   *skipGrants,
 		JSON:         *asJSON,
 	})
 	if err != nil {

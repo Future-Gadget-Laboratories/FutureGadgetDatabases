@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,70 @@ func TestClassifyAndOrder(t *testing.T) {
 	}
 	if got := objectName("table", stmts[3]); got != "public.customers" {
 		t.Fatalf("object name %q", got)
+	}
+}
+
+func TestFindOpenParen(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{name: "empty", input: "", want: -1},
+		{name: "plain", input: "name(args)", want: 4},
+		{name: "nested", input: "name(a (b))", want: 4},
+		{name: "quoted identifier", input: `"fn(name)"(value)`, want: 10},
+		{name: "escaped identifier quote", input: `"fn""(name)"(value)`, want: 12},
+		{name: "escaped string quote", input: `'it''s (x)'(value)`, want: 11},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := findOpenParen(test.input); got != test.want {
+				t.Fatalf("findOpenParen(%q) = %d, want %d", test.input, got, test.want)
+			}
+		})
+	}
+}
+
+func TestSQLFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "empty", input: "", want: nil},
+		{
+			name:  "quoted identifiers",
+			input: `CREATE TABLE "public"."table name" ("col name" STRING)`,
+			want:  []string{"CREATE", "TABLE", `"public"."table name"`, `"col name"`, "STRING)"},
+		},
+		{
+			name:  "escaped identifier quotes",
+			input: `CREATE TABLE "a""b" ("c""d" STRING)`,
+			want:  []string{"CREATE", "TABLE", `"a""b"`, `"c""d"`, "STRING)"},
+		},
+		{
+			name:  "escaped string quotes",
+			input: `CREATE VIEW "v" AS SELECT 'it''s (x,y)'`,
+			want:  []string{"CREATE", "VIEW", `"v"`, "AS", "SELECT", `'it''s (x,y)'`},
+		},
+		{
+			name:  "nested parentheses",
+			input: `CREATE TABLE t (amount DECIMAL(10,2), nested STRING)`,
+			want:  []string{"CREATE", "TABLE", "t", "amount", "DECIMAL", "10", "2)", "nested", "STRING)"},
+		},
+		{
+			name:  "non-ASCII identifiers",
+			input: "CREATE TABLE public.voilà (хлеб STRING, 寿司 INT)",
+			want:  []string{"CREATE", "TABLE", "public.voilà", "хлеб", "STRING", "寿司", "INT)"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := sqlFields(test.input); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("sqlFields(%q) = %#v, want %#v", test.input, got, test.want)
+			}
+		})
 	}
 }
 
@@ -87,6 +152,17 @@ func TestGCBudget(t *testing.T) {
 	}
 }
 
+func TestMinEffectiveTTLIncludesInheritedRangeDefault(t *testing.T) {
+	zones := []zoneRow{
+		{Level: "range", Object: rangeDefaultZone, Effective: 60},
+		{Level: "table", Database: "shop", Object: "TABLE shop.public.explicit", Effective: 3600},
+	}
+	got, object := minEffectiveTTL([]string{"shop"}, zones)
+	if got != 60 || object != rangeDefaultZone {
+		t.Fatalf("minimum ttl = %d on %q, want 60 on %q", got, object, rangeDefaultZone)
+	}
+}
+
 func TestPlanGCTTLRaises(t *testing.T) {
 	zones := []zoneRow{
 		{Level: "range", Object: rangeDefaultZone, Effective: 14400, FullSQL: "gc.ttlseconds = 14400"},
@@ -102,6 +178,38 @@ func TestPlanGCTTLRaises(t *testing.T) {
 	}
 	if !strings.Contains(changes[1].Revert, "gc.ttlseconds = 30") {
 		t.Fatalf("database change %#v", changes[1])
+	}
+}
+
+func TestPlanGCTTLRaisesInheritedRangeAndIndex(t *testing.T) {
+	zones := []zoneRow{
+		{Level: "range", Object: rangeDefaultZone, RawSQL: "ALTER RANGE default CONFIGURE ZONE USING gc.ttlseconds = 60", Effective: 60},
+		{Level: "index", Database: "shop", Schema: "public", Table: "events", Index: "events_pkey", Object: "INDEX shop.public.events@events_pkey", RawSQL: "ALTER INDEX shop.public.events@events_pkey CONFIGURE ZONE USING gc.ttlseconds = 120", Effective: 120},
+	}
+	changes := planGCTTLRaises(3600, []string{"shop"}, zones)
+	if len(changes) != 2 {
+		t.Fatalf("changes = %#v", changes)
+	}
+	if !strings.Contains(changes[0].Apply, "ALTER INDEX") || !strings.Contains(changes[0].Revert, "120") {
+		t.Fatalf("index change %#v", changes[0])
+	}
+	if !strings.Contains(changes[1].Apply, `ALTER DATABASE "shop"`) {
+		t.Fatalf("database inheritance change %#v", changes[1])
+	}
+}
+
+func TestPlanGCTTLSkipsInheritedObjectTTL(t *testing.T) {
+	zones := []zoneRow{{
+		Level:     "table",
+		Database:  "shop",
+		Schema:    "public",
+		Table:     "events",
+		Object:    "TABLE shop.public.events",
+		RawSQL:    "ALTER TABLE shop.public.events CONFIGURE ZONE USING num_replicas = 3",
+		Effective: 60,
+	}}
+	if got := planGCTTLRaises(3600, []string{"shop"}, zones); len(got) != 0 {
+		t.Fatalf("inherited table zone produced changes: %#v", got)
 	}
 }
 
@@ -161,6 +269,31 @@ func TestNullAndSequenceHelpers(t *testing.T) {
 	drop, err := dropRoutineStatement("function", "CREATE FUNCTION public.add(IN a INT8, IN b INT8) RETURNS INT8 LANGUAGE SQL AS $$ SELECT a + b; $$")
 	if err != nil || drop != "DROP FUNCTION IF EXISTS public.add(INT8, INT8);" {
 		t.Fatalf("drop function: %s %v", drop, err)
+	}
+}
+
+func TestQuotedObjectNamesStaySingleTokens(t *testing.T) {
+	sql := `CREATE TABLE "public"."table name.with.dot" ("id" INT PRIMARY KEY);`
+	if got := objectName("table", sql); got != `"public"."table name.with.dot"` {
+		t.Fatalf("object name %q", got)
+	}
+	drop, err := dropSequenceSQL(Statement{Object: `"public"."sequence.name"`})
+	if err != nil || drop != `DROP SEQUENCE IF EXISTS "public"."sequence.name"` {
+		t.Fatalf("drop sequence: %s %v", drop, err)
+	}
+	got, err := quotedObjectName(`"public"."table name.with.dot"`, 2)
+	if err != nil || got != `"public"."table name.with.dot"` {
+		t.Fatalf("quoted object name %q", got)
+	}
+}
+
+func TestRoutineNameWithParenthesisIsNotSplitEarly(t *testing.T) {
+	got, err := dropRoutineStatement("function", `CREATE FUNCTION "public"."fn(name)"(IN value INT) RETURNS INT LANGUAGE SQL AS 'SELECT value'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `DROP FUNCTION IF EXISTS "public"."fn(name)"(INT);` {
+		t.Fatalf("drop routine: %s", got)
 	}
 }
 

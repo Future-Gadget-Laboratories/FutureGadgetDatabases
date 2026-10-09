@@ -246,7 +246,7 @@ func dropRoutineStatement(kind, createSQL string) (string, error) {
 }
 
 func splitNameArgs(s string) (string, string, bool) {
-	open := strings.Index(s, "(")
+	open := findOpenParen(s)
 	if open < 0 {
 		return "", "", false
 	}
@@ -255,6 +255,20 @@ func splitNameArgs(s string) (string, string, bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(s[:open]), s[open+1 : close], true
+}
+
+func findOpenParen(s string) int {
+	quotes := sqlQuoteState{}
+	for i := 0; i < len(s); i++ {
+		if next, quoted := quotes.consume(s, i); quoted {
+			i = next
+			continue
+		}
+		if s[i] == '(' {
+			return i
+		}
+	}
+	return -1
 }
 
 func routineArgTypes(args string) string {

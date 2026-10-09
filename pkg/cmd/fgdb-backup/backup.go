@@ -33,8 +33,11 @@ type BackupOptions struct {
 	PartSize     int
 	SafetyMargin time.Duration
 	ExtendGCTTL  time.Duration
+	SkipGrants   bool
 	JSON         bool
 }
+
+const databaseGrantPrefix = "DATABASE "
 
 // BackupResult is the machine-readable backup summary.
 type BackupResult struct {
@@ -90,7 +93,7 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
-	asOfText, budget, err := snapshotBudget(ctx, db, src.zones, opt.SafetyMargin)
+	asOfText, budget, err := snapshotBudget(ctx, db, src.dbs, src.zones, opt.SafetyMargin)
 	if err != nil {
 		return res, err
 	}
@@ -111,7 +114,17 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
-	attachGrantsAndZones(ctx, db, src.dbs, artifactZones, &objects, &warnings)
+	if err := attachGrantsAndZones(ctx, grantZoneOptions{
+		db:            db,
+		asOf:          asOfText,
+		dbs:           src.dbs,
+		artifactZones: artifactZones,
+		skipGrants:    opt.SkipGrants,
+		objects:       &objects,
+		warnings:      &warnings,
+	}); err != nil {
+		return res, err
+	}
 
 	peak, err := writeBackupFiles(ctx, backupArtifact{
 		src: src, opt: opt, base: base, ts: ts, asOfText: asOfText, minTTL: budget.minTTL,
@@ -255,7 +268,7 @@ func logRevertSQL(revertSQL []string) {
 	}
 }
 
-func snapshotBudget(ctx context.Context, db *database, zones []zoneRow, margin time.Duration) (string, gcBudget, error) {
+func snapshotBudget(ctx context.Context, db *database, databases []string, zones []zoneRow, margin time.Duration) (string, gcBudget, error) {
 	asOfText, err := db.captureAsOf(ctx)
 	if err != nil {
 		return "", gcBudget{}, err
@@ -264,7 +277,7 @@ func snapshotBudget(ctx context.Context, db *database, zones []zoneRow, margin t
 	if err != nil {
 		return "", gcBudget{}, fmt.Errorf("timestamp %q from the source: %w", asOfText, err)
 	}
-	minTTL, minObj := minEffectiveTTL(zones)
+	minTTL, minObj := minEffectiveTTL(databases, zones)
 	if minTTL <= 0 {
 		return "", gcBudget{}, fmt.Errorf("could not read gc.ttlseconds for the databases being backed up")
 	}
@@ -340,7 +353,12 @@ func backupOneDatabase(ctx context.Context, work *backupWork, database string) e
 }
 
 func appendDatabaseDDL(ctx context.Context, db *database, database, asOfText string, budget gcBudget, objects *ObjectsFile) error {
-	createDB, err := showCreateDatabase(ctx, db, database)
+	var createDB string
+	err := db.withSnapshot(ctx, asOfText, func(ctx context.Context) error {
+		var err error
+		createDB, err = showCreateDatabase(ctx, db, database)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -449,21 +467,35 @@ func copyTableError(budget gcBudget, err error) error {
 	return err
 }
 
-func attachGrantsAndZones(ctx context.Context, db *database, dbs []string, artifactZones []zoneRow, objects *ObjectsFile, warnings *[]string) {
-	grantSQL, grantWarn := readGrants(ctx, db, dbs)
-	*warnings = append(*warnings, grantWarn...)
-	objects.Grants = grantSQL
-	for _, z := range artifactZones {
+type grantZoneOptions struct {
+	db            *database
+	asOf          string
+	dbs           []string
+	artifactZones []zoneRow
+	skipGrants    bool
+	objects       *ObjectsFile
+	warnings      *[]string
+}
+
+func attachGrantsAndZones(ctx context.Context, opt grantZoneOptions) error {
+	grantSQL, grantWarn, err := readGrants(ctx, opt.db, opt.asOf, opt.dbs, opt.skipGrants)
+	if err != nil {
+		return err
+	}
+	*opt.warnings = append(*opt.warnings, grantWarn...)
+	opt.objects.Grants = grantSQL
+	for _, z := range opt.artifactZones {
 		if z.Level == "range" || strings.TrimSpace(z.RawSQL) == "" {
 			continue
 		}
-		objects.Zones = append(objects.Zones, ZoneStatement{
+		opt.objects.Zones = append(opt.objects.Zones, ZoneStatement{
 			Object:   z.Object,
 			Database: z.Database,
 			Level:    z.Level,
 			SQL:      ensureSemicolon(z.RawSQL),
 		})
 	}
+	return nil
 }
 
 // backupArtifact is one finished snapshot ready to write.
@@ -1055,30 +1087,136 @@ func scanSequenceValue(rows pgx.Rows, database string, want map[string]tableRef)
 	}, true, nil
 }
 
-func readGrants(ctx context.Context, db *database, dbs []string) ([]string, []string) {
+func readGrants(ctx context.Context, db *database, asOf string, dbs []string, skip bool) ([]string, []string, error) {
 	var grants []string
 	var warnings []string
-	users, roles, memberships, err := readPrincipals(ctx, db)
+	var users, roles []string
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		users, roles, err = readUserNames(ctx, db)
+		return err
+	})
 	if err != nil {
-		warnings = append(warnings, "users and roles were not read: "+err.Error())
-	} else {
-		for _, role := range roles {
-			grants = append(grants, "CREATE ROLE IF NOT EXISTS "+quoteIdent(role)+";")
+		if !skip {
+			return nil, warnings, fmt.Errorf("users and roles: %w", err)
 		}
-		for _, user := range users {
-			grants = append(grants, "CREATE USER IF NOT EXISTS "+quoteIdent(user)+";")
-		}
-		grants = append(grants, memberships...)
+		warnings = append(warnings, "grants skipped: users and roles: "+err.Error())
 	}
+	for _, role := range roles {
+		grants = append(grants, "CREATE ROLE IF NOT EXISTS "+quoteIdent(role)+";")
+	}
+	for _, user := range users {
+		grants = append(grants, "CREATE USER IF NOT EXISTS "+quoteIdent(user)+";")
+	}
+	var memberships []string
+	if err := readGrantSnapshotInto(ctx, grantSnapshotOptions{
+		db: db, asOf: asOf, label: "role memberships", skip: skip,
+		read: func(ctx context.Context) ([]string, error) { return readMemberships(ctx, db) },
+		out:  &memberships, warnings: &warnings,
+	}); err != nil {
+		return nil, warnings, err
+	}
+	grants = append(grants, memberships...)
+
 	for _, database := range dbs {
-		stmts, err := grantsForDatabase(ctx, db, database)
+		var stmts []string
+		if err := readGrantSnapshotInto(ctx, grantSnapshotOptions{
+			db: db, asOf: asOf, label: "database grants for " + database, skip: skip,
+			read: func(ctx context.Context) ([]string, error) {
+				return readGrantQuery(ctx, db, "SHOW GRANTS ON "+databaseGrantPrefix+quoteIdent(database), databaseGrantPrefix+quoteIdent(database))
+			},
+			out: &stmts, warnings: &warnings,
+		}); err != nil {
+			return nil, warnings, err
+		}
+		rels, err := readRelationsSnapshot(ctx, db, asOf, database, skip, &warnings)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("grants for %s were not read: %s", database, err.Error()))
-			continue
+			return nil, warnings, err
+		}
+		for _, rel := range rels {
+			if err := readGrantSnapshotInto(ctx, grantSnapshotOptions{
+				db: db, asOf: asOf,
+				label: "table grants for " + database + "." + rel.Schema + "." + rel.Name,
+				skip:  skip,
+				read: func(ctx context.Context) ([]string, error) {
+					return readGrantQuery(ctx, db, "SHOW GRANTS ON TABLE "+qualified(database, rel.Schema, rel.Name), "")
+				},
+				out: &stmts, warnings: &warnings,
+			}); err != nil {
+				return nil, warnings, err
+			}
 		}
 		grants = append(grants, stmts...)
 	}
-	return grants, warnings
+	return grants, warnings, nil
+}
+
+func readGrantSnapshot[T any](
+	ctx context.Context,
+	db *database,
+	asOf, label string,
+	skip bool,
+	read func(context.Context) (T, error),
+	warnings *[]string,
+) (T, error) {
+	var zero T
+	var value T
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		value, err = read(ctx)
+		return err
+	})
+	if err != nil {
+		if !skip {
+			return zero, fmt.Errorf("%s: %w", label, err)
+		}
+		*warnings = append(*warnings, "grants skipped: "+label+": "+err.Error())
+		return zero, nil
+	}
+	return value, nil
+}
+
+type grantSnapshotOptions struct {
+	db       *database
+	asOf     string
+	label    string
+	skip     bool
+	read     func(context.Context) ([]string, error)
+	out      *[]string
+	warnings *[]string
+}
+
+func readGrantSnapshotInto(ctx context.Context, opt grantSnapshotOptions) error {
+	value, err := readGrantSnapshot(ctx, opt.db, opt.asOf, opt.label, opt.skip, opt.read, opt.warnings)
+	if err != nil {
+		return err
+	}
+	*opt.out = append(*opt.out, value...)
+	return nil
+}
+
+func readRelationsSnapshot(
+	ctx context.Context,
+	db *database,
+	asOf, database string,
+	skip bool,
+	warnings *[]string,
+) ([]tableRef, error) {
+	var rels []tableRef
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		rels, err = grantRelations(ctx, db, database)
+		return err
+	})
+	if err != nil {
+		label := "grant relations for " + database
+		if !skip {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		*warnings = append(*warnings, "grants skipped: "+label+": "+err.Error())
+		return nil, nil
+	}
+	return rels, nil
 }
 
 func readPrincipals(ctx context.Context, db *database) (users, roles, memberships []string, err error) {
@@ -1168,7 +1306,7 @@ func skipMembership(role, member string) bool {
 }
 
 func grantsForDatabase(ctx context.Context, db *database, database string) ([]string, error) {
-	out, err := readGrantQuery(ctx, db, "SHOW GRANTS ON DATABASE "+quoteIdent(database), "DATABASE "+quoteIdent(database))
+	out, err := readGrantQuery(ctx, db, "SHOW GRANTS ON "+databaseGrantPrefix+quoteIdent(database), databaseGrantPrefix+quoteIdent(database))
 	if err != nil {
 		return nil, err
 	}
@@ -1398,7 +1536,7 @@ func zoneKind(z *zoneRow, want map[string]bool) string {
 func markDatabaseZone(z *zoneRow) {
 	z.Level = "database"
 	if z.Object == "" {
-		z.Object = "DATABASE " + z.Database
+		z.Object = databaseGrantPrefix + z.Database
 	}
 }
 
@@ -1409,23 +1547,28 @@ func markIndexZone(z *zoneRow) {
 	}
 }
 
-func minEffectiveTTL(zones []zoneRow) (int, string) {
-	// Prefer table and database effective configs over the bare default,
-	// but if a target has no zone, the default still applies.
-	min, obj := lowestTTL(zones, zoneHasTarget(zones))
+func minEffectiveTTL(databases []string, zones []zoneRow) (int, string) {
+	// A database without its own zone inherits the range default. Keep that
+	// default in the calculation even when another database or table has an
+	// explicit zone.
+	dbZones := map[string]bool{}
+	for _, z := range zones {
+		if z.Level == "database" {
+			dbZones[z.Database] = true
+		}
+	}
+	hasInheritedDatabase := false
+	for _, database := range databases {
+		if !dbZones[database] {
+			hasInheritedDatabase = true
+			break
+		}
+	}
+	min, obj := lowestTTL(zones, !hasInheritedDatabase)
 	if min == 0 {
 		return rangeDefaultTTL(zones)
 	}
 	return min, obj
-}
-
-func zoneHasTarget(zones []zoneRow) bool {
-	for _, z := range zones {
-		if isTargetLevel(z.Level) {
-			return true
-		}
-	}
-	return false
 }
 
 func isTargetLevel(level string) bool {

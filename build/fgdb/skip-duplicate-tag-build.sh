@@ -17,6 +17,7 @@ fi
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
 
 api="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/fgdb-oss-release.yml/runs?per_page=30"
 body=$(curl -fsSL \
@@ -35,6 +36,7 @@ import os
 payload = json.loads(os.environ["FGDB_RUNS_JSON"])
 sha = os.environ["FGDB_SHA"]
 this_run = int(os.environ["FGDB_RUN_ID"])
+tag = os.environ["GITHUB_REF_NAME"]
 active = {"queued", "in_progress", "waiting", "pending", "requested"}
 for run in payload.get("workflow_runs", []):
     if run.get("id") == this_run:
@@ -47,6 +49,15 @@ for run in payload.get("workflow_runs", []):
         part for part in (run.get("name"), run.get("display_title")) if part
     )
     if "publish=true" not in title:
+        continue
+    # A dispatch for an fgdb tag must not suppress a later OSS tag push at
+    # the same commit. For fgdb tags, require the exact tag in the dispatch
+    # run name; an OSS push is associated with every non-fgdb dispatch.
+    if "-fgdb." in tag:
+        title_words = set(title.split())
+        if tag not in title_words and f"refs/tags/{tag}" not in title_words:
+            continue
+    elif "-fgdb." in title:
         continue
     if run.get("status") in active or run.get("conclusion") == "success":
         print("true")

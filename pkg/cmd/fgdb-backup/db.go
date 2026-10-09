@@ -112,6 +112,26 @@ func (d *database) withSnapshot(ctx context.Context, asOf string, fn func(ctx co
 	return nil
 }
 
+func (d *database) withTransaction(ctx context.Context, fn func(context.Context) error) error {
+	if _, err := d.exec(ctx, "BEGIN"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = d.exec(context.Background(), "ROLLBACK")
+		}
+	}()
+	if err := fn(ctx); err != nil {
+		return err
+	}
+	if _, err := d.exec(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 func (d *database) use(ctx context.Context, name string) error {
 	_, err := d.exec(ctx, "USE "+quoteIdent(name))
 	return err

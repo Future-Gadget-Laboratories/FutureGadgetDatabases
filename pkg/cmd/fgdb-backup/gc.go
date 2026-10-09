@@ -116,11 +116,16 @@ func indexZoneTTL(zones []zoneRow) (int, map[string]zoneRow) {
 func tableTTLChanges(desired int, zones []zoneRow) []gcChange {
 	var changes []gcChange
 	for _, z := range zones {
-		if z.Level != "table" {
+		switch z.Level {
+		case "table", "index", "partition":
+		default:
 			continue
 		}
-		own, hasOwn := parseGCTTL(z.RawSQL)
-		if !hasOwn || own >= desired {
+		own, ok := parseGCTTL(z.RawSQL)
+		if !ok {
+			continue
+		}
+		if own >= desired {
 			continue
 		}
 		changes = append(changes, ttlNumberChange(z, desired, own))

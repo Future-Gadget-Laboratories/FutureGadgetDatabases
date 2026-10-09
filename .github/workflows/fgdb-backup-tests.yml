@@ -1,0 +1,59 @@
+name: FGDB patch tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fgdb-backup-tests.yml"
+      - "build/fgdb/**"
+      - "pkg/cmd/fgdb-backup/**"
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-script-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.12"
+          cache-dependency-path: pkg/cmd/fgdb-backup/go.sum
+      - name: Run backup unit tests
+        working-directory: pkg/cmd/fgdb-backup
+        run: go test ./...
+      - name: Run Go vet
+        working-directory: pkg/cmd/fgdb-backup
+        run: go vet ./...
+      - name: Run build script tests
+        run: |
+          bash build/fgdb/release-tag_test.sh
+          bash build/fgdb/skip-duplicate-tag-build_test.sh
+          bash build/fgdb/verify-oss-binary_test.sh
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FGDB_COCKROACH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/cockroach
+      LD_LIBRARY_PATH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/lib
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.12"
+          cache-dependency-path: pkg/cmd/fgdb-backup/go.sum
+      - name: Download and verify the pinned OSS binary
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-fgdb.1/cockroach-oss-v23.2.15.linux-amd64.tgz"
+          curl -fsSL "$url" -o cockroach-oss.tgz
+          printf '%s  %s\n' \
+            5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379 \
+            cockroach-oss.tgz | sha256sum -c -
+          tar -xzf cockroach-oss.tgz
+      - name: Run cluster-backed integration tests
+        working-directory: pkg/cmd/fgdb-backup
+        run: go test -count=1 -v ./...

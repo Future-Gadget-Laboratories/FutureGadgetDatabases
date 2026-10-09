@@ -58,7 +58,7 @@ func classifyStatement(sql string) string {
 	if s == "" {
 		return "comment"
 	}
-	fields := strings.Fields(s)
+	fields := sqlFields(s)
 	n := len(fields)
 	if n > 4 {
 		n = 4
@@ -95,7 +95,7 @@ func classifyStatement(sql string) string {
 }
 
 func objectName(kind, sql string) string {
-	fields := strings.Fields(stripLeadingComments(sql))
+	fields := sqlFields(stripLeadingComments(sql))
 	upper := upperFields(fields)
 	switch kind {
 	case "schema", "type", "sequence", "table", "view", "materialized_view", "index", "function", "procedure":
@@ -148,10 +148,98 @@ func createObjectKeyword(word string) bool {
 
 func trimObjectToken(tok string) string {
 	tok = strings.TrimSpace(tok)
-	if i := strings.IndexAny(tok, ",("); i >= 0 {
-		tok = tok[:i]
-	}
 	return strings.TrimRight(tok, ",")
+}
+
+type sqlQuoteState struct {
+	inDouble bool
+	inSingle bool
+}
+
+func (s *sqlQuoteState) consume(input string, i int) (int, bool) {
+	if s.inDouble {
+		return s.consumeQuoted(input, i, '"', &s.inDouble)
+	}
+	if s.inSingle {
+		return s.consumeQuoted(input, i, '\'', &s.inSingle)
+	}
+	switch input[i] {
+	case '"':
+		s.inDouble = true
+		return i, true
+	case '\'':
+		s.inSingle = true
+		return i, true
+	default:
+		return i, false
+	}
+}
+
+func (s *sqlQuoteState) consumeQuoted(input string, i int, quote byte, active *bool) (int, bool) {
+	if input[i] == quote {
+		if i+1 < len(input) && input[i+1] == quote {
+			return i + 1, true
+		}
+		*active = false
+	}
+	return i, true
+}
+
+type sqlFieldScanner struct {
+	fields []string
+	token  strings.Builder
+}
+
+func (s *sqlFieldScanner) consume(c byte) {
+	switch c {
+	case '(', ',':
+		s.flush()
+	default:
+		if isSQLSpace(c) {
+			s.flush()
+		} else {
+			s.token.WriteByte(c)
+		}
+	}
+}
+
+func isSQLSpace(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *sqlFieldScanner) flush() {
+	if s.token.Len() == 0 {
+		return
+	}
+	s.fields = append(s.fields, s.token.String())
+	s.token.Reset()
+}
+
+// sqlFields tokenizes the statement prefix without splitting quoted
+// identifiers. It also stops a token at the punctuation that cannot be part
+// of a CREATE object's name.
+func sqlFields(sql string) []string {
+	scanner := sqlFieldScanner{}
+	quotes := sqlQuoteState{}
+	for i := 0; i < len(sql); i++ {
+		if next, quoted := quotes.consume(sql, i); quoted {
+			start := i
+			scanner.token.WriteByte(sql[i])
+			i = next
+			if next != start {
+				scanner.token.WriteByte(sql[next])
+			}
+			continue
+		}
+		scanner.consume(sql[i])
+	}
+	scanner.flush()
+	return scanner.fields
 }
 
 func safeSegment(name string) error {
