@@ -255,7 +255,10 @@ func rewriteDatabaseName(value, oldName, newName string) string {
 			i = nextSQLPosition(i, end)
 			continue
 		}
-		if rewriteNameAt(&out, value, last, i, end, raw, quoted, previous, oldName, newName) {
+		if rewriteNameAt(&out, rewriteNameOptions{
+			value: value, last: last, start: i, end: end, raw: raw,
+			quoted: quoted, previous: previous, oldName: oldName, newName: newName,
+		}) {
 			last = end
 		}
 		previous = previousSQLName(raw, quoted)
@@ -272,15 +275,23 @@ func nextSQLPosition(start, end int) int {
 	return start + 1
 }
 
-func rewriteNameAt(out *strings.Builder, value string, last, start, end int, raw string, quoted bool, previous, oldName, newName string) bool {
-	if !isDatabaseName(raw, value, end, previous, oldName) {
+type rewriteNameOptions struct {
+	value                      string
+	last, start, end           int
+	raw                        string
+	quoted                     bool
+	previous, oldName, newName string
+}
+
+func rewriteNameAt(out *strings.Builder, opt rewriteNameOptions) bool {
+	if !isDatabaseName(opt.raw, opt.value, opt.end, opt.previous, opt.oldName) {
 		return false
 	}
-	out.WriteString(value[last:start])
-	if quoted {
-		out.WriteString(quoteIdent(newName))
+	out.WriteString(opt.value[opt.last:opt.start])
+	if opt.quoted {
+		out.WriteString(quoteIdent(opt.newName))
 	} else {
-		out.WriteString(newName)
+		out.WriteString(opt.newName)
 	}
 	return true
 }
