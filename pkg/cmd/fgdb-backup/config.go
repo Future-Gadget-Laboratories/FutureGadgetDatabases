@@ -38,6 +38,7 @@ type backupConfigValues struct {
 type restoreConfigValues struct {
 	SwapRestore          *bool  `yaml:"swap_restore"`
 	InPlace              *bool  `yaml:"in_place"`
+	Retention            *int   `yaml:"retention"`
 	TestingMode          *bool  `yaml:"testing_mode"`
 	Threads              *int   `yaml:"threads"`
 	MemoryBytes          *int64 `yaml:"memory_bytes"`
@@ -141,6 +142,9 @@ func validateConfig(cfg backupConfigFile) error {
 	}
 	if cfg.Restore.MemoryBytes != nil && *cfg.Restore.MemoryBytes < 0 {
 		return errors.New("restore.memory_bytes must not be negative")
+	}
+	if cfg.Restore.Retention != nil && *cfg.Restore.Retention < 0 {
+		return errors.New("restore.retention must not be negative")
 	}
 	if _, err := configuredFileMode(cfg.Backup.FileMode); err != nil {
 		return err

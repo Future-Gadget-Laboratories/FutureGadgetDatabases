@@ -107,6 +107,33 @@ func TestSQLFields(t *testing.T) {
 	}
 }
 
+func TestRewriteDatabaseNamePreservesSQLText(t *testing.T) {
+	input := `CREATE TABLE "shop"."public"."items" (note STRING DEFAULT 'shop.public.items');
+GRANT CONNECT ON DATABASE "shop" TO bob;
+ALTER DATABASE shop CONFIGURE ZONE USING gc.ttlseconds = 7777;
+CREATE FUNCTION shop.public.f() RETURNS STRING LANGUAGE SQL AS $$ SELECT 'shop.public.items' $$;`
+	want := `CREATE TABLE "shop__copy"."public"."items" (note STRING DEFAULT 'shop.public.items');
+GRANT CONNECT ON DATABASE "shop__copy" TO bob;
+ALTER DATABASE shop__copy CONFIGURE ZONE USING gc.ttlseconds = 7777;
+CREATE FUNCTION shop__copy.public.f() RETURNS STRING LANGUAGE SQL AS $$ SELECT 'shop.public.items' $$;`
+	if got := rewriteDatabaseName(input, "shop", "shop__copy"); got != want {
+		t.Fatalf("rewritten SQL:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestForceModeFlag(t *testing.T) {
+	var flag forceModeFlag
+	if err := flag.Set("true"); err != nil || flag.value != "swap" {
+		t.Fatalf("plain force = %#v, %v", flag, err)
+	}
+	if err := flag.Set("in-place"); err != nil || flag.value != "in-place" {
+		t.Fatalf("in-place force = %#v, %v", flag, err)
+	}
+	if err := flag.Set("nope"); err == nil {
+		t.Fatal("invalid force mode was accepted")
+	}
+}
+
 func TestCSVCounterQuotesAndNewlines(t *testing.T) {
 	var buf bytes.Buffer
 	c := newCSVCounter(&buf)

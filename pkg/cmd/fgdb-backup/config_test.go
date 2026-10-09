@@ -1,3 +1,7 @@
+// Copyright 2026 Future Gadget Laboratories.
+//
+// Licensed under the Apache License, Version 2.0. See licenses/APL.txt.
+
 package main
 
 import (
@@ -54,5 +58,35 @@ func TestConfigDefaultsAndInvalidValues(t *testing.T) {
 	cfg.Backup.LockWait = "not-a-duration"
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("invalid duration was accepted")
+	}
+}
+
+func TestConfigRejectsUnknownKeysAndSingleDash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(path, []byte("backup:\n  lokc: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readBackupConfig(path); err == nil {
+		t.Fatal("unknown YAML key was accepted")
+	}
+	if got, err := configPath([]string{"--config", path}); err != nil || got != path {
+		t.Fatalf("double-dash config = %q, %v", got, err)
+	}
+	if _, err := configPath([]string{"-config", path}); err == nil {
+		t.Fatal("single-dash config was accepted")
+	}
+}
+
+func TestConfigLeavesResourceCapsUnsetByDefault(t *testing.T) {
+	cfg, err := readBackupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configInt(cfg.Backup.Threads, 0) != 0 || configInt64(cfg.Backup.MemoryBytes, 0) != 0 {
+		t.Fatalf("backup caps have defaults: %#v", cfg.Backup)
+	}
+	if configInt(cfg.Restore.Threads, 0) != 0 || configInt64(cfg.Restore.MemoryBytes, 0) != 0 {
+		t.Fatalf("restore caps have defaults: %#v", cfg.Restore)
 	}
 }

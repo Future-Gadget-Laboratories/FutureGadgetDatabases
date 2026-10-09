@@ -41,6 +41,7 @@ type RestoreOptions struct {
 	Plan         bool
 	PlanFormat   string
 	SwapRestore  bool
+	Retention    int
 	TestingMode  bool
 	ConfigPath   string
 }

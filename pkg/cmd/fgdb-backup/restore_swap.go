@@ -82,6 +82,14 @@ func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle
 	}
 	for oldName, oldCopy := range oldCopies {
 		res.Warnings = append(res.Warnings, "the previous database "+oldName+" was kept as "+oldCopy)
+		if opt.Retention > 0 {
+			removed, err := pruneOldCopies(ctx, db, oldName, opt.Retention)
+			if err != nil {
+				res.Warnings = append(res.Warnings, "old-copy retention could not prune "+oldName+": "+err.Error())
+			} else if len(removed) > 0 {
+				res.Warnings = append(res.Warnings, "pruned old database copies: "+strings.Join(removed, ", "))
+			}
+		}
 	}
 	return res, nil
 }

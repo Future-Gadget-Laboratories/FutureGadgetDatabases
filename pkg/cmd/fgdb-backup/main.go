@@ -35,6 +35,8 @@ func main() {
 		os.Exit(cmdList(os.Args[2:]))
 	case "unlock":
 		os.Exit(cmdUnlock(os.Args[2:]))
+	case "prune":
+		os.Exit(cmdPrune(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
 		os.Exit(0)
@@ -53,6 +55,7 @@ func usage() {
   fgdb-backup verify  --src  s3://bucket/prefix/name/latest
   fgdb-backup list    --src  s3://bucket/prefix/name
   fgdb-backup unlock  --dest s3://bucket/prefix --name name --yes
+  fgdb-backup prune   --url URL --name name [--keep 1]
 
 --url is a PostgreSQL connection URL. Put certificates in the URL:
   postgresql://root@host:26257/defaultdb?sslmode=verify-full&sslrootcert=ca.crt&sslcert=client.root.crt&sslkey=client.root.key
@@ -259,6 +262,7 @@ func cmdRestore(args []string) int {
 	}
 	importAuth := fs.String("s3-import-auth", importAuthDefault, "how the database reads S3: auto, implicit, specified, or served")
 	swap := fs.Bool("swap-restore", configBool(cfg.Restore.SwapRestore, true), "restore beside an existing database and swap names when possible")
+	retention := fs.Int("retention", configInt(cfg.Restore.Retention, 1), "number of old swapped database copies to keep")
 	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
 	planFormat := fs.String("plan-format", "text", "plan output: text or json")
 	testingMode := fs.Bool("testing-mode", configBool(cfg.Restore.TestingMode, false), "allow test-only S3 probes")
@@ -302,6 +306,7 @@ func cmdRestore(args []string) int {
 		Plan:         *plan,
 		PlanFormat:   *planFormat,
 		SwapRestore:  *swap,
+		Retention:    *retention,
 		TestingMode:  *testingMode,
 		ConfigPath:   cfgPath,
 	})
@@ -412,6 +417,35 @@ func cmdUnlock(args []string) int {
 		return fail(false, err)
 	}
 	fmt.Printf("unlocked %s\n", *name)
+	return 0
+}
+
+func cmdPrune(args []string) int {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	urlStr := fs.String("url", "", "PostgreSQL connection URL")
+	name := fs.String("name", "", "original database name")
+	keep := fs.Int("keep", 1, "number of old swapped copies to keep")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *urlStr == "" || *name == "" || fs.NArg() != 0 {
+		usage()
+		return 2
+	}
+	if err := safeSegment(*name); err != nil {
+		return fail(false, err)
+	}
+	db, err := connect(context.Background(), *urlStr)
+	if err != nil {
+		return fail(false, err)
+	}
+	defer db.Close(context.Background())
+	removed, err := pruneOldCopies(context.Background(), db, *name, *keep)
+	if err != nil {
+		return fail(false, err)
+	}
+	fmt.Printf("pruned %d old database copies\n", len(removed))
 	return 0
 }
 
