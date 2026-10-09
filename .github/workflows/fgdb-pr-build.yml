@@ -1,13 +1,19 @@
 name: FGDB PR build
 
-# Builds a pull request on the self-hosted build runner (label fgdb-build),
+# Builds a pull request on a dedicated self-hosted PR runner (label fgdb-pr),
 # but only after a repository admin marks it ready for review.
 #
-# pull_request_target: this file and the gate always come from the base branch,
-# so a pull request cannot edit them. The pull request's code is checked out by
-# the exact commit the admin saw, without credentials, and is only built and tested.
-# PR builds use their own Bazel output base and disk cache, so release builds
-# never read artifacts that a PR build produced.
+# Trust boundaries:
+# - pull_request_target: this file and the gate always come from the base branch.
+#   The runner group only accepts this workflow at refs/heads/main.
+# - The gate and every action are pinned to reviewed commit SHAs.
+# - The PR runner is a separate runner identity from the release runner (fgdb-build):
+#   its own user, its own caches, no docker group, a post-job cleanup hook. The job refuses to run unless the host
+#   has opted in with /etc/fgdb/pr-runner.enabled, which an operator creates only once those controls are in place.
+# - PR code is checked out by the exact commit the admin saw, with no checkout credentials.
+#   Submodules must match the base branch's .gitmodules exactly and are fetched over https only.
+# - Each PR gets its own Bazel output base and disk cache, so one PR cannot affect another PR's
+#   or a release's build state. Per-PR directories unused for 7 days are removed.
 
 on:
   pull_request_target:
@@ -27,37 +33,65 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: Future-Gadget-Laboratories/ci-templates/.github/workflows/ready-gate.yml@main
+    # ci-templates main @ 2026-10-09 (ready-gate from ci-templates#3); bump only through a reviewed PR.
+    uses: Future-Gadget-Laboratories/ci-templates/.github/workflows/ready-gate.yml@277234feec1535d172c0c91e3de74563e062bfab
 
   build:
     name: Build cockroach-oss (PR)
     needs: gate
     if: needs.gate.outputs.allowed == 'true'
-    runs-on: [self-hosted, fgdb-build]
+    runs-on: [self-hosted, fgdb-pr]
     timeout-minutes: 480
     permissions:
       contents: read
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
+      - name: Require an opted-in PR runner
+        run: |
+          set -euo pipefail
+          if [[ ! -f /etc/fgdb/pr-runner.enabled ]]; then
+            echo "This runner has not opted in to PR builds (/etc/fgdb/pr-runner.enabled is missing)." >&2
+            echo "PR builds need the dedicated PR runner: separate user, own caches, cleanup hook, restricted runner group." >&2
+            exit 1
+          fi
+
       - name: Checkout build tooling from the base branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: tooling
           fetch-depth: 1
           persist-credentials: false
-          sparse-checkout: build/fgdb
+          sparse-checkout: |
+            build/fgdb
+            .gitmodules
+          sparse-checkout-cone-mode: false
 
-      - name: Checkout the pull request commit
-        uses: actions/checkout@v4
+      - name: Checkout the pull request commit (no submodules yet)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ needs.gate.outputs.head_sha }}
           path: src
-          submodules: recursive
+          submodules: false
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Use the PR cache paths
+      - name: Fetch submodules only if .gitmodules is unchanged
+        run: |
+          set -euo pipefail
+          if ! cmp -s tooling/.gitmodules src/.gitmodules; then
+            echo "This PR changes .gitmodules. PR builds only fetch the submodules listed on the base branch." >&2
+            diff -u tooling/.gitmodules src/.gitmodules >&2 || true
+            exit 1
+          fi
+          cd src
+          git -c protocol.allow=never -c protocol.https.allow=always \
+              -c credential.helper= -c core.askPass=true \
+              submodule update --init --recursive --depth 1
+
+      - name: Use per-PR cache paths
         run: |
           set -euo pipefail
           if [[ -f /etc/fgdb/runner.env ]]; then
@@ -66,18 +100,18 @@ jobs:
             . /etc/fgdb/runner.env
             set +a
           fi
-          if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
-            echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
-            echo "Run build/fgdb/runner/setup-runner.sh on the build runner first." >&2
+          root=${FGDB_PR_CACHE_ROOT:-}
+          if [[ -z "$root" ]]; then
+            echo "FGDB_PR_CACHE_ROOT is unset in /etc/fgdb/runner.env on the PR runner." >&2
             exit 1
           fi
-          # Separate from the release caches unless the runner names its own PR paths.
-          pr_cache=${FGDB_BAZEL_DISK_CACHE_PR:-${FGDB_BAZEL_DISK_CACHE%/}-pr}
-          pr_base=${FGDB_BAZEL_OUTPUT_BASE_PR:-${FGDB_BAZEL_OUTPUT_BASE%/}-pr}
-          mkdir -p "$pr_cache" "$pr_base"
+          find "$root" -mindepth 1 -maxdepth 1 -type d -name 'pr-*' -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+          dir="${root%/}/pr-${PR_NUMBER}"
+          mkdir -p "$dir/output-base" "$dir/disk-cache"
+          touch "$dir"
           {
-            echo "FGDB_BAZEL_DISK_CACHE=${pr_cache}"
-            echo "FGDB_BAZEL_OUTPUT_BASE=${pr_base}"
+            echo "FGDB_BAZEL_OUTPUT_BASE=$dir/output-base"
+            echo "FGDB_BAZEL_DISK_CACHE=$dir/disk-cache"
             echo "FGDB_LOCAL_CPU=${FGDB_LOCAL_CPU:-24}"
             echo "FGDB_LOCAL_RAM_MB=${FGDB_LOCAL_RAM_MB:-81920}"
           } >> "$GITHUB_ENV"
@@ -102,3 +136,8 @@ jobs:
           bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test \
             --test_output=errors \
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
+
+      - name: Stop this PR's Bazel server
+        if: always()
+        run: |
+          cd src 2>/dev/null && bazel shutdown 2>/dev/null || true
