@@ -182,33 +182,17 @@ jobs:
 
       - name: Refuse a new release tag on an unguarded commit
         env:
-          GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.gate.outputs.publish }}
         run: |
           set -euo pipefail
           if [[ "$PUBLISH" != "true" ]]; then
             exit 0
           fi
-          if [[ -f src/.github/workflows/fgdb-oss-release.yml ]]; then
-            exit 0
+          if [[ ! -f src/.github/workflows/fgdb-oss-release.yml ]]; then
+            echo "Refusing to publish from a commit without the guarded release workflow." >&2
+            echo "A publish=false dispatch is still fine and will not create a tag." >&2
+            exit 1
           fi
-          version=$(tr -d '[:space:]' < src/pkg/build/version.txt)
-          tag="${version}-oss"
-          code=$(curl -sS -o /tmp/fgdb-release.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}")
-          if [[ "$code" == "200" ]]; then
-            echo "Release ${tag} already exists; this run will refresh its assets."
-            exit 0
-          fi
-          echo "Refusing to compile with publish=true from this ref." >&2
-          echo "The checkout has no .github/workflows/fgdb-oss-release.yml, and ${tag} does not exist yet." >&2
-          echo "Creating that tag on the raw upstream commit would run unguarded upstream workflows (bincheck on macos runners)." >&2
-          echo "Push ${tag} from main after this workflow is merged, or dispatch with ref set to that commit." >&2
-          echo "A publish=false dispatch is still fine and will not create a tag." >&2
-          exit 1
 
       - name: Require the runner cache paths
         run: |
