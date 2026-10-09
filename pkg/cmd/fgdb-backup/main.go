@@ -225,6 +225,9 @@ func cmdRestore(args []string) int {
 		return 2
 	}
 	applyResourceCaps(*threads, *memoryBytes)
+	if *asJSON && *plan {
+		*planFormat = "json"
+	}
 	if *planFormat != "text" && *planFormat != "json" {
 		return fail(*asJSON, fmt.Errorf("--plan-format must be text or json"))
 	}

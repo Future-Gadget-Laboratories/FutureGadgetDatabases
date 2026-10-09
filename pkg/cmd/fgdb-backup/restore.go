@@ -245,6 +245,9 @@ func printRestorePlan(plan RestorePlan) {
 	for _, object := range plan.Drop {
 		fmt.Printf("drop: %s\n", object)
 	}
+	for _, database := range plan.Swap {
+		fmt.Printf("swap: %s\n", database)
+	}
 	for _, reason := range plan.Reasons {
 		fmt.Printf("reason: %s\n", reason)
 	}
