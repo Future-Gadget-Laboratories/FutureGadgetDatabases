@@ -40,12 +40,12 @@ done
 (( allowed == 1 )) || die "filesystem $mount_type at $mount_target is not in the local allowlist" 10
 [[ ",$mount_options," != *,ro,* ]] || die "$mount_target is read-only" 13
 
-read -r _ _ free_bytes _ _ < <(df -P -B1 "$probe" | awk 'NR == 2')
+read -r _ _ _ free_bytes _ _ < <(df -P -B1 "$probe" | awk 'NR == 2')
 [[ "$free_bytes" =~ ^[0-9]+$ ]] || die "could not read free bytes for $probe" 11
 min_bytes=$((min_gib * 1024 * 1024 * 1024))
 (( free_bytes >= min_bytes )) || die "$probe has only $((free_bytes / 1024 / 1024 / 1024)) GiB free; need ${min_gib} GiB" 11
 
-read -r _ inode_total inode_used free_inodes _ _ < <(df -Pi "$probe" | awk 'NR == 2')
+read -r _ inode_total _ free_inodes _ _ < <(df -Pi "$probe" | awk 'NR == 2')
 [[ "$free_inodes" =~ ^[0-9]+$ && "$inode_total" =~ ^[0-9]+$ ]] ||
   die "could not read free inodes for $probe" 12
 min_inodes=$((inode_total / 20))

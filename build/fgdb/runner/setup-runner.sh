@@ -583,6 +583,10 @@ fi
 
 if (( runner_configured == 0 )) || (( REPLACE == 1 )); then
   log "Registering runner (token not printed)"
+  update_arg=()
+  if (( AUTO_UPDATE == 0 )); then
+    update_arg+=(--disableupdate)
+  fi
   # config.sh is relative to the runner directory. runuser does not print the token.
   # $1 and $@ are expanded by the bash -c script, not by this shell.
   # shellcheck disable=SC2016
@@ -594,7 +598,8 @@ if (( runner_configured == 0 )) || (( REPLACE == 1 )); then
     --name "$RUNNER_NAME" \
     --labels "$RUNNER_LABELS" \
     --work "$work_dir" \
-    --replace
+    --replace \
+    "${update_arg[@]}"
   unset TOKEN
 else
   log "Runner already configured; leaving registration in place"
