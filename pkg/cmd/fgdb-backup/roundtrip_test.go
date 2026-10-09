@@ -297,6 +297,7 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 	if !strings.Contains(kept, "7") {
 		t.Fatalf("force restore removed an unrelated table: %s", kept)
 	}
+	wantUsers := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT count(*) FROM shop.public.users;`))
 	bad := filepath.Join(dest, "lab", "force-failure")
 	copyDir(t, bres.Backup, bad)
 	corruptObjectsForRestoreFailure(t, bad)
@@ -304,8 +305,8 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 		t.Fatal("force restore accepted a malformed schema")
 	}
 	preserved := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT count(*) FROM shop.public.users;`))
-	if preserved != "2" {
-		t.Fatalf("failed force restore changed existing rows: %s", preserved)
+	if preserved != wantUsers {
+		t.Fatalf("failed force restore changed existing rows: got %s, want %s", preserved, wantUsers)
 	}
 	next := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT nextval('shop.public.unused_seq');`))
 	if !strings.Contains(next, "1") {
