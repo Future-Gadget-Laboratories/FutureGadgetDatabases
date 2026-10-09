@@ -64,8 +64,95 @@ When a trigger fires:
    - that work is **discarded / not for merge**,  
    - what clean path remains (approved behavior spec → clean implementer).
 4. **Never** store proprietary source into the FGDb repo, public issues, or agent memory as “reference material for later.”
+5. **If proprietary or CSL code already reached this repository,** remove it in a **normal commit first**. That makes the current tree clean immediately, while a history rewrite is still waiting on approval. If that history contains a password, token, key, or other secret, revoke or rotate it in this same step. A rewrite does not un-expose a secret.
 
 Partial compliance is failure. “I only used it for inspiration” is still contamination for an implementer.
+
+### Rewriting history after contaminated code is committed
+
+Step 5 deletes the files from the latest tree. Older commits still contain them until a maintainer rewrites history. Do this when **proprietary or CSL code reached the repo** (it was committed or pushed). Work that never left a local workspace is deleted locally and does not need a rewrite.
+
+The steps below follow GitHub’s public guide, [Removing sensitive data from a repository](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository), and the [git-filter-repo user manual](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html) ([project](https://github.com/newren/git-filter-repo)).
+
+**Rotate exposed secrets immediately.** If the old history contains a password, token, key, or other secret, revoke or rotate it before any rewrite and before waiting on rewrite approval. A history rewrite does not invalidate a credential, and GitHub’s purge can take time. After the secret is revoked, it can no longer be used for access. GitHub treats this as the first step and says a rewrite may be unnecessary once the secret is dead. After the later purge, verify again that each exposed secret was rotated and that the old value no longer works.
+
+**Approval comes first for the rewrite.** A history rewrite needs **explicit maintainer approval** before anyone starts it. It changes every later commit hash and breaks clones and forks that still point at the old history. A later merge of that old history can put the contaminated commits back. Keep the normal delete commit in place while approval is pending. Do not force-push before approval. Secret rotation does not wait on this approval.
+
+**How to rewrite**
+
+1. Freeze merges to the affected branches. Merge or close open pull requests before the rewrite. GitHub recommends that because every later commit hash changes, so open review comments and diffs will not match the new history. Commits added on the old history during the cleanup force you to start over.
+2. Install **git-filter-repo 2.47 or newer**. That is the first version with `--sensitive-data-removal`, which GitHub’s guide requires. Install instructions: [INSTALL.md](https://github.com/newren/git-filter-repo/blob/main/INSTALL.md).
+3. Clone a fresh copy of the repository. From that clone, remove the contaminated paths from every branch, tag, and ref:
+
+   ```
+   git-filter-repo --sensitive-data-removal --invert-paths --path PATH-TO-YOUR-FILE-WITH-SENSITIVE-DATA
+   ```
+
+   `PATH-TO-YOUR-FILE-WITH-SENSITIVE-DATA` is the path recorded in git (GitHub’s example is `src/module/phone-numbers.txt`), not only the file name. If the file was renamed or moved, pass every former path with another `--path`, or run the command once per path. To replace secret strings listed in a file that stays outside the repository, use:
+
+   ```
+   git-filter-repo --sensitive-data-removal --replace-text ../passwords.txt
+   ```
+
+   Leave that list outside the repository. Do not commit it, and do not put proprietary source or distinctive snippets in the filter.
+4. Check the rewritten history before you push. This lists any remaining commits that touch the path:
+
+   ```
+   git log --all --name-status -- PATH-TO-YOUR-FILE-WITH-SENSITIVE-DATA
+   ```
+
+   If the path is still there, run filter-repo again for the missed path. In the filter-repo output, save the lines that begin with `NOTE: First Changed Commit(s)`.
+5. Count the pull requests this rewrite will affect, from the repo root:
+
+   ```
+   grep -c '^refs/pull/.*/head$' .git/filter-repo/changed-refs
+   ```
+
+   Drop `-c` to list them (`refs/pull/NUMBER/head`). You will give this count and the first changed commits to GitHub Support. If the count is larger than you expect, delete this clone and stop. Until you push, discarding the clone throws the rewrite away.
+6. On this rewritten clone, commit the rewrite record from the next section before you push, so the edited history itself says why the material was removed and where to read about it. git-filter-repo removes the `origin` remote on purpose. Add it back, then force-push with the command GitHub documents. `--mirror` updates branches, tags, and other refs, and it drops remote commits that are not in this clone:
+
+   ```
+   git remote add origin https://github.com/OWNER/REPOSITORY.git
+   git push --force --mirror origin
+   ```
+
+   Pushes of `refs/pull/*` fail because GitHub marks those refs read-only. That failure is expected; Support handles them in the next step. If any other ref fails, branch protection is blocking the force-push. Turn that protection off temporarily, run the push again, and turn the protection back on. Repeat until the only failures are refs that start with `refs/pull/`.
+7. Ask GitHub Support, through the [GitHub Support portal](https://support.github.com/), to purge cached views and the read-only pull-request refs. Support does this only after the repository refs are cleaned, and only when they decide that rotating the affected credentials is not enough on its own. They do not remove non-sensitive data. In the ticket, give them the owner and repository name, the number of affected pull requests from step 5, and the First Changed Commit(s) from the filter-repo output. If the output says `NOTE: There were LFS Objects Orphaned by this rewrite`, say so and attach the file the tool names.
+8. Tell contributors to delete old clones and re-clone, or to rebase onto the new history. A merge of the pre-rewrite history puts the contaminated commits back. Forks still hold the old commits until their owners remove the data or delete the fork. The filter-repo manual section “Make sure other copies are cleaned up” has the steps for a colleague’s existing clone.
+9. Verify again that every secret from the old history was rotated or revoked and that the old value no longer works.
+
+**History note.** The history edit itself must say why the material was removed and where to read what happened and how it was addressed. Put the class of material, the date, and the incident URL in the cleanup commit message (step 5 under “refuse and discard”). On the rewritten clone, before the mirror push, commit a rewrite record with the same facts. That record is the note in the edited history: it says why history was rewritten and links to the incident write-up. Both notes are allowed in commit messages because they name only the class of material. They never quote or reproduce proprietary or CSL source.
+
+Cleanup commit message:
+
+```
+Remove contaminated material from the tree.
+
+date: YYYY-MM-DD
+why: <class of material only, for example "proprietary or CSL source was committed">
+incident: <link to the incident write-up>
+```
+
+Rewrite record (commit this on the rewritten clone before the mirror push):
+
+```
+Rewrite history to remove contaminated material.
+
+date: YYYY-MM-DD
+why: <class of material only, for example "proprietary or CSL source was committed">
+incident: <link to the incident write-up>
+```
+
+Also leave the same facts in the repo (for example under `docs/` or in a `CHANGELOG`) with this template:
+
+```
+HISTORY REWRITE NOTE
+date: YYYY-MM-DD
+summary: Git history was rewritten on <branches and tags>.
+why: <class of material only, for example "proprietary or CSL source was committed">
+incident: <link to the incident write-up>
+action: Delete old clones and re-clone. Do not merge or rebase commits from before the rewrite.
+```
 
 ---
 
@@ -126,6 +213,7 @@ If asked to “just push it,” refuse and restate the gate.
 | OSS v23.2.15 bugfix with public test | Proceed normally |
 | Approved behavior spec, no proprietary paste | Implement + tests; no repo land without maintainer approval |
 | Enterprise/CSL source paste | **Refuse / discard** |
+| Proprietary or CSL code already committed or pushed | **Remove it in a normal commit first.** If a secret was exposed, rotate it immediately. Rewrite history only after explicit maintainer approval |
 | “Clone 24.3 for reference” in an implementer workspace | **Refuse** |
 | Proprietary source or copied notes → “write FGDb code” | **Refuse** (spec from public behavior only) |
 | Contaminated earlier in the session | **Refuse**; demand a fresh clean context |
