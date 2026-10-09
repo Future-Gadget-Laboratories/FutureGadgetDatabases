@@ -40,7 +40,7 @@ func parseLocation(raw, region, endpoint, sse, kms, importAuth string) (Location
 		importAuth = "auto"
 	}
 	switch importAuth {
-	case "auto", "implicit", "specified":
+	case "auto", "implicit", "specified", "served":
 	default:
 		return Location{}, fmt.Errorf("--s3-import-auth must be auto, implicit, or specified")
 	}
@@ -151,11 +151,11 @@ func (s *localStore) Create(_ context.Context, rel string) (io.WriteCloser, erro
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return nil, err
 	}
-	tmp := final + ".partial"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	f, err := os.CreateTemp(filepath.Dir(final), "."+filepath.Base(final)+".*.partial")
 	if err != nil {
 		return nil, err
 	}
+	tmp := f.Name()
 	return &renameFile{f: f, tmp: tmp, final: final}, nil
 }
 
@@ -230,9 +230,16 @@ func (r *renameFile) Close() error {
 		_ = os.Remove(r.tmp)
 		return err
 	}
-	if err := os.Rename(r.tmp, r.final); err != nil {
+	if err := os.Link(r.tmp, r.final); err != nil {
 		_ = os.Remove(r.tmp)
 		return err
+	}
+	if err := os.Remove(r.tmp); err != nil {
+		return err
+	}
+	if dir, err := os.Open(filepath.Dir(r.final)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
 	}
 	return nil
 }

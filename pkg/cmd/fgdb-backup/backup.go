@@ -34,6 +34,10 @@ type BackupOptions struct {
 	SafetyMargin time.Duration
 	ExtendGCTTL  time.Duration
 	JSON         bool
+	Lock         bool
+	LockWait     time.Duration
+	LockLease    time.Duration
+	ConfigPath   string
 }
 
 // BackupResult is the machine-readable backup summary.
@@ -80,6 +84,19 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
+	runID := newBackupID(time.Now())
+	var lease *backupLease
+	if opt.Lock {
+		lease, err = acquireBackupLease(ctx, opt.Dest, src.name, runID, opt.LockWait, opt.LockLease)
+		if err != nil {
+			return res, err
+		}
+		defer func() {
+			if releaseErr := lease.Release(); err == nil && releaseErr != nil {
+				err = fmt.Errorf("release backup lock: %w", releaseErr)
+			}
+		}()
+	}
 	// The backup replays the zones that were set before this run. A temporary
 	// gc.ttlseconds raise is not part of the artifact.
 	artifactZones := append([]zoneRow(nil), src.zones...)
@@ -95,8 +112,8 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 		return res, err
 	}
 
-	ts := time.Now().UTC().Format("20060102T150405Z")
-	base := src.name + "/" + ts
+	ts := runID
+	base := src.name + "/" + runID
 	setBackupHeader(&res, opt, src, asOfText, ts, base, budget.minTTL)
 
 	objects := ObjectsFile{FormatVersion: formatVersion}
@@ -115,7 +132,7 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 
 	peak, err := writeBackupFiles(ctx, backupArtifact{
 		src: src, opt: opt, base: base, ts: ts, asOfText: asOfText, minTTL: budget.minTTL,
-		objects: objects, tables: tables, warnings: warnings,
+		objects: objects, tables: tables, warnings: warnings, backupID: runID,
 	})
 	if err != nil {
 		return res, err
@@ -144,6 +161,12 @@ func normalizeBackupOptions(opt BackupOptions) (BackupOptions, error) {
 	}
 	if opt.SafetyMargin <= 0 {
 		opt.SafetyMargin = time.Minute
+	}
+	if opt.LockLease <= 0 {
+		opt.LockLease = 10 * time.Minute
+	}
+	if opt.LockWait < 0 {
+		return opt, fmt.Errorf("--lock-wait must not be negative")
 	}
 	return opt, nil
 }
@@ -489,6 +512,7 @@ type backupArtifact struct {
 	objects  ObjectsFile
 	tables   []TableEntry
 	warnings []string
+	backupID string
 }
 
 // manifestParts is the files and checksums stored in manifest.json.
@@ -528,7 +552,7 @@ func writeBackupFiles(ctx context.Context, art backupArtifact) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	pointer := LatestPointer{FormatVersion: formatVersion, Name: art.src.name, Timestamp: art.ts, Complete: true}
+	pointer := LatestPointer{FormatVersion: formatVersion, Name: art.src.name, Timestamp: art.ts, BackupID: art.backupID, Complete: true}
 	if err = publishLatest(ctx, art.src.store, art.src.name+"/latest.json", pointer); err != nil {
 		return 0, err
 	}
@@ -601,6 +625,7 @@ func newManifest(art backupArtifact, parts manifestParts) Manifest {
 		SourceVersion: art.src.version,
 		ClusterID:     art.src.clusterID,
 		Name:          art.src.name,
+		BackupID:      art.backupID,
 		AsOf:          art.asOfText,
 		GCTTLSeconds:  art.minTTL,
 		Compression:   art.opt.Compression,

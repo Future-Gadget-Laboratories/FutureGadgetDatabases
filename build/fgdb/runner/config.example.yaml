@@ -1,0 +1,15 @@
+# Optional setup-runner settings. Command-line flags override these values.
+auto_update: true
+cache_path: /var/cache/fgdb
+allowed_filesystems:
+  - ext4
+  - xfs
+  - btrfs
+  - zfs
+local_cpu: 24
+local_ram_mb: 81920
+cpu_quota: 2400%
+memory_high: 80G
+memory_max: 96G
+runner_version: 2.338.0
+bazelisk_version: 1.29.0

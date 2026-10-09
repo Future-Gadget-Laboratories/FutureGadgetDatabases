@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -46,6 +45,11 @@ func newS3Store(ctx context.Context, loc Location) (*s3Store, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(loc.Region))
 	if err != nil {
 		return nil, err
+	}
+	if credentials, credentialErr := cfg.Credentials.Retrieve(ctx); credentialErr != nil {
+		logf("s3: could not determine credential source: %s", scrubSecrets(credentialErr.Error()))
+	} else {
+		logf("s3: credentials from %s", credentials.Source)
 	}
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		if loc.Endpoint != "" {
@@ -173,7 +177,7 @@ func (w *s3Writer) put(part []byte) error {
 		Body:   bytes.NewReader(part),
 	}
 	w.store.applySSE(&in.ServerSideEncryption, &in.SSEKMSKeyId)
-	_, err := w.store.client.PutObject(w.ctx, in)
+	_, err := w.store.client.PutObject(w.ctx, in, putHeader("If-None-Match", "*"))
 	if err != nil {
 		return err
 	}
@@ -282,7 +286,7 @@ func (w *s3Writer) Close() error {
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: w.done,
 		},
-	})
+	}, putHeader("If-None-Match", "*"))
 	if err != nil {
 		_ = w.abort()
 		return err
@@ -324,6 +328,14 @@ func (s *s3Store) Exists(ctx context.Context, rel string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+func (s *s3Store) delete(ctx context.Context, rel string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(rel)),
+	})
+	return err
 }
 
 func (s *s3Store) ListManifests(ctx context.Context, rel string) ([]string, error) {
@@ -396,8 +408,8 @@ func isNotFound(err error) bool {
 // process putting credentials in the IMPORT statement.
 func (s *s3Store) implicitImport() bool {
 	auth := s.importAuth
-	if auth == "" || auth == "auto" {
-		return os.Getenv("AWS_ACCESS_KEY_ID") == ""
+	if auth == "" || auth == "auto" || auth == "served" || auth == "specified" {
+		return false
 	}
 	return auth == "implicit"
 }

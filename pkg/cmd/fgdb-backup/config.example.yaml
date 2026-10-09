@@ -1,0 +1,18 @@
+# Optional settings for fgdb-backup. Command-line flags always win.
+backup:
+  # A second backup with the same name waits only when this is on.
+  lock: true
+  lock_wait: 0s
+  lock_lease: 10m
+  # These limits are reserved for future parallel copy work.
+  threads: 1
+  memory_bytes: 1073741824
+  testing_mode: false
+  # auto serves files through the tool; implicit is an explicit node choice.
+  s3_credential_mode: auto
+
+restore:
+  # Use beside-and-swap where the preflight says it is safe.
+  swap_restore: true
+  testing_mode: false
+  s3_credential_mode: auto

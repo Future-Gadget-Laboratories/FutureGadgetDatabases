@@ -33,6 +33,8 @@ func main() {
 		os.Exit(cmdVerify(os.Args[2:]))
 	case "list":
 		os.Exit(cmdList(os.Args[2:]))
+	case "unlock":
+		os.Exit(cmdUnlock(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
 		os.Exit(0)
@@ -50,6 +52,7 @@ func usage() {
   fgdb-backup restore --url URL --src  s3://bucket/prefix/name/latest
   fgdb-backup verify  --src  s3://bucket/prefix/name/latest
   fgdb-backup list    --src  s3://bucket/prefix/name
+  fgdb-backup unlock  --dest s3://bucket/prefix --name name --yes
 
 --url is a PostgreSQL connection URL. Put certificates in the URL:
   postgresql://root@host:26257/defaultdb?sslmode=verify-full&sslrootcert=ca.crt&sslcert=client.root.crt&sslkey=client.root.key
@@ -88,8 +91,17 @@ func (s *stringList) Set(v string) error {
 }
 
 func cmdBackup(args []string) int {
+	cfgPath := configPath(args)
+	cfg, err := readBackupConfig(cfgPath)
+	if err != nil {
+		return fail(false, err)
+	}
+	if err := validateConfig(cfg); err != nil {
+		return fail(false, err)
+	}
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.String("config", cfgPath, "YAML configuration file")
 	urlStr := fs.String("url", "", "PostgreSQL connection URL")
 	dest := fs.String("dest", "", "s3://bucket/prefix or a local directory")
 	var dbs stringList
@@ -105,6 +117,18 @@ func cmdBackup(args []string) int {
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
 	margin := fs.Duration(flagSafetyMargin, time.Minute, "fail before the snapshot's GC deadline gets this close")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
+	lockDefault := configBool(cfg.Backup.Lock, true)
+	lock := fs.String("lock", map[bool]string{true: "on", false: "off"}[lockDefault], "same-name backup lock: on or off")
+	lockWaitDefault, err := configuredDuration(cfg.Backup.LockWait, "backup.lock_wait", 0)
+	if err != nil {
+		return fail(*asJSON, err)
+	}
+	lockWait := fs.Duration("lock-wait", lockWaitDefault, "wait for a same-name backup lock")
+	lockLeaseDefault, err := configuredDuration(cfg.Backup.LockLease, "backup.lock_lease", 10*time.Minute)
+	if err != nil {
+		return fail(*asJSON, err)
+	}
+	lockLease := fs.Duration("lock-lease", lockLeaseDefault, "lease duration for a same-name backup lock")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -120,7 +144,10 @@ func cmdBackup(args []string) int {
 			return fail(*asJSON, fmt.Errorf("--extend-gc-ttl: %w", err))
 		}
 	}
-	loc, err := parseLocation(*dest, *region, *endpoint, *sse, *kms, "auto")
+	if *lock != "on" && *lock != "off" {
+		return fail(*asJSON, fmt.Errorf("--lock must be on or off"))
+	}
+	loc, err := parseLocation(*dest, *region, *endpoint, *sse, *kms, cfg.Backup.S3CredentialMode)
 	if err != nil {
 		return fail(*asJSON, err)
 	}
@@ -137,6 +164,10 @@ func cmdBackup(args []string) int {
 		SafetyMargin: *margin,
 		ExtendGCTTL:  extendDur,
 		JSON:         *asJSON,
+		Lock:         *lock == "on",
+		LockWait:     *lockWait,
+		LockLease:    *lockLease,
+		ConfigPath:   cfgPath,
 	})
 	if err != nil {
 		res.OK = false
@@ -155,8 +186,17 @@ func cmdBackup(args []string) int {
 }
 
 func cmdRestore(args []string) int {
+	cfgPath := configPath(args)
+	cfg, err := readBackupConfig(cfgPath)
+	if err != nil {
+		return fail(false, err)
+	}
+	if err := validateConfig(cfg); err != nil {
+		return fail(false, err)
+	}
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.String("config", cfgPath, "YAML configuration file")
 	urlStr := fs.String("url", "", "PostgreSQL connection URL")
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
 	var dbs stringList
@@ -167,6 +207,10 @@ func cmdRestore(args []string) int {
 	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
 	importAuth := fs.String("s3-import-auth", "auto", "how the database reads S3: auto, implicit, or specified")
+	swap := fs.Bool("swap-restore", configBool(cfg.Restore.SwapRestore, true), "restore beside an existing database and swap names when possible")
+	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
+	planFormat := fs.String("plan-format", "text", "plan output: text or json")
+	testingMode := fs.Bool("testing-mode", configBool(cfg.Restore.TestingMode, false), "allow test-only S3 probes")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -174,6 +218,16 @@ func cmdRestore(args []string) int {
 	if *urlStr == "" || *src == "" || fs.NArg() != 0 {
 		usage()
 		return 2
+	}
+	if *planFormat != "text" && *planFormat != "json" {
+		return fail(*asJSON, fmt.Errorf("--plan-format must be text or json"))
+	}
+	if *testingMode {
+		// The mode is carried in RestoreOptions. It is intentionally not
+		// inferred from a development endpoint or environment variable.
+	}
+	if cfg.Restore.S3CredentialMode != "" && *importAuth == "auto" {
+		*importAuth = cfg.Restore.S3CredentialMode
 	}
 	loc, err := parseLocation(*src, *region, *endpoint, "", "", *importAuth)
 	if err != nil {
@@ -190,6 +244,11 @@ func cmdRestore(args []string) int {
 		Load:         *load,
 		ImportListen: *listen,
 		JSON:         *asJSON,
+		Plan:         *plan,
+		PlanFormat:   *planFormat,
+		SwapRestore:  *swap,
+		TestingMode:  *testingMode,
+		ConfigPath:   cfgPath,
 	})
 	if err != nil {
 		res.OK = false
@@ -265,6 +324,35 @@ func cmdList(args []string) int {
 		return 1
 	}
 	emit(*asJSON, res, true)
+	return 0
+}
+
+func cmdUnlock(args []string) int {
+	fs := flag.NewFlagSet("unlock", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	dest := fs.String("dest", "", "backup destination")
+	name := fs.String("name", "", "backup name")
+	region := fs.String(flagS3Region, "", helpS3Region)
+	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
+	yes := fs.Bool("yes", false, "confirm removal of the lock")
+	force := fs.Bool("force-unlock", false, "remove a live lease too")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *dest == "" || *name == "" || fs.NArg() != 0 {
+		return 2
+	}
+	loc, err := parseLocation(*dest, *region, *endpoint, "", "", "auto")
+	if err != nil {
+		return fail(false, err)
+	}
+	if !*yes {
+		return fail(false, errors.New("unlock requires --yes"))
+	}
+	if err := unlockBackup(context.Background(), loc, *name, *force); err != nil {
+		return fail(false, err)
+	}
+	fmt.Printf("unlocked %s\n", *name)
 	return 0
 }
 

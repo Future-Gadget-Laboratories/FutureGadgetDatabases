@@ -93,6 +93,15 @@ func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, d
 	if err := outsideForeignKeys(ctx, db, objects, database); err != nil {
 		return err
 	}
+	if _, err := db.exec(ctx, "BEGIN"); err != nil {
+		return fmt.Errorf("begin restore drop transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = db.exec(context.Background(), "ROLLBACK")
+		}
+	}()
 	if err := dropKinds(ctx, db, objects, database, []string{"view", "materialized_view"}, dropViewSQL, true); err != nil {
 		return err
 	}
@@ -105,7 +114,14 @@ func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, d
 	if err := dropKinds(ctx, db, objects, database, []string{"sequence"}, dropSequenceSQL, false); err != nil {
 		return err
 	}
-	return dropKinds(ctx, db, objects, database, []string{"type"}, dropTypeSQL, false)
+	if err := dropKinds(ctx, db, objects, database, []string{"type"}, dropTypeSQL, false); err != nil {
+		return err
+	}
+	if _, err := db.exec(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("commit restore drop transaction: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // outsideForeignKeys refuses --force when a table that is not in the backup
