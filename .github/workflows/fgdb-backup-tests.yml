@@ -28,6 +28,8 @@ jobs:
           bash build/fgdb/release-tag_test.sh
           bash build/fgdb/skip-duplicate-tag-build_test.sh
           bash build/fgdb/verify-oss-binary_test.sh
+          bash build/fgdb/runner/check-cache-dir_test.sh
+          bash build/fgdb/runner/checksums_test.sh
 
   integration:
     runs-on: ubuntu-latest
