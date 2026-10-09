@@ -154,54 +154,78 @@ func buildRestorePlan(ctx context.Context, db *database, objects ObjectsFile, ma
 		if !selected[database.Name] {
 			continue
 		}
-		exists, err := databaseExists(ctx, db, database.Name)
+		result, err := planDatabase(ctx, db, objects, database.Name, force, swapDefault)
 		if err != nil {
 			return plan, err
 		}
-		if !exists {
-			plan.Checks = append(plan.Checks, "database "+database.Name+" will be created")
-			continue
-		}
-		hasObjects, err := databaseHasUserObjects(ctx, db, database.Name)
-		if err != nil {
-			return plan, err
-		}
-		if !hasObjects {
-			continue
-		}
-		if !force && !swapDefault {
-			plan.OK = false
-			plan.Reasons = append(plan.Reasons, fmt.Sprintf("database %s is not empty; use --force after reviewing this plan", database.Name))
-			continue
-		}
-		if err := db.use(ctx, database.Name); err != nil {
-			return plan, err
-		}
-		if err := outsideForeignKeys(ctx, db, objects, database.Name); err != nil {
-			plan.OK = false
-			plan.Reasons = append(plan.Reasons, err.Error())
-		}
-		if err := outsideCatalogDependencies(ctx, db, objects, database.Name); err != nil {
-			plan.OK = false
-			plan.Reasons = append(plan.Reasons, err.Error())
-		}
-		if !force && plan.OK {
-			temp, err := swapNames(ctx, db, database.Name)
-			if err != nil {
-				plan.OK = false
-				plan.Reasons = append(plan.Reasons, err.Error())
-			} else {
-				plan.Swap = append(plan.Swap, database.Name)
-				plan.Checks = append(plan.Checks, fmt.Sprintf("database %s can be restored beside the existing copy as %s", database.Name, temp))
-			}
+		plan.Reasons = append(plan.Reasons, result.reasons...)
+		plan.Checks = append(plan.Checks, result.checks...)
+		if result.swap != "" {
+			plan.Swap = append(plan.Swap, result.swap)
 		}
 	}
+	plan.OK = len(plan.Reasons) == 0
 	for _, st := range objects.Statements {
 		if selected[st.Database] && droppableKind(st.Kind) {
 			plan.Drop = append(plan.Drop, st.Kind+" "+st.Object)
 		}
 	}
 	return plan, nil
+}
+
+type databasePlan struct {
+	reasons []string
+	checks  []string
+	swap    string
+}
+
+func planDatabase(ctx context.Context, db *database, objects ObjectsFile, name string, force, swapDefault bool) (databasePlan, error) {
+	var result databasePlan
+	exists, err := databaseExists(ctx, db, name)
+	if err != nil {
+		return result, err
+	}
+	if !exists {
+		result.checks = append(result.checks, "database "+name+" will be created")
+		return result, nil
+	}
+	hasObjects, err := databaseHasUserObjects(ctx, db, name)
+	if err != nil {
+		return result, err
+	}
+	if !hasObjects {
+		return result, nil
+	}
+	if !force && !swapDefault {
+		result.reasons = append(result.reasons, fmt.Sprintf("database %s is not empty; use --force after reviewing this plan", name))
+		return result, nil
+	}
+	if err := db.use(ctx, name); err != nil {
+		return result, err
+	}
+	result.reasons = dependencyReasons(ctx, db, objects, name)
+	if len(result.reasons) > 0 || force {
+		return result, nil
+	}
+	temp, err := swapNames(ctx, db, name)
+	if err != nil {
+		result.reasons = append(result.reasons, err.Error())
+		return result, nil
+	}
+	result.swap = name
+	result.checks = append(result.checks, fmt.Sprintf("database %s can be restored beside the existing copy as %s", name, temp))
+	return result, nil
+}
+
+func dependencyReasons(ctx context.Context, db *database, objects ObjectsFile, name string) []string {
+	var reasons []string
+	if err := outsideForeignKeys(ctx, db, objects, name); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := outsideCatalogDependencies(ctx, db, objects, name); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	return reasons
 }
 
 func droppableKind(kind string) bool {
