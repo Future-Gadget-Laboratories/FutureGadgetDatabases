@@ -23,6 +23,9 @@ jobs:
       - name: Run backup unit tests
         working-directory: pkg/cmd/fgdb-backup
         run: go test ./...
+      - name: Run Go vet
+        working-directory: pkg/cmd/fgdb-backup
+        run: go vet ./...
       - name: Run build script tests
         run: |
           bash build/fgdb/release-tag_test.sh

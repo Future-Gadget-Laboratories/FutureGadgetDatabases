@@ -33,6 +33,7 @@ type BackupOptions struct {
 	PartSize     int
 	SafetyMargin time.Duration
 	ExtendGCTTL  time.Duration
+	SkipGrants   bool
 	JSON         bool
 }
 
@@ -111,7 +112,9 @@ func runBackup(ctx context.Context, opt BackupOptions) (res BackupResult, err er
 	if err != nil {
 		return res, err
 	}
-	attachGrantsAndZones(ctx, db, asOfText, src.dbs, artifactZones, &objects, &warnings)
+	if err := attachGrantsAndZones(ctx, db, asOfText, src.dbs, artifactZones, opt.SkipGrants, &objects, &warnings); err != nil {
+		return res, err
+	}
 
 	peak, err := writeBackupFiles(ctx, backupArtifact{
 		src: src, opt: opt, base: base, ts: ts, asOfText: asOfText, minTTL: budget.minTTL,
@@ -454,14 +457,10 @@ func copyTableError(budget gcBudget, err error) error {
 	return err
 }
 
-func attachGrantsAndZones(ctx context.Context, db *database, asOf string, dbs []string, artifactZones []zoneRow, objects *ObjectsFile, warnings *[]string) {
-	var grantSQL, grantWarn []string
-	if err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
-		var err error
-		grantSQL, grantWarn = readGrants(ctx, db, dbs)
+func attachGrantsAndZones(ctx context.Context, db *database, asOf string, dbs []string, artifactZones []zoneRow, skipGrants bool, objects *ObjectsFile, warnings *[]string) error {
+	grantSQL, grantWarn, err := readGrants(ctx, db, asOf, dbs, skipGrants)
+	if err != nil {
 		return err
-	}); err != nil {
-		grantWarn = append(grantWarn, "grants were not read from the backup snapshot: "+err.Error())
 	}
 	*warnings = append(*warnings, grantWarn...)
 	objects.Grants = grantSQL
@@ -476,6 +475,7 @@ func attachGrantsAndZones(ctx context.Context, db *database, asOf string, dbs []
 			SQL:      ensureSemicolon(z.RawSQL),
 		})
 	}
+	return nil
 }
 
 // backupArtifact is one finished snapshot ready to write.
@@ -1067,30 +1067,122 @@ func scanSequenceValue(rows pgx.Rows, database string, want map[string]tableRef)
 	}, true, nil
 }
 
-func readGrants(ctx context.Context, db *database, dbs []string) ([]string, []string) {
+func readGrants(ctx context.Context, db *database, asOf string, dbs []string, skip bool) ([]string, []string, error) {
 	var grants []string
 	var warnings []string
-	users, roles, memberships, err := readPrincipals(ctx, db)
+	var users, roles []string
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		users, roles, err = readUserNames(ctx, db)
+		return err
+	})
 	if err != nil {
-		warnings = append(warnings, "users and roles were not read: "+err.Error())
-	} else {
-		for _, role := range roles {
-			grants = append(grants, "CREATE ROLE IF NOT EXISTS "+quoteIdent(role)+";")
+		if !skip {
+			return nil, warnings, fmt.Errorf("users and roles: %w", err)
 		}
-		for _, user := range users {
-			grants = append(grants, "CREATE USER IF NOT EXISTS "+quoteIdent(user)+";")
-		}
-		grants = append(grants, memberships...)
+		warnings = append(warnings, "grants skipped: users and roles: "+err.Error())
 	}
+	for _, role := range roles {
+		grants = append(grants, "CREATE ROLE IF NOT EXISTS "+quoteIdent(role)+";")
+	}
+	for _, user := range users {
+		grants = append(grants, "CREATE USER IF NOT EXISTS "+quoteIdent(user)+";")
+	}
+	var memberships []string
+	if err := readGrantSnapshotInto(ctx, db, asOf, "role memberships", skip, func(ctx context.Context) ([]string, error) {
+		return readMemberships(ctx, db)
+	}, &memberships, &warnings); err != nil {
+		return nil, warnings, err
+	}
+	grants = append(grants, memberships...)
+
 	for _, database := range dbs {
-		stmts, err := grantsForDatabase(ctx, db, database)
+		var stmts []string
+		if err := readGrantSnapshotInto(ctx, db, asOf, "database grants for "+database, skip, func(ctx context.Context) ([]string, error) {
+			return readGrantQuery(ctx, db, "SHOW GRANTS ON DATABASE "+quoteIdent(database), "DATABASE "+quoteIdent(database))
+		}, &stmts, &warnings); err != nil {
+			return nil, warnings, err
+		}
+		rels, err := readRelationsSnapshot(ctx, db, asOf, database, skip, &warnings)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("grants for %s were not read: %s", database, err.Error()))
-			continue
+			return nil, warnings, err
+		}
+		for _, rel := range rels {
+			if err := readGrantSnapshotInto(ctx, db, asOf, "table grants for "+database+"."+rel.Schema+"."+rel.Name, skip, func(ctx context.Context) ([]string, error) {
+				return readGrantQuery(ctx, db, "SHOW GRANTS ON TABLE "+qualified(database, rel.Schema, rel.Name), "")
+			}, &stmts, &warnings); err != nil {
+				return nil, warnings, err
+			}
 		}
 		grants = append(grants, stmts...)
 	}
-	return grants, warnings
+	return grants, warnings, nil
+}
+
+func readGrantSnapshot[T any](
+	ctx context.Context,
+	db *database,
+	asOf, label string,
+	skip bool,
+	read func(context.Context) (T, error),
+	warnings *[]string,
+) (T, error) {
+	var zero T
+	var value T
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		value, err = read(ctx)
+		return err
+	})
+	if err != nil {
+		if !skip {
+			return zero, fmt.Errorf("%s: %w", label, err)
+		}
+		*warnings = append(*warnings, "grants skipped: "+label+": "+err.Error())
+		return zero, nil
+	}
+	return value, nil
+}
+
+func readGrantSnapshotInto(
+	ctx context.Context,
+	db *database,
+	asOf, label string,
+	skip bool,
+	read func(context.Context) ([]string, error),
+	out *[]string,
+	warnings *[]string,
+) error {
+	value, err := readGrantSnapshot(ctx, db, asOf, label, skip, read, warnings)
+	if err != nil {
+		return err
+	}
+	*out = append(*out, value...)
+	return nil
+}
+
+func readRelationsSnapshot(
+	ctx context.Context,
+	db *database,
+	asOf, database string,
+	skip bool,
+	warnings *[]string,
+) ([]tableRef, error) {
+	var rels []tableRef
+	err := db.withSnapshot(ctx, asOf, func(ctx context.Context) error {
+		var err error
+		rels, err = grantRelations(ctx, db, database)
+		return err
+	})
+	if err != nil {
+		label := "grant relations for " + database
+		if !skip {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		*warnings = append(*warnings, "grants skipped: "+label+": "+err.Error())
+		return nil, nil
+	}
+	return rels, nil
 }
 
 func readPrincipals(ctx context.Context, db *database) (users, roles, memberships []string, err error) {

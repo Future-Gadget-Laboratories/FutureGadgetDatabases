@@ -195,11 +195,20 @@ func (s *sqlFieldScanner) consume(c byte) {
 	case '(', ',':
 		s.flush()
 	default:
-		if unicode.IsSpace(rune(c)) {
+		if isSQLSpace(c) {
 			s.flush()
 		} else {
 			s.token.WriteByte(c)
 		}
+	}
+}
+
+func isSQLSpace(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	default:
+		return false
 	}
 }
 

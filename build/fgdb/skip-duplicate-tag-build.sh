@@ -54,7 +54,8 @@ for run in payload.get("workflow_runs", []):
     # the same commit. For fgdb tags, require the exact tag in the dispatch
     # run name; an OSS push is associated with every non-fgdb dispatch.
     if "-fgdb." in tag:
-        if tag not in title and f"refs/tags/{tag}" not in title:
+        title_words = set(title.split())
+        if tag not in title_words and f"refs/tags/{tag}" not in title_words:
             continue
     elif "-fgdb." in title:
         continue

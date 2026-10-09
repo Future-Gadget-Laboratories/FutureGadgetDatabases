@@ -121,13 +121,9 @@ func tableTTLChanges(desired int, zones []zoneRow) []gcChange {
 		default:
 			continue
 		}
-		own := z.Effective
-		if own == 0 {
-			var ok bool
-			own, ok = parseGCTTL(z.RawSQL)
-			if !ok {
-				continue
-			}
+		own, ok := parseGCTTL(z.RawSQL)
+		if !ok {
+			continue
 		}
 		if own >= desired {
 			continue

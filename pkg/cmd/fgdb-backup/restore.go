@@ -86,21 +86,31 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	defer db.Close(ctx)
 
-	if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
-		return res, err
+	restore := func(ctx context.Context) error {
+		if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force); err != nil {
+			return err
+		}
+		if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
+			return err
+		}
+		if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
+			return err
+		}
+		warnings, err := loadSelected(ctx, db, bundle, selected, opt)
+		if err != nil {
+			return err
+		}
+		res.Warnings = append(res.Warnings, warnings...)
+		var finishErr error
+		res, finishErr = finishRestore(ctx, db, bundle, selected, &res)
+		return finishErr
 	}
-	if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
-		return res, err
+	if opt.Force && opt.Load == "copy" {
+		err = db.withTransaction(ctx, restore)
+	} else {
+		err = restore(ctx)
 	}
-	if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
-		return res, err
-	}
-	warnings, err := loadSelected(ctx, db, bundle, selected, opt)
-	if err != nil {
-		return res, err
-	}
-	res.Warnings = append(res.Warnings, warnings...)
-	return finishRestore(ctx, db, bundle, selected, &res)
+	return res, err
 }
 
 func normalizeRestoreOptions(opt RestoreOptions) (RestoreOptions, error) {

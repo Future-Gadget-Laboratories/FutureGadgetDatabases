@@ -297,6 +297,16 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 	if !strings.Contains(kept, "7") {
 		t.Fatalf("force restore removed an unrelated table: %s", kept)
 	}
+	bad := filepath.Join(dest, "lab", "force-failure")
+	copyDir(t, bres.Backup, bad)
+	corruptObjectsForRestoreFailure(t, bad)
+	if _, err := runToolErr(tool, "restore", "--json", "--force", "--load", "copy", "--url", dstURL, "--src", bad); err == nil {
+		t.Fatal("force restore accepted a malformed schema")
+	}
+	preserved := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT count(*) FROM shop.public.users;`))
+	if preserved != "2" {
+		t.Fatalf("failed force restore changed existing rows: %s", preserved)
+	}
 	next := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT nextval('shop.public.unused_seq');`))
 	if !strings.Contains(next, "1") {
 		t.Fatalf("unused sequence nextval = %s, want 1", next)
@@ -771,6 +781,38 @@ func copyDir(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func corruptObjectsForRestoreFailure(t *testing.T, base string) {
+	t.Helper()
+	path := filepath.Join(base, "objects.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var objects map[string]any
+	if err := json.Unmarshal(body, &objects); err != nil {
+		t.Fatal(err)
+	}
+	statements, ok := objects["statements"].([]any)
+	if !ok {
+		t.Fatalf("objects statements: %#v", objects["statements"])
+	}
+	for _, value := range statements {
+		statement, ok := value.(map[string]any)
+		if ok && statement["kind"] == "table" {
+			statement["sql"] = "CREATE TABLE ("
+			break
+		}
+	}
+	out, err := json.MarshalIndent(objects, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	patchDigest(t, filepath.Join(base, "manifest.json"), "objects_file", path)
 }
 
 func patchDigest(t *testing.T, manifestPath, field, filePath string) {
