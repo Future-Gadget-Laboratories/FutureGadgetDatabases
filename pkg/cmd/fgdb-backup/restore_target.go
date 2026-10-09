@@ -198,7 +198,7 @@ func outsideCatalogDependencies(ctx context.Context, db *database, objects Objec
 func backupObjectKeys(objects ObjectsFile, database string) map[string]bool {
 	keys := map[string]bool{}
 	for _, st := range objects.Statements {
-		if st.Database == database && (st.Kind == "table" || st.Kind == "type" || st.Kind == "sequence") {
+		if st.Database == database && droppableKind(st.Kind) {
 			if key := relationKey(st.Object); key != "" {
 				keys[key] = true
 			}

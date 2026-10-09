@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -42,8 +43,32 @@ func (s *localStore) putLatest(ctx context.Context, rel string, ptr LatestPointe
 		logf("leaving latest at %s; %s is not newer", cur.Timestamp, ptr.Timestamp)
 		return nil
 	}
-	_, err = writeJSONFile(ctx, s, rel, ptr)
-	return err
+	body, err := json.MarshalIndent(ptr, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(s.path(rel)), ".latest.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, s.path(rel)); err != nil {
+		return fmt.Errorf("replace latest pointer: %w", err)
+	}
+	return nil
 }
 
 func readLatestPointer(ctx context.Context, store Store, rel string) (LatestPointer, bool) {
