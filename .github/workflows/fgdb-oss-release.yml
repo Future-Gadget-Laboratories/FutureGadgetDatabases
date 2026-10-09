@@ -6,8 +6,7 @@
 #   push of tags matching v*-oss
 # Ordinary pushes and pull requests do not build.
 #
-# The compile runs only on the self-hosted runner labeled fgdb-build
-# (labcluster3). It must not run on labcluster0-test / self-hosted-ci.
+# The compile runs only on the self-hosted runner labeled fgdb-build.
 # Release upload and the image push run on ubuntu-latest.
 #
 # Knobs (edit here):
@@ -211,7 +210,7 @@ jobs:
           echo "A publish=false dispatch is still fine and will not create a tag." >&2
           exit 1
 
-      - name: Require the lab cache paths
+      - name: Require the runner cache paths
         run: |
           set -euo pipefail
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
@@ -224,7 +223,7 @@ jobs:
           fi
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
             echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
-            echo "Run build/fgdb/runner/setup-labcluster3.sh on labcluster3 first." >&2
+            echo "Run build/fgdb/runner/setup-runner.sh on the self-hosted build runner (label fgdb-build) first." >&2
             exit 1
           fi
           {

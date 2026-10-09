@@ -14,9 +14,11 @@ release. Pushing `v23.2.15-fgdb.N` publishes a different release and leaves
 ## Before the first build
 
 1. Merge the workflow onto `main`.
-2. On labcluster3, install the runner in [RUNNER.md](RUNNER.md). Confirm it
-   is Idle with labels `self-hosted` and `fgdb-build`.
-3. Do not send the compile to `ubuntu-latest` or to `self-hosted-ci`.
+2. On the self-hosted build runner (label `fgdb-build`), install the runner
+   in [RUNNER.md](RUNNER.md). Confirm it is Idle with labels `self-hosted`
+   and `fgdb-build`.
+3. Do not send the compile to `ubuntu-latest`. The job runs only on a
+   runner that has both `self-hosted` and `fgdb-build`.
 
 A cold build needs on the order of 32 GB of RAM and can take a few hours.
 The workflow does not start that build by itself; someone has to dispatch it
@@ -302,7 +304,7 @@ build '--workspace_status_command=./build/bazelutil/stamp.sh x86_64-pc-linux-gnu
 
 The quotes are required. Bazel splits unquoted spaces in `.bazelrc` into
 separate arguments, and the leftover words become build targets. An
-unquoted line is why the first lab build tried to build `//:fgl-oss`.
+unquoted line is why the first release build tried to build `//:fgl-oss`.
 `stamp.sh` reads the channel from that argument list. It does not read
 the `BUILD_CHANNEL` environment variable. The three arguments are the
 target triple, the channel (`fgl-oss`), and the build type (`release`).
@@ -330,8 +332,8 @@ not from `dev doctor`.
 libgeos comes from the public prebuilt c-dep archive
 (`storage.googleapis.com/public-bazel-artifacts/c-deps/...`), not from
 `--config=force_build_cdeps`. Forcing a from-source c-dep build needs the
-private builder image or a host toolchain this tree was not tested with
-(Ubuntu 26.04). After the build, the script copies
+private builder image or a host toolchain this tree was not tested with.
+After the build, the script copies
 `output_base/external/archived_cdep_libgeos_linux/lib/libgeos.so` and
 `libgeos_c.so` to `src/lib/`. The binary is copied from
 `_bazel/bin/pkg/cmd/cockroach-oss/cockroach-oss_/cockroach-oss` to
