@@ -335,6 +335,7 @@ func cmdVerify(args []string) int {
 	src := fs.String("src", "", "backup timestamp directory, or a path ending in /latest")
 	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
+	allowUnsafe := fs.Bool("allow-unsafe-overwrite", false, "allow S3 destinations that ignore If-None-Match")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -347,6 +348,7 @@ func cmdVerify(args []string) int {
 	if err != nil {
 		return fail(*asJSON, err)
 	}
+	loc.AllowUnsafeOverwrite = *allowUnsafe
 	res, err := runVerify(context.Background(), loc, loc.String())
 	if err != nil {
 		res.OK = false
