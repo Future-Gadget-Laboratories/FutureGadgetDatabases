@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	minPartSize = 5 << 20
-	maxS3Parts  = 10000
+	minPartSize       = 5 << 20
+	maxS3Parts        = 10000
+	ifNoneMatchHeader = "If-None-Match"
 )
 
 type s3Store struct {
@@ -177,7 +178,7 @@ func (w *s3Writer) put(part []byte) error {
 		Body:   bytes.NewReader(part),
 	}
 	w.store.applySSE(&in.ServerSideEncryption, &in.SSEKMSKeyId)
-	_, err := w.store.client.PutObject(w.ctx, in, putHeader("If-None-Match", "*"))
+	_, err := w.store.client.PutObject(w.ctx, in, putHeader(ifNoneMatchHeader, "*"))
 	if err != nil {
 		return err
 	}
@@ -286,7 +287,7 @@ func (w *s3Writer) Close() error {
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: w.done,
 		},
-	}, putHeader("If-None-Match", "*"))
+	}, putHeader(ifNoneMatchHeader, "*"))
 	if err != nil {
 		_ = w.abort()
 		return err
@@ -456,7 +457,7 @@ func (s *s3Store) putLatest(ctx context.Context, rel string, ptr LatestPointer) 
 			logf("leaving latest at %s; %s is not newer", existing, ptr.Timestamp)
 			return nil
 		}
-		header, value := "If-None-Match", "*"
+		header, value := ifNoneMatchHeader, "*"
 		if found {
 			header, value = "If-Match", etag
 		}

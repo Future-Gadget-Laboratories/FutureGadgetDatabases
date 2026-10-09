@@ -253,28 +253,37 @@ func (r *arrayStreamReader) readArrayStart(b byte) error {
 		return nil
 	}
 	if r.token.Len() > 0 {
-		if strings.EqualFold(r.token.String(), "e") && b == '\'' {
-			r.token.Reset()
-			r.openQuote(true)
-			return nil
-		}
-		if b == ',' || b == ']' {
-			if !strings.EqualFold(r.token.String(), "NULL") {
-				return fmt.Errorf("array element starts with %q", r.token.String()[0])
-			}
-			r.emitArrayString("NULL")
-			r.token.Reset()
-			if b == ',' {
-				r.emitArray(',')
-				return nil
-			}
-			r.emitArray('}')
-			r.arrayMode = streamArrayTail
-			return nil
-		}
+		return r.readArrayStartToken(b)
+	}
+	return r.startArrayElement(b)
+}
+
+func (r *arrayStreamReader) readArrayStartToken(b byte) error {
+	token := r.token.String()
+	if strings.EqualFold(token, "e") && b == '\'' {
+		r.token.Reset()
+		r.openQuote(true)
+		return nil
+	}
+	if b != ',' && b != ']' {
 		r.token.WriteByte(b)
 		return nil
 	}
+	if !strings.EqualFold(token, "NULL") {
+		return fmt.Errorf("array element starts with %q", token[0])
+	}
+	r.emitArrayString("NULL")
+	r.token.Reset()
+	if b == ',' {
+		r.emitArray(',')
+		return nil
+	}
+	r.emitArray('}')
+	r.arrayMode = streamArrayTail
+	return nil
+}
+
+func (r *arrayStreamReader) startArrayElement(b byte) error {
 	if b == ']' {
 		r.emitArray('}')
 		r.arrayMode = streamArrayTail
@@ -337,27 +346,35 @@ func (r *arrayStreamReader) readQuoted(b byte) error {
 
 func (r *arrayStreamReader) readAfter(b byte) error {
 	if r.token.Len() > 0 {
-		if b == ',' || b == ']' || b == ' ' || b == '\t' {
-			if !strings.EqualFold(r.token.String(), "NULL") {
-				return fmt.Errorf("array element starts with %q", r.token.String()[0])
-			}
-			r.emitArrayString("NULL")
-			r.token.Reset()
-			if b == ',' {
-				r.emitArray(',')
-				r.arrayMode = streamArrayStart
-				return nil
-			}
-			if b == ']' {
-				r.emitArray('}')
-				r.arrayMode = streamArrayTail
-				return nil
-			}
-			return nil
-		}
+		return r.readAfterToken(b)
+	}
+	return r.readAfterDelimiter(b)
+}
+
+func (r *arrayStreamReader) readAfterToken(b byte) error {
+	if b != ',' && b != ']' && b != ' ' && b != '\t' {
 		r.token.WriteByte(b)
 		return nil
 	}
+	if !strings.EqualFold(r.token.String(), "NULL") {
+		return fmt.Errorf("array element starts with %q", r.token.String()[0])
+	}
+	r.emitArrayString("NULL")
+	r.token.Reset()
+	if b == ',' {
+		r.emitArray(',')
+		r.arrayMode = streamArrayStart
+		return nil
+	}
+	if b == ']' {
+		r.emitArray('}')
+		r.arrayMode = streamArrayTail
+		return nil
+	}
+	return nil
+}
+
+func (r *arrayStreamReader) readAfterDelimiter(b byte) error {
 	if b == ' ' || b == '\t' {
 		return nil
 	}
