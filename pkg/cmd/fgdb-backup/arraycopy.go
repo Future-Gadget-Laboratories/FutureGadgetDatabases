@@ -10,6 +10,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // sqlArrayPrefix is the text backup writes at the start of an array field.
@@ -27,7 +28,7 @@ type arrayCopyReader struct {
 }
 
 func newArrayCopyReader(r io.Reader, kinds []string) io.Reader {
-	return &arrayCopyReader{in: bufio.NewReader(r), kinds: kinds}
+	return newArrayStreamReader(r, kinds)
 }
 
 func hasArrayColumn(kinds []string) bool {
@@ -345,6 +346,12 @@ func appendSQLEscape(b *strings.Builder, s string, i int) (int, error) {
 	if s[i] == 'x' {
 		return appendHexEscape(b, s, i)
 	}
+	if s[i] == 'u' {
+		return appendUnicodeEscape(b, s, i, 4)
+	}
+	if s[i] == 'U' {
+		return appendUnicodeEscape(b, s, i, 8)
+	}
 	if s[i] >= '0' && s[i] <= '7' {
 		return appendOctalEscape(b, s, i)
 	}
@@ -381,6 +388,18 @@ func appendHexEscape(b *strings.Builder, s string, i int) (int, error) {
 	}
 	b.WriteByte(byte(v))
 	return i + 3, nil
+}
+
+func appendUnicodeEscape(b *strings.Builder, s string, i, digits int) (int, error) {
+	if i+digits >= len(s) {
+		return i, fmt.Errorf("truncated unicode escape")
+	}
+	value, err := strconv.ParseUint(s[i+1:i+1+digits], 16, 32)
+	if err != nil || !utf8.ValidRune(rune(value)) {
+		return i, fmt.Errorf("bad unicode escape")
+	}
+	b.WriteString(string(rune(value)))
+	return i + 1 + digits, nil
 }
 
 func appendOctalEscape(b *strings.Builder, s string, i int) (int, error) {

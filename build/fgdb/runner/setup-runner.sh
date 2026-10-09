@@ -11,9 +11,12 @@
 # Idempotent. Prints the plan, then applies it. Pass --dry-run to stop after
 # the plan. A registration token is required only when the runner is not
 # already configured (or when --replace is set). The token is never written
-# into the plan, the env file, or the logs.
+# into the plan, the env file, or the logs. The registration program receives
+# it in ACTIONS_RUNNER_INPUT_TOKEN, not as a command-line argument.
 #
-#   sudo ./build/fgdb/runner/setup-runner.sh --token "$TOKEN"
+# Runner self-update stays on unless the config file sets auto_update: false.
+#
+#   sudo ./build/fgdb/runner/setup-runner.sh --token-file /root/runner.token
 #
 # Host-specific values are parameters. The runner name defaults to
 # "<short hostname>-fgdb". Override it with FGDB_RUNNER_NAME or --name.
@@ -43,11 +46,20 @@ fi
 RUNNER_LABELS=${FGDB_RUNNER_LABELS:-fgdb-build}
 RUNNER_URL=https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases
 RUNNER_VERSION=2.338.0
-RUNNER_SHA256=af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
 BAZELISK_VERSION=1.29.0
-BAZELISK_SHA256=5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
 RUNNER_INSTALL_DIR=/opt/fgdb-actions-runner
 ENV_FILE=/etc/fgdb/runner.env
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+CHECKSUMS_FILE=${SCRIPT_DIR}/checksums.txt
+# shellcheck source=token-input.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/token-input.sh"
+# shellcheck source=read-config.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/read-config.sh"
+# shellcheck source=runner-unit.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/runner-unit.sh"
 # Default cgroup and Bazel budgets. Lower them when the host runs
 # other services. See docs/fgdb/RUNNER.md.
 CPU_QUOTA=${FGDB_CPU_QUOTA:-2400%}
@@ -64,12 +76,20 @@ ASSUME_YES=0
 ALLOW_SMALL_HOST=0
 CACHE_DIR_OVERRIDE=
 TOKEN=${GH_RUNNER_REGISTRATION_TOKEN:-}
+TOKEN_FILE=
+TOKEN_STDIN=0
+CONFIG_PATH=${FGDB_RUNNER_CONFIG:-}
+AUTO_UPDATE=1
+ALLOWED_FILESYSTEMS=(ext4 xfs btrfs zfs)
 
 usage() {
   cat <<EOF
 usage: setup-runner.sh [options]
 
-  --token TOKEN          GitHub Actions registration token (or GH_RUNNER_REGISTRATION_TOKEN)
+  --token-file PATH      read a root-owned token file (mode 0400 or 0600)
+  --token-stdin          read one token line from stdin (hidden on a terminal)
+  --token TOKEN          deprecated; visible in shell history and process listings
+  --config PATH          read static setup settings from YAML
   --url URL              Runner URL (repo default, or the org URL)
   --name NAME            Runner name (default ${RUNNER_NAME})
   --labels LABELS        Extra labels, comma-separated (default ${RUNNER_LABELS})
@@ -88,49 +108,108 @@ usage: setup-runner.sh [options]
 EOF
 }
 
+need_arg() {
+  [[ $# -ge 2 ]] || die "$1 needs a value"
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+checksum_for() {
+  local component=$1 version=$2 platform=$3
+  awk -v c="$component" -v v="$version" -v p="$platform" '
+    $1 == c && $2 == v && $3 == p { print $4; found = 1 }
+    END { if (!found) exit 1 }
+  ' "$CHECKSUMS_FILE"
+}
+
+for ((i = 1; i <= $#; i++)); do
+  if [[ "${!i}" == "--config" ]]; then
+    j=$((i + 1))
+    [[ "$j" -le "$#" ]] && CONFIG_PATH=${!j}
+  elif [[ "${!i}" == --config=* ]]; then
+    arg=${!i}
+    CONFIG_PATH=${arg#--config=}
+  fi
+done
+
+if [[ -n "$CONFIG_PATH" ]]; then
+  [[ -f "$CONFIG_PATH" ]] || die "config file does not exist: $CONFIG_PATH"
+  parse_runner_config "$CONFIG_PATH"
+  apply_runner_config
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --token)
+      need_arg "$@"
       TOKEN=$2
+      echo "warning: --token is deprecated because it is visible in shell history and process listings; use --token-file or --token-stdin" >&2
+      shift 2
+      ;;
+    --token-file)
+      need_arg "$@"
+      TOKEN_FILE=$2
+      shift 2
+      ;;
+    --token-stdin)
+      TOKEN_STDIN=1
+      shift
+      ;;
+    --config)
+      need_arg "$@"
+      CONFIG_PATH=$2
       shift 2
       ;;
     --url)
+      need_arg "$@"
       RUNNER_URL=$2
       shift 2
       ;;
     --name)
+      need_arg "$@"
       RUNNER_NAME=$2
       shift 2
       ;;
     --labels)
+      need_arg "$@"
       RUNNER_LABELS=$2
       shift 2
       ;;
     --cache-dir)
+      need_arg "$@"
       CACHE_DIR_OVERRIDE=$2
       shift 2
       ;;
     --runner-version)
+      need_arg "$@"
       RUNNER_VERSION=$2
       shift 2
       ;;
     --cpu-quota)
+      need_arg "$@"
       CPU_QUOTA=$2
       shift 2
       ;;
     --memory-high)
+      need_arg "$@"
       MEMORY_HIGH=$2
       shift 2
       ;;
     --memory-max)
+      need_arg "$@"
       MEMORY_MAX=$2
       shift 2
       ;;
     --local-cpu)
+      need_arg "$@"
       LOCAL_CPU=$2
       shift 2
       ;;
     --local-ram-mb)
+      need_arg "$@"
       LOCAL_RAM_MB=$2
       shift 2
       ;;
@@ -161,6 +240,21 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$TOKEN_FILE" && "$TOKEN_STDIN" -eq 1 ]]; then
+  die "--token-file and --token-stdin cannot be used together"
+fi
+if [[ -n "$TOKEN_FILE" ]]; then
+  read_registration_token_file "$TOKEN_FILE" || exit 1
+  TOKEN=$REPLY_TOKEN
+fi
+if [[ "$TOKEN_STDIN" -eq 1 ]]; then
+  read_registration_token_stdin
+  TOKEN=$REPLY_TOKEN
+fi
+
+cache_check=${SCRIPT_DIR}/check-cache-dir.sh
+require_cache_check_script "$cache_check"
 
 log() {
   printf '%s\n' "$*"
@@ -271,6 +365,9 @@ else
   read -r cache_root free_bytes < <(choose_cache_root)
 fi
 
+build_cache_check_args "$cache_root" 150
+bash "$cache_check" "${CACHE_CHECK_ARGS[@]}"
+
 if (( free_bytes < MIN_FREE_BYTES )); then
   die "need at least 150 GiB free for the Bazel cache; best candidate has $((free_bytes / 1024 / 1024 / 1024)) GiB (${cache_root})"
 fi
@@ -290,7 +387,7 @@ if (( REPLACE == 1 )) || (( runner_configured == 0 )); then
   need_token=1
 fi
 if (( need_token == 1 )) && [[ -z "$TOKEN" ]] && (( DRY_RUN == 0 )); then
-  die "a registration token is required (pass --token or set GH_RUNNER_REGISTRATION_TOKEN). It is not required on later runs once ${RUNNER_INSTALL_DIR}/.runner exists."
+  die "$(registration_token_required_error "$RUNNER_INSTALL_DIR")"
 fi
 
 token_state="not set"
@@ -317,6 +414,8 @@ log "  packages:          build tools, docker.io, jq, python3 (no dist-upgrade, 
 log "  bazel disk cache:  ${disk_cache}"
 log "  bazel output base: ${output_base}"
 log "  free space seen:   $((free_bytes / 1024 / 1024 / 1024)) GiB"
+log "  cache filesystems: ${ALLOWED_FILESYSTEMS[*]}"
+log "  runner auto-update: $([[ $AUTO_UPDATE -eq 1 ]] && echo on || echo off)"
 log "  systemd slice:     fgdb-runner.slice CPUQuota=${CPU_QUOTA} MemoryHigh=${MEMORY_HIGH} MemoryMax=${MEMORY_MAX}"
 log "  bazel resources:   local_cpu=${LOCAL_CPU} local_ram_mb=${LOCAL_RAM_MB} (${ENV_FILE})"
 log "  coexistence:       slice caps the runner so the OS and other local services keep the remaining CPU and RAM"
@@ -394,6 +493,8 @@ fi
 systemctl enable --now docker
 
 log "Installing Bazelisk ${BAZELISK_VERSION}"
+BAZELISK_SHA256=$(checksum_for bazelisk "$BAZELISK_VERSION" linux-amd64) ||
+  die "bazelisk version ${BAZELISK_VERSION} is not pinned in ${CHECKSUMS_FILE}"
 install -d -m 0755 /usr/local/lib/fgdb
 bazelisk_stamp=/usr/local/lib/fgdb/bazelisk.version
 if [[ ! -x /usr/local/bin/bazel ]] || [[ "$(cat "$bazelisk_stamp" 2>/dev/null || true)" != "$BAZELISK_VERSION" ]]; then
@@ -443,6 +544,8 @@ EOF
 chmod 0644 /etc/systemd/system/fgdb-runner.slice
 
 log "Installing GitHub Actions runner ${RUNNER_VERSION}"
+RUNNER_SHA256=$(checksum_for actions-runner "$RUNNER_VERSION" linux-x64) ||
+  die "runner version ${RUNNER_VERSION} is not pinned in ${CHECKSUMS_FILE}"
 install -d -m 0755 -o "$RUNNER_USER" -g "$RUNNER_USER" "$RUNNER_INSTALL_DIR"
 version_stamp=${RUNNER_INSTALL_DIR}/.fgdb-runner-version
 if [[ "$(cat "$version_stamp" 2>/dev/null || true)" != "$RUNNER_VERSION" ]]; then
@@ -468,24 +571,30 @@ fi
 
 if (( runner_configured == 0 )) || (( REPLACE == 1 )); then
   log "Registering runner (token not printed)"
+  update_arg=()
+  if (( AUTO_UPDATE == 0 )); then
+    update_arg+=(--disableupdate)
+  fi
   # config.sh is relative to the runner directory. runuser does not print the token.
   # $1 and $@ are expanded by the bash -c script, not by this shell.
   # shellcheck disable=SC2016
-  runuser -u "$RUNNER_USER" -- bash -c \
+  ACTIONS_RUNNER_INPUT_TOKEN="$TOKEN" runuser -u "$RUNNER_USER" -- bash -c \
     'cd "$1" && shift && exec ./config.sh "$@"' \
     bash "$RUNNER_INSTALL_DIR" \
     --unattended \
     --url "$RUNNER_URL" \
-    --token "$TOKEN" \
     --name "$RUNNER_NAME" \
     --labels "$RUNNER_LABELS" \
     --work "$work_dir" \
-    --replace
+    --replace \
+    "${update_arg[@]}"
+  unset TOKEN
 else
   log "Runner already configured; leaving registration in place"
 fi
 
 log "Installing systemd service"
+install -m 0755 "$SCRIPT_DIR/check-cache-dir.sh" /usr/local/lib/fgdb/check-cache-dir.sh
 # svc.sh install is not strictly idempotent; skip when a unit for this name exists.
 existing_unit=$(systemctl list-unit-files --no-legend 'actions.runner.*.service' 2>/dev/null | awk '{print $1}' | grep -F -m 1 ".${RUNNER_NAME}.service" || true)
 if [[ -z "$existing_unit" ]]; then
@@ -498,6 +607,7 @@ fi
 
 dropin_dir="/etc/systemd/system/${existing_unit}.d"
 install -d -m 0755 "$dropin_dir"
+exec_pre=$(build_exec_start_pre "$output_base" 50)
 cat >"${dropin_dir}/10-fgdb-limits.conf" <<EOF
 [Unit]
 After=network-online.target docker.service
@@ -505,6 +615,7 @@ Wants=network-online.target
 
 [Service]
 Slice=fgdb-runner.slice
+ExecStartPre=${exec_pre}
 Nice=10
 CPUWeight=50
 IOWeight=50

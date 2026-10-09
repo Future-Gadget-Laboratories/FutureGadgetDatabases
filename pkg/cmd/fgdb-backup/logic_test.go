@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -103,6 +104,33 @@ func TestSQLFields(t *testing.T) {
 				t.Fatalf("sqlFields(%q) = %#v, want %#v", test.input, got, test.want)
 			}
 		})
+	}
+}
+
+func TestRewriteDatabaseNamePreservesSQLText(t *testing.T) {
+	input := `CREATE TABLE "shop"."public"."items" (note STRING DEFAULT 'shop.public.items');
+GRANT CONNECT ON DATABASE "shop" TO bob;
+ALTER DATABASE shop CONFIGURE ZONE USING gc.ttlseconds = 7777;
+CREATE FUNCTION shop.public.f() RETURNS STRING LANGUAGE SQL AS $$ SELECT 'shop.public.items' $$;`
+	want := `CREATE TABLE "shop__copy"."public"."items" (note STRING DEFAULT 'shop.public.items');
+GRANT CONNECT ON DATABASE "shop__copy" TO bob;
+ALTER DATABASE shop__copy CONFIGURE ZONE USING gc.ttlseconds = 7777;
+CREATE FUNCTION shop__copy.public.f() RETURNS STRING LANGUAGE SQL AS $$ SELECT 'shop.public.items' $$;`
+	if got := rewriteDatabaseName(input, "shop", "shop__copy"); got != want {
+		t.Fatalf("rewritten SQL:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestForceModeFlag(t *testing.T) {
+	var flag forceModeFlag
+	if err := flag.Set("true"); err != nil || flag.value != "swap" {
+		t.Fatalf("plain force = %#v, %v", flag, err)
+	}
+	if err := flag.Set("in-place"); err != nil || flag.value != "in-place" {
+		t.Fatalf("in-place force = %#v, %v", flag, err)
+	}
+	if err := flag.Set("nope"); err == nil {
+		t.Fatal("invalid force mode was accepted")
 	}
 }
 
@@ -441,6 +469,82 @@ func TestArrayCopyRewrite(t *testing.T) {
 	if err != nil || string(nullRow) != "3\t\\N\t\\N\n" {
 		t.Fatalf("null row %q %v", nullRow, err)
 	}
+}
+
+func TestArrayStreamMatchesLineRewriter(t *testing.T) {
+	rows := []string{
+		"1\t" + escapePGCopy(`ARRAY['a',NULL,'b,c',e'd\'e',e'a\\b']::text[]`) + "\tplain\n",
+		"2\t" + escapePGCopy(`ARRAY[]::bigint[]`) + "\t\\N\n",
+	}
+	input := strings.Join(rows, "")
+	got, err := io.ReadAll(newArrayStreamReader(strings.NewReader(input), []string{"", "text[]", ""}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want bytes.Buffer
+	for _, row := range rows {
+		rewritten, err := rewriteArrayLine([]byte(row), []string{"", "text[]", ""})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = want.Write(rewritten)
+	}
+	if string(got) != want.String() {
+		t.Fatalf("streaming output:\n%s\nline output:\n%s", got, want.String())
+	}
+}
+
+func TestArrayStreamEscapesMatchReference(t *testing.T) {
+	literal := `ARRAY[e'say "hi"',e'a\x01b',e'\101',e'\u00C5ngstr\u00F6m',e'\U0001F600',NULL]::STRING[]`
+	line := "1\t" + escapePGCopy(literal) + "\n"
+	want, err := rewriteArrayLine([]byte(line), []string{"", "STRING[]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(newArrayStreamReader(strings.NewReader(line), []string{"", "STRING[]"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("streaming output %q, reference %q", got, want)
+	}
+}
+
+func TestArrayStreamMultipleArrayColumns(t *testing.T) {
+	input := "1\t" + escapePGCopy(`ARRAY['1',NULL,'2']::INT[]`) + "\t" +
+		escapePGCopy(`ARRAY['a',NULL,'b,c','d''e',e'a\\b']::TEXT[]`) + "\n"
+	got, err := io.ReadAll(newArrayStreamReader(strings.NewReader(input), []string{"", "INT[]", "TEXT[]"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []byte
+	want, err = rewriteArrayLine([]byte(input), []string{"", "INT[]", "TEXT[]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func FuzzArrayStreamMatchesReference(f *testing.F) {
+	f.Add("alpha")
+	f.Add("quote ' and slash \\")
+	f.Add("double \" quote, unicode Ångström")
+	f.Fuzz(func(t *testing.T, value string) {
+		value = strings.ReplaceAll(value, `\`, `\\`)
+		value = strings.ReplaceAll(value, `'`, `''`)
+		literal := "ARRAY['" + value + "']::STRING[]"
+		line := "1\t" + escapePGCopy(literal) + "\n"
+		want, wantErr := rewriteArrayLine([]byte(line), []string{"", "STRING[]"})
+		got, gotErr := io.ReadAll(newArrayStreamReader(strings.NewReader(line), []string{"", "STRING[]"}))
+		if (wantErr != nil) != (gotErr != nil) {
+			t.Fatalf("reference error %v, stream error %v", wantErr, gotErr)
+		}
+		if wantErr == nil && string(got) != string(want) {
+			t.Fatalf("reference %q, stream %q", want, got)
+		}
+	})
 }
 
 func TestViewDropIsReverseDependencyOrder(t *testing.T) {

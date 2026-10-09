@@ -13,7 +13,7 @@ import (
 // guardRestoreTargets refuses a database that already has user objects unless
 // --force is set. --force drops only objects that are in the backup, without
 // CASCADE, so a table outside the backup is not emptied.
-func guardRestoreTargets(ctx context.Context, db *database, objects ObjectsFile, selected map[string]bool, force bool) error {
+func guardRestoreTargets(ctx context.Context, db *database, objects ObjectsFile, selected map[string]bool, force, inTransaction bool) error {
 	for _, database := range objects.Databases {
 		if !selected[database.Name] {
 			continue
@@ -35,7 +35,7 @@ func guardRestoreTargets(ctx context.Context, db *database, objects ObjectsFile,
 		if !force {
 			return fmt.Errorf("refusing to restore into non-empty database %s. A failed restore can leave a partial database; rerun with --force to drop and recreate only the objects in this backup", database.Name)
 		}
-		if err := dropBackupObjects(ctx, db, objects, database.Name); err != nil {
+		if err := dropBackupObjects(ctx, db, objects, database.Name, inTransaction); err != nil {
 			return err
 		}
 	}
@@ -84,7 +84,7 @@ WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', '
 	return routines > 0, nil
 }
 
-func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, database string) error {
+func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, database string, inTransaction bool) error {
 	if err := db.use(ctx, database); err != nil {
 		return err
 	}
@@ -93,19 +93,38 @@ func dropBackupObjects(ctx context.Context, db *database, objects ObjectsFile, d
 	if err := outsideForeignKeys(ctx, db, objects, database); err != nil {
 		return err
 	}
-	if err := dropKinds(ctx, db, objects, database, []string{"view", "materialized_view"}, dropViewSQL, true); err != nil {
+	if err := outsideCatalogDependencies(ctx, db, objects, database); err != nil {
 		return err
 	}
-	if err := dropRoutines(ctx, db, objects, database); err != nil {
+	drop := func() error {
+		if err := dropKinds(ctx, db, objects, database, []string{"view", "materialized_view"}, dropViewSQL, true); err != nil {
+			return err
+		}
+		if err := dropRoutines(ctx, db, objects, database); err != nil {
+			return err
+		}
+		if err := dropTables(ctx, db, objects, database); err != nil {
+			return err
+		}
+		if err := dropKinds(ctx, db, objects, database, []string{"sequence"}, dropSequenceSQL, false); err != nil {
+			return err
+		}
+		return dropKinds(ctx, db, objects, database, []string{"type"}, dropTypeSQL, false)
+	}
+	if inTransaction {
+		return drop()
+	}
+	if _, err := db.exec(ctx, "BEGIN"); err != nil {
+		return fmt.Errorf("begin restore drop transaction: %w", err)
+	}
+	if err := drop(); err != nil {
+		_, _ = db.exec(context.Background(), "ROLLBACK")
 		return err
 	}
-	if err := dropTables(ctx, db, objects, database); err != nil {
-		return err
+	if _, err := db.exec(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("commit restore drop transaction: %w", err)
 	}
-	if err := dropKinds(ctx, db, objects, database, []string{"sequence"}, dropSequenceSQL, false); err != nil {
-		return err
-	}
-	return dropKinds(ctx, db, objects, database, []string{"type"}, dropTypeSQL, false)
+	return nil
 }
 
 // outsideForeignKeys refuses --force when a table that is not in the backup
@@ -147,6 +166,65 @@ WHERE f.contype = 'f'
 		}
 	}
 	return rows.Err()
+}
+
+func outsideCatalogDependencies(ctx context.Context, db *database, objects ObjectsFile, database string) error {
+	backup := backupObjectKeys(objects, database)
+	rels, err := listRelations(ctx, db)
+	if err != nil {
+		return fmt.Errorf("list dependencies in %s: %w", database, err)
+	}
+	for _, rel := range rels {
+		if rel.Type != "view" && rel.Type != "materialized view" {
+			continue
+		}
+		key := rel.Schema + "." + rel.Name
+		if backup[key] {
+			continue
+		}
+		create, err := showCreateRelation(ctx, db, rel)
+		if err != nil {
+			return err
+		}
+		for target := range backup {
+			if containsRelationReference(create, target) {
+				return fmt.Errorf("refusing to restore into %s. %s.%s depends on %s and is not in the backup", database, rel.Schema, rel.Name, target)
+			}
+		}
+	}
+	return nil
+}
+
+func backupObjectKeys(objects ObjectsFile, database string) map[string]bool {
+	keys := map[string]bool{}
+	for _, st := range objects.Statements {
+		if st.Database == database && droppableKind(st.Kind) {
+			if key := relationKey(st.Object); key != "" {
+				keys[key] = true
+			}
+		}
+	}
+	return keys
+}
+
+func showCreateRelation(ctx context.Context, db *database, rel tableRef) (string, error) {
+	var create string
+	q := "SELECT create_statement FROM [SHOW CREATE TABLE " + quoteIdent(rel.Schema) + "." + quoteIdent(rel.Name) + "]"
+	if err := db.queryRow(ctx, q).Scan(&create); err != nil {
+		return "", fmt.Errorf("inspect dependencies of %s.%s: %w", rel.Schema, rel.Name, err)
+	}
+	return create, nil
+}
+
+func containsRelationReference(create, key string) bool {
+	parts := strings.SplitN(key, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	lower := strings.ToLower(create)
+	plain := strings.ToLower(parts[0] + "." + parts[1])
+	quoted := strings.ToLower(`"` + parts[0] + `"."` + parts[1] + `"`)
+	return strings.Contains(lower, plain) || strings.Contains(lower, quoted)
 }
 
 func relationKey(object string) string {

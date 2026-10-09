@@ -20,6 +20,7 @@ type Manifest struct {
 	SourceVersion string       `json:"source_version"`
 	ClusterID     string       `json:"cluster_id"`
 	Name          string       `json:"name"`
+	BackupID      string       `json:"backup_id,omitempty"`
 	AsOf          string       `json:"as_of"`
 	GCTTLSeconds  int          `json:"gc_ttl_seconds"`
 	Compression   string       `json:"compression"`
@@ -105,6 +106,7 @@ type LatestPointer struct {
 	FormatVersion int    `json:"format_version"`
 	Name          string `json:"name"`
 	Timestamp     string `json:"timestamp"`
+	BackupID      string `json:"backup_id,omitempty"`
 	Complete      bool   `json:"complete"`
 }
 

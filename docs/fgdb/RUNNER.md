@@ -5,6 +5,9 @@ the labels `self-hosted` and `fgdb-build`.
 
 The script is `build/fgdb/runner/setup-runner.sh`. It is idempotent.
 It prints a plan, then applies it. `--dry-run` stops after the plan.
+Optional settings live in a small config file. See
+[runner-config.md](runner-config.md). The installed runner is allowed to
+update itself. That stays on unless the config file sets `auto_update: false`.
 
 Register that runner on a machine with at least 30 GiB of RAM and 150 GiB
 free on a local disk. The script refuses a smaller machine unless you pass
@@ -97,6 +100,31 @@ cache, is more comfortable with extra room. To free that space later, run
 The script refuses the path when it sits on a network filesystem or on a
 `/mnt/*backup*` mount.
 
+## Checking the cache disk
+
+Before it prints the plan, the script checks the directory that will hold
+the cache. `--dry-run` runs that check too, then stops. On a normal ext4
+disk the check succeeds.
+
+The check asks `findmnt` which filesystem that directory is on. `findmnt`
+answers `ext4` for an ext4 disk. The script does not use `stat -f`, because
+that command reports ext4 as `ext2/ext3` and would reject a healthy disk.
+If `findmnt` is missing or cannot answer, the check reads
+`/proc/self/mountinfo` instead.
+
+The filesystem has to be `ext4`, `xfs`, `btrfs`, or `zfs`, unless your
+config file lists a different set. The disk has to be writable and have at
+least 150 GiB free. It also needs free inodes, with one exception: btrfs,
+and any filesystem that reports zero inodes, does not use a fixed inode
+table. The check writes a note and skips the inode test on those disks.
+
+After install, the runner service runs the same check before every start.
+That recheck uses the filesystem list from the config file (the same
+default list when you did not change it) and a 50 GiB minimum, so a later
+job is not started on a full disk. Setup calls the check with `bash`. The
+script does not have to be marked executable for that to work. If the check
+script is missing or `bash` cannot read it, setup stops with an error.
+
 ## Register the runner
 
 Create a registration token when you are ready to run the script. It expires
@@ -121,27 +149,47 @@ gh api --method POST \
   --jq .token
 ```
 
-On the build machine, from a checkout of this repository:
+On the build machine, from a checkout of this repository, put the token in
+a root-owned file. Mode `0400` or `0600` is required. A file saved on
+Windows, with a carriage return at the end of the line, still works.
 
 ```bash
-sudo ./build/fgdb/runner/setup-runner.sh --token "$TOKEN"
+umask 077
+printf '%s\n' "$TOKEN" > /root/runner.token
+sudo ./build/fgdb/runner/setup-runner.sh --token-file /root/runner.token
 ```
+
+You can also pass the token on standard input. When stdin is a terminal,
+the script hides what you type:
+
+```bash
+sudo ./build/fgdb/runner/setup-runner.sh --token-stdin
+```
+
+The script gives the token to the runner's registration program in the
+environment variable `ACTIONS_RUNNER_INPUT_TOKEN`. It is not one of that
+program's command-line arguments, so it does not show up in a process
+listing.
+
+`--token` still works, but the shell stores it in history and other people
+can see it in the process list. Prefer `--token-file` or `--token-stdin`.
 
 Org registration:
 
 ```bash
 sudo ./build/fgdb/runner/setup-runner.sh \
-  --token "$TOKEN" \
+  --token-file /root/runner.token \
   --url https://github.com/Future-Gadget-Laboratories
 ```
 
 A different runner name:
 
 ```bash
-sudo FGDB_RUNNER_NAME=fgdb-build ./build/fgdb/runner/setup-runner.sh --token "$TOKEN"
+sudo FGDB_RUNNER_NAME=fgdb-build ./build/fgdb/runner/setup-runner.sh \
+  --token-file /root/runner.token
 ```
 
-A later run without `--token` is safe once
+A later run without a token is safe once
 `/opt/fgdb-actions-runner/.runner` exists. Pass `--replace` to register
 again; that needs a new token. `--dry-run` prints the plan only.
 
@@ -153,6 +201,20 @@ The runner needs outbound HTTPS to `github.com` (source, Actions, Bazelisk,
 the `cockroachdb/bazel` release), `storage.googleapis.com` (public Bazel
 toolchains and prebuilt c-deps), and the module mirrors Bazel fetches on a
 cold build. It does not need the private Cockroach builder image registry.
+
+## Versions and checksums
+
+The runner package and Bazelisk are pinned in
+`build/fgdb/runner/checksums.txt`. Setup refuses a version that is not in
+that file.
+
+`build/fgdb/runner/update-checksums.sh` is how you refresh a pin. It
+downloads the file and checks the checksum against the one the publisher
+posted. For the Actions runner, that checksum is in the GitHub release
+notes, between `BEGIN SHA linux-x64` and `END SHA linux-x64`. For Bazelisk,
+it is the `bazelisk-linux-amd64.sha256` file attached to the release. If
+those do not match the download, the script stops and leaves
+`checksums.txt` unchanged. A download by itself is not enough.
 
 ## After it is installed
 

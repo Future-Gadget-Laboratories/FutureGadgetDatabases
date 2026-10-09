@@ -1,0 +1,5 @@
+# component version platform sha256 filename
+# actions-runner hashes are checked against the GitHub release notes.
+# bazelisk hashes are checked against the published .sha256 file, then stored here.
+actions-runner 2.338.0 linux-x64 af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32 actions-runner-linux-x64-2.338.0.tar.gz
+bazelisk 1.29.0 linux-amd64 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992 bazelisk-linux-amd64

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // dataFormatPGCopy is the PostgreSQL text COPY format. NULL is the two
@@ -100,7 +101,24 @@ func newerBackup(candidate, existing string) bool {
 	if existing == "" {
 		return true
 	}
+	candidateTime, candidateOK := backupTime(candidate)
+	existingTime, existingOK := backupTime(existing)
+	if candidateOK && existingOK && !candidateTime.Equal(existingTime) {
+		return candidateTime.After(existingTime)
+	}
 	return candidate > existing
+}
+
+func backupTime(name string) (time.Time, bool) {
+	for _, layout := range []string{"20060102T150405.000Z", "20060102T150405Z"} {
+		if t, err := time.Parse(layout, name); err == nil {
+			return t, true
+		}
+	}
+	if i := strings.IndexByte(name, '-'); i > 0 {
+		return backupTime(name[:i])
+	}
+	return time.Time{}, false
 }
 
 // zoneObjectNames matches a zone target to one database. "shop" does not

@@ -278,10 +278,10 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 		t.Fatalf("schema differs\nSOURCE:\n%s\nTARGET:\n%s", srcSchema, dstSchema)
 	}
 	if _, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest")); err == nil {
-		t.Fatal("second restore merged into a non-empty database")
+		t.Fatal("restore did not refuse a swap blocked by dependent views")
 	}
 	sql(t, bin, dstAddr, true, `CREATE TABLE shop.public.keeper (id INT PRIMARY KEY); INSERT INTO shop.public.keeper VALUES (7);`)
-	forced := runTool(t, tool, "restore", "--json", "--force", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
+	forced := runTool(t, tool, "restore", "--json", "--force=in-place", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
 	var fres RestoreResult
 	if err := json.Unmarshal(forced, &fres); err != nil {
 		t.Fatalf("force restore json: %v\n%s", err, forced)
@@ -537,6 +537,7 @@ func assertS3Import(t *testing.T, bin, tool, srcURL, dstURL, dstAddr string) {
 		"--url", srcURL, "--dest", "s3://lab/fgdb", "--name", "shop",
 		"--database", "audit",
 		"--compression", "none",
+		"--allow-unsafe-overwrite",
 		"--s3-endpoint", srv.URL, "--s3-region", "us-east-1",
 		"--part-size", "5242880")
 	var s3res BackupResult
@@ -546,13 +547,14 @@ func assertS3Import(t *testing.T, bin, tool, srcURL, dstURL, dstAddr string) {
 	if !s3res.OK {
 		t.Fatalf("s3 backup: %s", s3res.Error)
 	}
-	_ = runTool(t, tool, "verify", "--json", "--src", "s3://lab/fgdb/shop/latest", "--s3-endpoint", srv.URL, "--s3-region", "us-east-1")
+	_ = runTool(t, tool, "verify", "--json", "--src", "s3://lab/fgdb/shop/latest", "--allow-unsafe-overwrite", "--s3-endpoint", srv.URL, "--s3-region", "us-east-1")
 	sql(t, bin, dstAddr, true, `DROP DATABASE IF EXISTS audit CASCADE;`)
 	s3restore := runTool(t, tool, "restore", "--json",
 		"--url", dstURL,
 		"--src", "s3://lab/fgdb/shop/latest",
 		"--s3-endpoint", srv.URL,
 		"--s3-region", "us-east-1",
+		"--allow-unsafe-overwrite",
 		"--s3-import-auth", "specified",
 		"--load", "import")
 	var s3r RestoreResult

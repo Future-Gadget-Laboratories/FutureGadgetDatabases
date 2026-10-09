@@ -34,6 +34,7 @@ func TestS3Multipart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.AllowUnsafeOverwrite = true
 	store, err := openStore(context.Background(), loc)
 	if err != nil {
 		t.Fatal(err)
@@ -164,6 +165,7 @@ func TestS3LatestUsesConfiguredEncryption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.AllowUnsafeOverwrite = true
 	store, err := openStore(context.Background(), loc)
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +184,38 @@ func TestS3LatestUsesConfiguredEncryption(t *testing.T) {
 	}
 }
 
+func TestS3ConditionalWriteProbe(t *testing.T) {
+	var present bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			if present && r.Header.Get("If-None-Match") == "*" {
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return
+			}
+			present = true
+			w.Header().Set("ETag", `"probe"`)
+			w.WriteHeader(http.StatusOK)
+		case http.MethodDelete:
+			present = false
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("AWS_ACCESS_KEY_ID", "testkey")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "testsecret")
+	t.Setenv("AWS_REGION", "us-east-1")
+	loc, err := parseLocation("s3://lab/fgdb", "us-east-1", server.URL, "", "", "specified")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openStore(context.Background(), loc); err != nil {
+		t.Fatalf("conditional-write endpoint was rejected: %v", err)
+	}
+}
+
 func fakeS3(t *testing.T) Store {
 	t.Helper()
 	backend := s3mem.New()
@@ -197,6 +231,7 @@ func fakeS3(t *testing.T) Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.AllowUnsafeOverwrite = true
 	store, err := openStore(context.Background(), loc)
 	if err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.58.3
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/johannesboyne/gofakes3 v0.0.0-20240925065519-a68d829de322
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

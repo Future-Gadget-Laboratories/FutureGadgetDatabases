@@ -1,0 +1,23 @@
+# Settings for setup-runner.sh.
+# This is a short list of "key: value" lines, plus the allowed_filesystems
+# list below. It is not a general YAML file. Blank lines and comments are
+# ignored. See docs/fgdb/runner-config.md for the rules and the value checks.
+#
+# A command-line flag overrides the matching setting in this file.
+# This file overrides the FGDB_* environment variables.
+# Those variables override the built-in defaults.
+# auto_update has no flag. It stays on unless you set false here.
+auto_update: true
+cache_path: /var/cache/fgdb
+allowed_filesystems:
+  - ext4
+  - xfs
+  - btrfs
+  - zfs
+local_cpu: 24
+local_ram_mb: 81920
+cpu_quota: 2400%
+memory_high: 80G
+memory_max: 96G
+runner_version: 2.338.0
+bazelisk_version: 1.29.0

@@ -7,11 +7,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -24,28 +25,35 @@ import (
 )
 
 const (
-	minPartSize = 5 << 20
-	maxS3Parts  = 10000
+	minPartSize       = 5 << 20
+	maxS3Parts        = 10000
+	ifNoneMatchHeader = "If-None-Match"
 )
 
 type s3Store struct {
-	client     *s3.Client
-	cfg        aws.Config
-	bucket     string
-	root       string
-	region     string
-	endpoint   string
-	sse        types.ServerSideEncryption
-	kmsKeyID   string
-	partSize   int
-	maxParts   int
-	importAuth string
+	client      *s3.Client
+	cfg         aws.Config
+	bucket      string
+	root        string
+	region      string
+	endpoint    string
+	sse         types.ServerSideEncryption
+	kmsKeyID    string
+	partSize    int
+	maxParts    int
+	importAuth  string
+	allowUnsafe bool
 }
 
 func newS3Store(ctx context.Context, loc Location) (*s3Store, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(loc.Region))
 	if err != nil {
 		return nil, err
+	}
+	if credentials, credentialErr := cfg.Credentials.Retrieve(ctx); credentialErr != nil {
+		logf("s3: could not determine credential source: %s", scrubSecrets(credentialErr.Error()))
+	} else {
+		logf("s3: credentials from %s", credentials.Source)
 	}
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		if loc.Endpoint != "" {
@@ -54,15 +62,16 @@ func newS3Store(ctx context.Context, loc Location) (*s3Store, error) {
 		}
 	})
 	st := &s3Store{
-		client:     client,
-		cfg:        cfg,
-		bucket:     loc.Bucket,
-		root:       strings.Trim(loc.Root, "/"),
-		region:     loc.Region,
-		endpoint:   loc.Endpoint,
-		partSize:   8 << 20,
-		maxParts:   maxS3Parts,
-		importAuth: loc.ImportAuth,
+		client:      client,
+		cfg:         cfg,
+		bucket:      loc.Bucket,
+		root:        strings.Trim(loc.Root, "/"),
+		region:      loc.Region,
+		endpoint:    loc.Endpoint,
+		partSize:    8 << 20,
+		maxParts:    maxS3Parts,
+		importAuth:  loc.ImportAuth,
+		allowUnsafe: loc.AllowUnsafeOverwrite,
 	}
 	switch loc.SSE {
 	case "AES256":
@@ -70,6 +79,9 @@ func newS3Store(ctx context.Context, loc Location) (*s3Store, error) {
 	case "aws:kms":
 		st.sse = types.ServerSideEncryptionAwsKms
 		st.kmsKeyID = loc.KMSKeyID
+	}
+	if err := st.checkConditionalWrites(ctx); err != nil {
+		return nil, err
 	}
 	return st, nil
 }
@@ -97,10 +109,11 @@ func (s *s3Store) applySSE(sse *types.ServerSideEncryption, kms **string) {
 
 func (s *s3Store) Create(ctx context.Context, rel string) (io.WriteCloser, error) {
 	return &s3Writer{
-		ctx:   ctx,
-		store: s,
-		key:   s.key(rel),
-		parts: newPartWriter(s.partSize, nil),
+		ctx:      ctx,
+		store:    s,
+		key:      s.key(rel),
+		parts:    newPartWriter(s.partSize, nil),
+		checksum: sha256.New(),
 	}, nil
 }
 
@@ -113,13 +126,18 @@ type s3Writer struct {
 	done     []types.CompletedPart
 	putDone  bool
 	closed   bool
+	checksum hash.Hash
 }
 
 func (w *s3Writer) Write(p []byte) (int, error) {
 	if w.parts.flush == nil {
 		w.parts.flush = w.flush
 	}
-	return w.parts.Write(p)
+	n, err := w.parts.Write(p)
+	if n > 0 {
+		_, _ = w.checksum.Write(p[:n])
+	}
+	return n, err
 }
 
 func (s *s3Store) partLimit() int {
@@ -173,8 +191,12 @@ func (w *s3Writer) put(part []byte) error {
 		Body:   bytes.NewReader(part),
 	}
 	w.store.applySSE(&in.ServerSideEncryption, &in.SSEKMSKeyId)
-	_, err := w.store.client.PutObject(w.ctx, in)
+	_, err := w.store.client.PutObject(w.ctx, in, putHeader(ifNoneMatchHeader, "*"))
 	if err != nil {
+		if isPreconditionFailed(err) && w.store.objectMatches(w.ctx, w.key, sha256Bytes(part)) {
+			w.putDone = true
+			return nil
+		}
 		return err
 	}
 	w.putDone = true
@@ -282,12 +304,78 @@ func (w *s3Writer) Close() error {
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: w.done,
 		},
-	})
+	}, putHeader(ifNoneMatchHeader, "*"))
 	if err != nil {
+		if isPreconditionFailed(err) && w.store.objectMatches(w.ctx, w.key, w.checksum.Sum(nil)) {
+			return nil
+		}
 		_ = w.abort()
 		return err
 	}
 	return nil
+}
+
+func sha256Bytes(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return sum[:]
+}
+
+func (s *s3Store) objectMatches(ctx context.Context, key string, want []byte) bool {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return false
+	}
+	defer out.Body.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, out.Body); err != nil {
+		return false
+	}
+	return bytes.Equal(h.Sum(nil), want)
+}
+
+func (s *s3Store) checkConditionalWrites(ctx context.Context) error {
+	key := s.key(".fgdb-if-none-match-" + newBackupID(time.Now()))
+	body := bytes.NewReader([]byte("probe"))
+	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   body,
+	}, putHeader(ifNoneMatchHeader, "*")); err != nil {
+		return fmt.Errorf("check S3 conditional writes: %w", err)
+	}
+	defer func() {
+		_, _ = s.client.DeleteObject(context.WithoutCancel(ctx), &s3.DeleteObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		})
+	}()
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader([]byte("probe")),
+	}, putHeader(ifNoneMatchHeader, "*"))
+	if err == nil {
+		if s.allowUnsafe {
+			logf("S3 endpoint does not enforce If-None-Match; unsafe overwrite mode is enabled")
+			return nil
+		}
+		return fmt.Errorf("S3 endpoint does not enforce If-None-Match; set allow_unsafe_overwrite only when overwrites are acceptable")
+	}
+	if !isPreconditionFailed(err) {
+		return fmt.Errorf("S3 conditional write probe failed: %w", err)
+	}
+	return nil
+}
+
+func isPreconditionFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "412") || strings.Contains(msg, "preconditionfailed")
 }
 
 func (s *s3Store) Open(ctx context.Context, rel string) (io.ReadCloser, error) {
@@ -324,6 +412,14 @@ func (s *s3Store) Exists(ctx context.Context, rel string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+func (s *s3Store) delete(ctx context.Context, rel string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(rel)),
+	})
+	return err
 }
 
 func (s *s3Store) ListManifests(ctx context.Context, rel string) ([]string, error) {
@@ -396,8 +492,8 @@ func isNotFound(err error) bool {
 // process putting credentials in the IMPORT statement.
 func (s *s3Store) implicitImport() bool {
 	auth := s.importAuth
-	if auth == "" || auth == "auto" {
-		return os.Getenv("AWS_ACCESS_KEY_ID") == ""
+	if auth == "" || auth == "auto" || auth == "served" || auth == "specified" {
+		return false
 	}
 	return auth == "implicit"
 }
@@ -444,7 +540,7 @@ func (s *s3Store) putLatest(ctx context.Context, rel string, ptr LatestPointer) 
 			logf("leaving latest at %s; %s is not newer", existing, ptr.Timestamp)
 			return nil
 		}
-		header, value := "If-None-Match", "*"
+		header, value := ifNoneMatchHeader, "*"
 		if found {
 			header, value = "If-Match", etag
 		}
