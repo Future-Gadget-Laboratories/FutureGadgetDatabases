@@ -339,7 +339,7 @@ SELECT md5(string_agg(
   id::STRING || ':' ||
   coalesce(raw::STRING, '<null>') || ':' ||
   amount::STRING || ':' ||
-  label || ':' ||
+  label::STRING || ':' ||
   coalesce(doc::STRING, '<null>') || ':' ||
   values::STRING,
   ',' ORDER BY id
