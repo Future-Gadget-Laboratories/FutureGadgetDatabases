@@ -148,6 +148,9 @@ func remapObjectsOnce(objects ObjectsFile, oldName, newName string) ObjectsFile 
 	out.Statements = remapStatements(out.Statements, oldName, newName)
 	out.SequenceValues = append([]SequenceValue(nil), objects.SequenceValues...)
 	for i := range out.SequenceValues {
+		if out.SequenceValues[i].Database != oldName {
+			continue
+		}
 		out.SequenceValues[i].Database = newName
 		out.SequenceValues[i].Object = rewriteDatabaseName(out.SequenceValues[i].Object, oldName, newName)
 		out.SequenceValues[i].SQL = sequenceRestoreSQLForDatabase(out.SequenceValues[i])
@@ -155,6 +158,9 @@ func remapObjectsOnce(objects ObjectsFile, oldName, newName string) ObjectsFile 
 	out.Grants = rewriteList(out.Grants, oldName, newName)
 	out.Zones = append([]ZoneStatement(nil), objects.Zones...)
 	for i := range out.Zones {
+		if out.Zones[i].Database != oldName {
+			continue
+		}
 		out.Zones[i].Database = newName
 		out.Zones[i].Object = rewriteDatabaseName(out.Zones[i].Object, oldName, newName)
 		out.Zones[i].SQL = rewriteDatabaseName(out.Zones[i].SQL, oldName, newName)
