@@ -34,8 +34,8 @@ func swapNames(ctx context.Context, db *database, name string) (string, error) {
 }
 
 func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions, res RestoreResult, plan RestorePlan) (RestoreResult, error) {
-	if len(plan.Swap) == 0 || len(plan.Swap) != len(selected) {
-		return res, fmt.Errorf("swap restore requires every selected database to pass the preflight")
+	if len(plan.Swap) == 0 {
+		return res, fmt.Errorf("swap restore has no database eligible for swapping")
 	}
 	names := map[string]string{}
 	oldCopies := map[string]string{}
@@ -46,6 +46,11 @@ func restoreAsideAndSwap(ctx context.Context, db *database, bundle restoreBundle
 		}
 		names[oldName] = tempName
 		oldCopies[oldName] = oldName + "__fgdb_old_" + time.Now().UTC().Format("20060102T150405")
+	}
+	for oldName := range selected {
+		if _, ok := names[oldName]; !ok {
+			names[oldName] = oldName
+		}
 	}
 	tempBundle := remapBundleNames(bundle, names)
 	tempSelected := make(map[string]bool, len(names))
