@@ -547,7 +547,7 @@ func assertS3Import(t *testing.T, bin, tool, srcURL, dstURL, dstAddr string) {
 	if !s3res.OK {
 		t.Fatalf("s3 backup: %s", s3res.Error)
 	}
-	_ = runTool(t, tool, "verify", "--json", "--src", "s3://lab/fgdb/shop/latest", "--s3-endpoint", srv.URL, "--s3-region", "us-east-1")
+	_ = runTool(t, tool, "verify", "--json", "--src", "s3://lab/fgdb/shop/latest", "--allow-unsafe-overwrite", "--s3-endpoint", srv.URL, "--s3-region", "us-east-1")
 	sql(t, bin, dstAddr, true, `DROP DATABASE IF EXISTS audit CASCADE;`)
 	s3restore := runTool(t, tool, "restore", "--json",
 		"--url", dstURL,
