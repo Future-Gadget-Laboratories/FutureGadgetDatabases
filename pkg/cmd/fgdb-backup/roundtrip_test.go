@@ -537,6 +537,7 @@ func assertS3Import(t *testing.T, bin, tool, srcURL, dstURL, dstAddr string) {
 		"--url", srcURL, "--dest", "s3://lab/fgdb", "--name", "shop",
 		"--database", "audit",
 		"--compression", "none",
+		"--allow-unsafe-overwrite",
 		"--s3-endpoint", srv.URL, "--s3-region", "us-east-1",
 		"--part-size", "5242880")
 	var s3res BackupResult
@@ -553,6 +554,7 @@ func assertS3Import(t *testing.T, bin, tool, srcURL, dstURL, dstAddr string) {
 		"--src", "s3://lab/fgdb/shop/latest",
 		"--s3-endpoint", srv.URL,
 		"--s3-region", "us-east-1",
+		"--allow-unsafe-overwrite",
 		"--s3-import-auth", "specified",
 		"--load", "import")
 	var s3r RestoreResult

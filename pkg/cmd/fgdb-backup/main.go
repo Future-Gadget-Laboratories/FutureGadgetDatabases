@@ -145,6 +145,7 @@ func cmdBackup(args []string) int {
 		s3AuthDefault = "auto"
 	}
 	s3Auth := fs.String("s3-import-auth", s3AuthDefault, "S3 credential mode: auto, implicit, specified, or served")
+	allowUnsafe := fs.Bool("allow-unsafe-overwrite", configBool(cfg.Backup.AllowUnsafeOverwrite, false), "allow S3 destinations that ignore If-None-Match")
 	extend := fs.String(flagExtendGCTTL, "", "temporarily raise gc.ttlseconds for this run, for example 12h")
 	split := fs.Int(flagSplitRows, 0, "split integer-primary-key tables into ranges of this many rows")
 	part := fs.Int(flagPartSize, 8<<20, "S3 multipart part size in bytes (minimum 5242880)")
@@ -192,7 +193,7 @@ func cmdBackup(args []string) int {
 	if err != nil {
 		return fail(*asJSON, err)
 	}
-	loc.AllowUnsafeOverwrite = configBool(cfg.Backup.AllowUnsafeOverwrite, false)
+	loc.AllowUnsafeOverwrite = *allowUnsafe
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	res, err := runBackup(ctx, BackupOptions{
@@ -261,6 +262,7 @@ func cmdRestore(args []string) int {
 		importAuthDefault = "auto"
 	}
 	importAuth := fs.String("s3-import-auth", importAuthDefault, "how the database reads S3: auto, implicit, specified, or served")
+	allowUnsafe := fs.Bool("allow-unsafe-overwrite", configBool(cfg.Restore.AllowUnsafeOverwrite, false), "allow S3 destinations that ignore If-None-Match")
 	swap := fs.Bool("swap-restore", configBool(cfg.Restore.SwapRestore, true), "restore beside an existing database and swap names when possible")
 	retention := fs.Int("retention", configInt(cfg.Restore.Retention, 1), "number of old swapped database copies to keep")
 	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
@@ -287,7 +289,7 @@ func cmdRestore(args []string) int {
 	if err != nil {
 		return fail(*asJSON, err)
 	}
-	loc.AllowUnsafeOverwrite = configBool(cfg.Restore.AllowUnsafeOverwrite, false)
+	loc.AllowUnsafeOverwrite = *allowUnsafe
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	res, err := runRestore(ctx, RestoreOptions{

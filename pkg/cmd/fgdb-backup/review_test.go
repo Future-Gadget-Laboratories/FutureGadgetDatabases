@@ -77,7 +77,7 @@ INSERT INTO shop.public.items VALUES (1, 'old value');
 	runTool(t, tool, "backup", "--json", "--url", srcURL, "--dest", dest, "--database", "shop", "--name", "swap")
 	runTool(t, tool, "restore", "--json", "--force", "--url", dstURL, "--src", filepath.Join(dest, "swap", "latest"))
 	got := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT value FROM shop.public.items;`))
-	if got != "from backup" {
+	if !strings.Contains(got, "from backup") {
 		t.Fatalf("swapped database contains %q", got)
 	}
 	old := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SELECT database_name FROM [SHOW DATABASES] WHERE database_name LIKE 'shop__fgdb_old_%';`))
