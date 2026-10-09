@@ -447,6 +447,23 @@ func TestArrayStreamMatchesLineRewriter(t *testing.T) {
 	}
 }
 
+func TestArrayStreamMultipleArrayColumns(t *testing.T) {
+	input := "1\t" + escapePGCopy(`ARRAY['1',NULL,'2']::INT[]`) + "\t" +
+		escapePGCopy(`ARRAY['a',NULL,'b,c','d''e',e'a\\b']::TEXT[]`) + "\n"
+	got, err := io.ReadAll(newArrayStreamReader(strings.NewReader(input), []string{"", "INT[]", "TEXT[]"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []byte
+	want, err = rewriteArrayLine([]byte(input), []string{"", "INT[]", "TEXT[]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func FuzzArrayStreamMatchesReference(f *testing.F) {
 	f.Add("alpha")
 	f.Add("quote ' and slash \\")

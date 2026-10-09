@@ -135,6 +135,12 @@ func (r *arrayStreamReader) rawArray(b byte) error {
 
 func (r *arrayStreamReader) decodeEscape(b byte) error {
 	r.escaped = false
+	if b == 'N' && r.arrayMode == streamPrefix && r.prefix == "" {
+		r.array = false
+		r.emit('\\')
+		r.emit('N')
+		return nil
+	}
 	if mapped, ok := pgCopySimpleEscape(b); ok {
 		return r.arrayByte(mapped)
 	}
