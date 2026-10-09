@@ -207,6 +207,10 @@ func planDatabase(ctx context.Context, db *database, objects ObjectsFile, name s
 	if len(result.reasons) > 0 || force {
 		return result, nil
 	}
+	if err := databaseRenameBlocked(ctx, db, name); err != nil {
+		result.reasons = append(result.reasons, err.Error())
+		return result, nil
+	}
 	temp, err := swapNames(ctx, db, name)
 	if err != nil {
 		result.reasons = append(result.reasons, err.Error())
@@ -215,6 +219,19 @@ func planDatabase(ctx context.Context, db *database, objects ObjectsFile, name s
 	result.swap = name
 	result.checks = append(result.checks, fmt.Sprintf("database %s can be restored beside the existing copy as %s", name, temp))
 	return result, nil
+}
+
+func databaseRenameBlocked(ctx context.Context, db *database, name string) error {
+	rels, err := listRelations(ctx, db)
+	if err != nil {
+		return err
+	}
+	for _, rel := range rels {
+		if rel.Type == "view" || rel.Type == "materialized view" {
+			return fmt.Errorf("database %s cannot be renamed safely while %s.%s is present", name, rel.Schema, rel.Name)
+		}
+	}
+	return nil
 }
 
 func dependencyReasons(ctx context.Context, db *database, objects ObjectsFile, name string) []string {

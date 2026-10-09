@@ -277,14 +277,8 @@ func restoreAndCompare(t *testing.T, pair clusterPair) {
 	if srcSchema != dstSchema {
 		t.Fatalf("schema differs\nSOURCE:\n%s\nTARGET:\n%s", srcSchema, dstSchema)
 	}
-	second := runTool(t, tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
-	var secondRes RestoreResult
-	if err := json.Unmarshal(second, &secondRes); err != nil || !secondRes.OK {
-		t.Fatalf("default swap restore failed: %v %#v", err, secondRes)
-	}
-	oldCopies := strings.TrimSpace(sqlOut(t, bin, dstAddr, true, `SHOW DATABASES;`))
-	if !strings.Contains(oldCopies, "shop__fgdb_old_") {
-		t.Fatalf("swap restore did not keep the old database:\n%s", oldCopies)
+	if _, err := runToolErr(tool, "restore", "--json", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest")); err == nil {
+		t.Fatal("restore did not refuse a swap blocked by dependent views")
 	}
 	sql(t, bin, dstAddr, true, `CREATE TABLE shop.public.keeper (id INT PRIMARY KEY); INSERT INTO shop.public.keeper VALUES (7);`)
 	forced := runTool(t, tool, "restore", "--json", "--force", "--url", dstURL, "--src", filepath.Join(dest, "lab", "latest"))
