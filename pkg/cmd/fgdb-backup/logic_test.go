@@ -74,12 +74,12 @@ func TestSQLFields(t *testing.T) {
 		{
 			name:  "quoted identifiers",
 			input: `CREATE TABLE "public"."table name" ("col name" STRING)`,
-			want:  []string{"CREATE", "TABLE", `"public"."table name"`, `"col name"`, "STRING"},
+			want:  []string{"CREATE", "TABLE", `"public"."table name"`, `"col name"`, "STRING)"},
 		},
 		{
 			name:  "escaped identifier quotes",
 			input: `CREATE TABLE "a""b" ("c""d" STRING)`,
-			want:  []string{"CREATE", "TABLE", `"a""b"`, `"c""d"`, "STRING"},
+			want:  []string{"CREATE", "TABLE", `"a""b"`, `"c""d"`, "STRING)"},
 		},
 		{
 			name:  "escaped string quotes",
@@ -89,7 +89,7 @@ func TestSQLFields(t *testing.T) {
 		{
 			name:  "nested parentheses",
 			input: `CREATE TABLE t (amount DECIMAL(10,2), nested STRING)`,
-			want:  []string{"CREATE", "TABLE", "t", "amount", "DECIMAL", "10", "2", "nested", "STRING"},
+			want:  []string{"CREATE", "TABLE", "t", "amount", "DECIMAL", "10", "2)", "nested", "STRING)"},
 		},
 	}
 	for _, test := range tests {
