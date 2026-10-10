@@ -911,14 +911,22 @@ func serveLocalBackup(req importRequest) (string, func(), <-chan error, error) {
 	return startImportServer(ln, token, req)
 }
 
+// listenTCP opens the import file server socket. Tests replace it so a
+// hostname can resolve to an unspecified address without a DNS lookup.
+var listenTCP = net.Listen
+
 func listenImport(opt RestoreOptions) (net.Listener, error) {
 	addr := bindAddress(opt)
 	if err := refuseWildcardBind(addr, opt.ServeAdvertise); err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenTCP("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen for IMPORT: %w", err)
+	}
+	if err := refuseListenedWildcard(ln, addr, opt.ServeAdvertise); err != nil {
+		_ = ln.Close()
+		return nil, err
 	}
 	wrapped, err := maybeTLSListener(ln, opt)
 	if err != nil {
@@ -942,6 +950,22 @@ func refuseWildcardBind(addr, advertise string) error {
 	if advertise != "" || !wildcardHost(bindHost(addr)) {
 		return nil
 	}
+	return wildcardBindError(addr)
+}
+
+func refuseListenedWildcard(ln net.Listener, addr, advertise string) error {
+	if advertise != "" || !listenedUnspecified(ln) {
+		return nil
+	}
+	return wildcardBindError(addr)
+}
+
+func listenedUnspecified(ln net.Listener) bool {
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	return ok && tcp != nil && tcp.IP.IsUnspecified()
+}
+
+func wildcardBindError(addr string) error {
 	return fmt.Errorf("refusing to bind %s; pass --%s with an address the database nodes can reach", addr, flagServeAdvertise)
 }
 

@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -290,6 +291,117 @@ func TestWildcardBindNeedsAdvertise(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvedHostnameWildcardNeedsAdvertise(t *testing.T) {
+	made := useResolvedListen(t)
+	dir := t.TempDir()
+	for _, tt := range []struct {
+		name    string
+		opt     RestoreOptions
+		bind    string
+		wantErr bool
+	}{
+		{name: "serve-addr ipv4", opt: RestoreOptions{ServeAddr: "wild4.example:8080", ImportListen: defaultImportListen}, bind: "wild4.example:8080", wantErr: true},
+		{name: "import-listen ipv4", opt: RestoreOptions{ImportListen: "wild4.example:8080"}, bind: "wild4.example:8080", wantErr: true},
+		{name: "serve-addr ipv6", opt: RestoreOptions{ServeAddr: "wild6.example:8080", ImportListen: defaultImportListen}, bind: "wild6.example:8080", wantErr: true},
+		{name: "import-listen ipv6", opt: RestoreOptions{ImportListen: "wild6.example:8080"}, bind: "wild6.example:8080", wantErr: true},
+		{name: "serve-addr advertised", opt: RestoreOptions{ServeAddr: "wild4.example:8080", ServeAdvertise: "192.0.2.10", ImportListen: defaultImportListen}, bind: "wild4.example:8080"},
+		{name: "import-listen advertised", opt: RestoreOptions{ImportListen: "wild6.example:8080", ServeAdvertise: "192.0.2.10"}, bind: "wild6.example:8080"},
+		{name: "serve-addr specific", opt: RestoreOptions{ServeAddr: "specific.example:8080", ImportListen: defaultImportListen}, bind: "specific.example:8080"},
+		{name: "import-listen specific", opt: RestoreOptions{ImportListen: "specific.example:8080"}, bind: "specific.example:8080"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := len(*made)
+			if tt.wantErr {
+				assertResolvedWildcardRefused(t, dir, tt.opt, tt.bind, made, before)
+				return
+			}
+			ln, err := listenImport(tt.opt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(*made) == before || (*made)[len(*made)-1].closed {
+				t.Fatal("specific listener was closed or not opened")
+			}
+			ln.Close()
+		})
+	}
+}
+
+func assertResolvedWildcardRefused(t *testing.T, dir string, opt RestoreOptions, bind string, made *[]*addrListener, before int) {
+	t.Helper()
+	base, closer, _, err := serveLocalBackup(importRequest{
+		store: &localStore{root: dir},
+		root:  Location{Kind: "file", Root: dir},
+		opt:   opt,
+	})
+	if closer != nil {
+		closer()
+	}
+	if base != "" {
+		t.Fatalf("url handed out: %s", base)
+	}
+	if err == nil || err.Error() != wildcardBindError(bind).Error() {
+		t.Fatalf("error = %v", err)
+	}
+	if len(*made) == before || !(*made)[len(*made)-1].closed {
+		t.Fatal("unspecified listener was left open")
+	}
+}
+
+func useResolvedListen(t *testing.T) *[]*addrListener {
+	t.Helper()
+	prev := listenTCP
+	var made []*addrListener
+	listenTCP = func(network, address string) (net.Listener, error) {
+		return resolvedListen(network, address, &made)
+	}
+	t.Cleanup(func() { listenTCP = prev })
+	return &made
+}
+
+func resolvedListen(network, address string, made *[]*addrListener) (net.Listener, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ip, ok := resolvedTestHost(host)
+	if !ok {
+		return net.Listen(network, address)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, err
+	}
+	ln := &addrListener{addr: &net.TCPAddr{IP: ip, Port: n}}
+	*made = append(*made, ln)
+	return ln, nil
+}
+
+func resolvedTestHost(host string) (net.IP, bool) {
+	switch host {
+	case "wild4.example":
+		return net.IPv4zero, true
+	case "wild6.example":
+		return net.IPv6unspecified, true
+	case "specific.example":
+		return net.ParseIP("192.0.2.10"), true
+	default:
+		return nil, false
+	}
+}
+
+type addrListener struct {
+	addr   *net.TCPAddr
+	closed bool
+}
+
+func (l *addrListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
+func (l *addrListener) Close() error {
+	l.closed = true
+	return nil
+}
+func (l *addrListener) Addr() net.Addr { return l.addr }
 
 func TestAdvertiseURLUsesBoundPort(t *testing.T) {
 	dir := t.TempDir()

@@ -282,8 +282,11 @@ address is a specific host, the default advertise address is that host and
 the port the server actually got. A bind that listens on every interface is
 refused unless you pass `--serve-advertise`. That includes an empty host
 (`:8080`), `0:8080`, `0.0.0.0`, `[::]`, `[::0]`, and any other spelling of an
-unspecified address. A URL that contains one of those addresses points each
-node at itself.
+unspecified address. A hostname on `--serve-addr` or `--import-listen` that
+resolves to one of those addresses is refused the same way. After the socket
+is open, the tool checks the address it actually got and closes it before
+building a URL. A URL that contains one of those addresses points each node
+at itself.
 
 ```bash
 fgdb-backup restore --url "$URL" --src /backups/app/latest \
