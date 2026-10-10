@@ -55,12 +55,17 @@ func usage() {
   fgdb-backup verify  --src  s3://bucket/prefix/name/latest
   fgdb-backup list    --src  s3://bucket/prefix/name
   fgdb-backup unlock  --dest s3://bucket/prefix --name name --yes
-  fgdb-backup prune   --url URL --name name [--keep 1]
+  fgdb-backup prune   --url URL --name name [--keep 1] [--dry-run]
 
 --url is a PostgreSQL connection URL. Put certificates in the URL:
   postgresql://root@host:26257/defaultdb?sslmode=verify-full&sslrootcert=ca.crt&sslcert=client.root.crt&sslkey=client.root.key
 
-Exit status is 0 on success, 1 on a failed backup or restore, and 2 on a bad command.
+Exit status:
+  0  the command finished
+  1  the command started, then failed
+  2  the command line is wrong
+  4  restore --plan refused the restore. A real restore that is refused exits 1.
+
 Use --json to print one JSON object on stdout. Progress lines go to stderr.
 `)
 }
@@ -74,12 +79,21 @@ const (
 	flagPartSize             = "part-size"
 	flagSafetyMargin         = "safety-margin"
 	flagJSON                 = "json"
+	flagServeAddr            = "serve-addr"
+	flagImportListen         = "import-listen"
+	flagServeAdvertise       = "serve-advertise"
+	flagServeTLSCert         = "serve-tls-cert"
+	flagServeTLSKey          = "serve-tls-key"
+
+	defaultImportListen = "127.0.0.1:0"
 
 	helpS3Region             = "S3 region. Default: AWS_REGION"
 	helpS3Endpoint           = "S3-compatible endpoint"
 	helpJSON                 = "print a JSON object on stdout"
 	helpPostgresURL          = "PostgreSQL connection URL"
 	helpAllowUnsafeOverwrite = "allow S3 destinations that ignore If-None-Match"
+	helpTestingMode          = "create a temporary probe table, copy one row into it, and drop it"
+	helpS3ImportAuth         = "S3 credential mode: " + s3ImportAuthList
 )
 
 type stringList []string
@@ -147,7 +161,7 @@ func cmdBackup(args []string) int {
 	if s3AuthDefault == "" {
 		s3AuthDefault = "auto"
 	}
-	s3Auth := fs.String("s3-import-auth", s3AuthDefault, "S3 credential mode: auto, implicit, specified, or served")
+	s3Auth := fs.String("s3-import-auth", s3AuthDefault, helpS3ImportAuth)
 	allowUnsafe := fs.Bool(flagAllowUnsafeOverwrite, configBool(cfg.Backup.AllowUnsafeOverwrite, false), helpAllowUnsafeOverwrite)
 	extend := fs.String(flagExtendGCTTL, "", "temporarily raise gc.ttlseconds for this run, for example 12h")
 	split := fs.Int(flagSplitRows, 0, "split integer-primary-key tables into ranges of this many rows")
@@ -172,64 +186,116 @@ func cmdBackup(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *urlStr == "" || *dest == "" || fs.NArg() != 0 {
+	return runParsedBackup(parsedBackup{
+		url: *urlStr, dest: *dest, name: *name, compression: *compression,
+		sse: *sse, kms: *kms, region: *region, endpoint: *endpoint, s3Auth: *s3Auth,
+		extend: *extend, lock: *lock, databases: dbs, allowUnsafe: *allowUnsafe,
+		skipGrants: *skipGrants, asJSON: *asJSON, split: *split, part: *part,
+		margin: *margin, lockWait: *lockWait, lockLease: *lockLease,
+		threads: *threads, memoryBytes: *memoryBytes, fileMode: cfg.Backup.FileMode,
+		cfgPath: cfgPath, extra: fs.NArg(),
+	})
+}
+
+type parsedBackup struct {
+	url, dest, name, compression    string
+	sse, kms, region, endpoint      string
+	s3Auth, extend, lock, fileMode  string
+	cfgPath                         string
+	databases                       []string
+	allowUnsafe, skipGrants, asJSON bool
+	split, part, threads, extra     int
+	memoryBytes                     int64
+	margin, lockWait, lockLease     time.Duration
+}
+
+func runParsedBackup(flag parsedBackup) int {
+	if flag.url == "" || flag.dest == "" || flag.extra != 0 {
 		usage()
 		return 2
 	}
-	applyResourceCaps(*threads, *memoryBytes)
-	var extendDur time.Duration
-	if *extend != "" {
-		var err error
-		extendDur, err = time.ParseDuration(*extend)
-		if err != nil {
-			return fail(*asJSON, fmt.Errorf("--extend-gc-ttl: %w", err))
-		}
-	}
-	if *lock != "on" && *lock != "off" {
-		return fail(*asJSON, fmt.Errorf("--lock must be on or off"))
-	}
-	loc, err := parseLocation(*dest, *region, *endpoint, *sse, *kms, *s3Auth)
+	applyResourceCaps(flag.threads, flag.memoryBytes)
+	extendDur, err := backupExtend(flag.extend)
 	if err != nil {
-		return fail(*asJSON, err)
+		return fail(flag.asJSON, err)
 	}
-	loc.FileMode, err = configuredFileMode(cfg.Backup.FileMode)
+	if err := requireLockMode(flag.lock); err != nil {
+		return fail(flag.asJSON, err)
+	}
+	loc, err := backupWriteLocation(flag)
 	if err != nil {
-		return fail(*asJSON, err)
+		return fail(flag.asJSON, err)
 	}
-	loc.AllowUnsafeOverwrite = *allowUnsafe
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	return emitBackup(flag, ctx, loc, extendDur)
+}
+
+func backupExtend(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("--extend-gc-ttl: %w", err)
+	}
+	return d, nil
+}
+
+func requireLockMode(lock string) error {
+	if lock != "on" && lock != "off" {
+		return fmt.Errorf("--lock must be on or off")
+	}
+	return nil
+}
+
+func backupWriteLocation(flag parsedBackup) (Location, error) {
+	loc, err := parseLocation(flag.dest, flag.region, flag.endpoint, flag.sse, flag.kms, flag.s3Auth)
+	if err != nil {
+		return Location{}, err
+	}
+	loc.FileMode, err = configuredFileMode(flag.fileMode)
+	if err != nil {
+		return Location{}, err
+	}
+	loc.AllowUnsafeOverwrite = flag.allowUnsafe
+	loc.ProbeConditionalWrites = true
+	return loc, nil
+}
+
+func emitBackup(flag parsedBackup, ctx context.Context, loc Location, extendDur time.Duration) int {
 	res, err := runBackup(ctx, BackupOptions{
-		URL:          *urlStr,
-		Dest:         loc,
-		Databases:    dbs,
-		Name:         *name,
-		Compression:  *compression,
-		SplitRows:    *split,
-		PartSize:     *part,
-		SafetyMargin: *margin,
-		ExtendGCTTL:  extendDur,
-		SkipGrants:   *skipGrants,
-		JSON:         *asJSON,
-		Lock:         *lock == "on",
-		LockWait:     *lockWait,
-		LockLease:    *lockLease,
-		ConfigPath:   cfgPath,
+		URL: flag.url, Dest: loc, Databases: flag.databases, Name: flag.name,
+		Compression: flag.compression, SplitRows: flag.split, PartSize: flag.part,
+		SafetyMargin: flag.margin, ExtendGCTTL: extendDur, SkipGrants: flag.skipGrants,
+		JSON: flag.asJSON, Lock: flag.lock == "on", LockWait: flag.lockWait,
+		LockLease: flag.lockLease, ConfigPath: flag.cfgPath,
 	})
 	if err != nil {
-		res.OK = false
-		if errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "could not restore gc.ttlseconds") {
-			err = fmt.Errorf("backup interrupted by signal; gc.ttlseconds was restored when this run had raised it")
-		}
-		if res.Error == "" {
-			res.Error = err.Error()
-		}
-		emit(*asJSON, res, false)
-		fmt.Fprintf(os.Stderr, "backup failed: %s\n", err)
-		return 1
+		return failBackup(flag.asJSON, res, err)
 	}
-	emit(*asJSON, res, true)
+	emit(flag.asJSON, res, true)
 	return 0
+}
+
+func failBackup(asJSON bool, res BackupResult, err error) int {
+	res.OK = false
+	if interruptedBackup(err) {
+		err = fmt.Errorf("backup interrupted by signal; gc.ttlseconds was restored when this run had raised it")
+	}
+	if res.Error == "" {
+		res.Error = err.Error()
+	}
+	emit(asJSON, res, false)
+	fmt.Fprintf(os.Stderr, "backup failed: %s\n", err)
+	return 1
+}
+
+func interruptedBackup(err error) bool {
+	if !errors.Is(err, context.Canceled) {
+		return false
+	}
+	return !strings.Contains(err.Error(), "could not restore gc.ttlseconds")
 }
 
 func cmdRestore(args []string) int {
@@ -254,82 +320,120 @@ func cmdRestore(args []string) int {
 	var force forceModeFlag
 	fs.Var(&force, "force", "force a non-empty restore; swap by default, or use --force=in-place as a last resort")
 	load := fs.String("load", "import", "import (IMPORT INTO) or copy (COPY FROM STDIN)")
-	listen := fs.String("import-listen", "127.0.0.1:0", "address the database dials when importing a local backup")
-	serveAddr := fs.String("serve-addr", "", "address used by the local import file server; remote clusters require an explicit non-loopback address")
-	serveTLSCert := fs.String("serve-tls-cert", "", "optional TLS certificate for the local import file server")
-	serveTLSKey := fs.String("serve-tls-key", "", "optional TLS private key for the local import file server")
+	listen := fs.String(flagImportListen, defaultImportListen, "address the database dials when importing a local backup")
+	serveAddr := fs.String(flagServeAddr, "", "address the local import file server binds; used instead of --"+flagImportListen+" when set")
+	serveAdvertise := fs.String(flagServeAdvertise, "", "host or host:port the database nodes dial; required when the bind address is 0.0.0.0 or [::]")
+	serveTLSCert := fs.String(flagServeTLSCert, "", "TLS certificate for the local import file server")
+	serveTLSKey := fs.String(flagServeTLSKey, "", "TLS private key for the local import file server")
 	region := fs.String(flagS3Region, "", helpS3Region)
 	endpoint := fs.String(flagS3Endpoint, "", helpS3Endpoint)
 	importAuthDefault := cfg.Restore.S3CredentialMode
 	if importAuthDefault == "" {
 		importAuthDefault = "auto"
 	}
-	importAuth := fs.String("s3-import-auth", importAuthDefault, "how the database reads S3: auto, implicit, specified, or served")
+	importAuth := fs.String("s3-import-auth", importAuthDefault, helpS3ImportAuth)
 	allowUnsafe := fs.Bool(flagAllowUnsafeOverwrite, configBool(cfg.Restore.AllowUnsafeOverwrite, false), helpAllowUnsafeOverwrite)
 	swap := fs.Bool("swap-restore", configBool(cfg.Restore.SwapRestore, true), "restore beside an existing database and swap names when possible")
 	retention := fs.Int("retention", configInt(cfg.Restore.Retention, 1), "number of old swapped database copies to keep")
 	plan := fs.Bool("plan", false, "show the restore preflight without changing the cluster")
 	planFormat := fs.String("plan-format", "text", "plan output: text or json")
-	testingMode := fs.Bool("testing-mode", configBool(cfg.Restore.TestingMode, false), "allow test-only S3 probes")
+	testingMode := fs.Bool("testing-mode", configBool(cfg.Restore.TestingMode, false), helpTestingMode)
 	threads := fs.Int("threads", configInt(cfg.Restore.Threads, 0), "maximum Go processor threads; 0 means no cap")
 	memoryBytes := fs.Int64("memory-bytes", configInt64(cfg.Restore.MemoryBytes, 0), "soft memory limit in bytes; 0 means no cap")
 	asJSON := fs.Bool(flagJSON, false, helpJSON)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *urlStr == "" || *src == "" || fs.NArg() != 0 {
-		usage()
-		return 2
-	}
-	applyResourceCaps(*threads, *memoryBytes)
-	if *asJSON && *plan {
-		*planFormat = "json"
-	}
-	if *planFormat != "text" && *planFormat != "json" {
-		return fail(*asJSON, fmt.Errorf("--plan-format must be text or json"))
-	}
-	loc, err := parseLocation(*src, *region, *endpoint, "", "", *importAuth)
+	format, err := planFormatValue(*asJSON, *plan, *planFormat)
 	if err != nil {
 		return fail(*asJSON, err)
 	}
-	loc.AllowUnsafeOverwrite = *allowUnsafe
+	return runParsedRestore(parsedRestore{
+		url: *urlStr, src: *src, databases: dbs, force: force, load: *load,
+		listen: *listen, serveAddr: *serveAddr, serveAdvertise: *serveAdvertise,
+		serveTLSCert: *serveTLSCert, serveTLSKey: *serveTLSKey,
+		region: *region, endpoint: *endpoint, importAuth: *importAuth,
+		allowUnsafe: *allowUnsafe, swap: *swap, plan: *plan, testingMode: *testingMode,
+		asJSON: *asJSON, retention: *retention, planFormat: format,
+		threads: *threads, memoryBytes: *memoryBytes,
+		yamlInPlace: configBool(cfg.Restore.InPlace, false),
+		cfgPath:     cfgPath, extra: fs.NArg(),
+	})
+}
+
+type parsedRestore struct {
+	url, src, load, listen, serveAddr, serveAdvertise string
+	serveTLSCert, serveTLSKey, region, endpoint       string
+	importAuth, planFormat, cfgPath                   string
+	databases                                         []string
+	force                                             forceModeFlag
+	allowUnsafe, swap, plan, testingMode, asJSON      bool
+	yamlInPlace                                       bool
+	retention, threads, extra                         int
+	memoryBytes                                       int64
+}
+
+func planFormatValue(asJSON, plan bool, format string) (string, error) {
+	if asJSON && plan {
+		format = "json"
+	}
+	if format != "text" && format != "json" {
+		return "", fmt.Errorf("--plan-format must be text or json")
+	}
+	return format, nil
+}
+
+func runParsedRestore(flag parsedRestore) int {
+	if flag.url == "" || flag.src == "" || flag.extra != 0 {
+		usage()
+		return 2
+	}
+	applyResourceCaps(flag.threads, flag.memoryBytes)
+	loc, err := parseLocation(flag.src, flag.region, flag.endpoint, "", "", flag.importAuth)
+	if err != nil {
+		return fail(flag.asJSON, err)
+	}
+	loc.AllowUnsafeOverwrite = flag.allowUnsafe
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	res, err := runRestore(ctx, RestoreOptions{
-		URL:          *urlStr,
-		Src:          loc.String(),
-		Location:     loc,
-		Databases:    dbs,
-		Force:        force.set,
-		InPlace:      force.value == "in-place" || (!force.set && configBool(cfg.Restore.InPlace, false)),
-		Load:         *load,
-		ImportListen: *listen,
-		ServeAddr:    *serveAddr,
-		ServeTLSCert: *serveTLSCert,
-		ServeTLSKey:  *serveTLSKey,
-		JSON:         *asJSON,
-		Plan:         *plan,
-		PlanFormat:   *planFormat,
-		SwapRestore:  *swap,
-		Retention:    *retention,
-		TestingMode:  *testingMode,
-		ConfigPath:   cfgPath,
-	})
+	res, err := runRestore(ctx, restoreOptionsFromFlags(flag, loc))
 	if err != nil {
-		res.OK = false
-		if res.Error == "" {
-			res.Error = err.Error()
-		}
-		emit(*asJSON, res, false)
-		fmt.Fprintf(os.Stderr, "restore failed: %s\n", err)
-		var planErr *planRefusalError
-		if errors.As(err, &planErr) {
-			return 4
-		}
-		return 1
+		return failRestore(flag.asJSON, res, err)
 	}
-	emit(*asJSON, res, true)
+	emit(flag.asJSON, res, true)
 	return 0
+}
+
+func restoreOptionsFromFlags(flag parsedRestore, loc Location) RestoreOptions {
+	return RestoreOptions{
+		URL: flag.url, Src: loc.String(), Location: loc, Databases: flag.databases,
+		Force: flag.force.set, InPlace: restoreInPlace(flag.force, flag.yamlInPlace),
+		Load: flag.load, ImportListen: flag.listen, ServeAddr: flag.serveAddr,
+		ServeAdvertise: flag.serveAdvertise, ServeTLSCert: flag.serveTLSCert,
+		ServeTLSKey: flag.serveTLSKey, JSON: flag.asJSON, Plan: flag.plan,
+		PlanFormat: flag.planFormat, SwapRestore: flag.swap, Retention: flag.retention,
+		TestingMode: flag.testingMode, ConfigPath: flag.cfgPath,
+	}
+}
+
+func restoreInPlace(force forceModeFlag, yamlInPlace bool) bool {
+	if force.value == "in-place" {
+		return true
+	}
+	if force.set {
+		return false
+	}
+	return yamlInPlace
+}
+
+func failRestore(asJSON bool, res RestoreResult, err error) int {
+	res.OK = false
+	if res.Error == "" {
+		res.Error = err.Error()
+	}
+	emit(asJSON, res, false)
+	fmt.Fprintf(os.Stderr, "restore failed: %s\n", err)
+	return restoreStatus(err)
 }
 
 func cmdVerify(args []string) int {
@@ -410,13 +514,19 @@ func cmdUnlock(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *dest == "" || *name == "" || fs.NArg() != 0 {
+	if fs.NArg() != 0 {
+		usage()
+		return 2
+	}
+	if *dest == "" || *name == "" {
+		fmt.Fprintf(os.Stderr, "unlock requires --dest and --name\n")
 		return 2
 	}
 	loc, err := parseLocation(*dest, *region, *endpoint, "", "", "auto")
 	if err != nil {
 		return fail(false, err)
 	}
+	loc.ProbeConditionalWrites = true
 	if !*yes {
 		return fail(false, errors.New("unlock requires --yes"))
 	}
@@ -433,6 +543,7 @@ func cmdPrune(args []string) int {
 	urlStr := fs.String("url", "", helpPostgresURL)
 	name := fs.String("name", "", "original database name")
 	keep := fs.Int("keep", 1, "number of old swapped copies to keep")
+	dryRun := fs.Bool("dry-run", false, "show old copies that would be dropped, without dropping them")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -448,18 +559,37 @@ func cmdPrune(args []string) int {
 		return fail(false, err)
 	}
 	defer db.Close(context.Background())
-	removed, err := pruneOldCopies(context.Background(), db, *name, *keep)
+	removed, err := pruneOldCopies(context.Background(), db, *name, *keep, *dryRun)
 	if err != nil {
 		return fail(false, err)
 	}
-	fmt.Printf("pruned %d old database copies\n", len(removed))
+	reportPrune(removed, *dryRun)
 	return 0
+}
+
+func reportPrune(removed []string, dryRun bool) {
+	if dryRun {
+		for _, database := range removed {
+			fmt.Printf("would drop %s\n", database)
+		}
+		fmt.Printf("dry-run: %d old database copies\n", len(removed))
+		return
+	}
+	fmt.Printf("pruned %d old database copies\n", len(removed))
+}
+
+func restoreStatus(err error) int {
+	var planErr *planRefusalError
+	if errors.As(err, &planErr) {
+		return 4
+	}
+	return 1
 }
 
 func fail(asJSON bool, err error) int {
 	emit(asJSON, map[string]any{"ok": false, "error": err.Error()}, false)
 	fmt.Fprintf(os.Stderr, "%s\n", err)
-	return 2
+	return 1
 }
 
 func emit(asJSON bool, v any, human bool) {
