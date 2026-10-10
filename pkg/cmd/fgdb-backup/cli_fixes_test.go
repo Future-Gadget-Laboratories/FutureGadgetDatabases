@@ -231,29 +231,63 @@ func TestServeTLSStartsAndAdvertisesHTTPS(t *testing.T) {
 }
 
 func TestWildcardBindNeedsAdvertise(t *testing.T) {
-	if err := refuseWildcardBind("0.0.0.0:80", ""); err == nil {
-		t.Fatal("0.0.0.0 was accepted")
+	tests := []struct {
+		addr      string
+		advertise string
+		wantErr   bool
+	}{
+		{addr: ":80", wantErr: true},
+		{addr: ":0", wantErr: true},
+		{addr: "0:80", wantErr: true},
+		{addr: "0.0.0.0:80", wantErr: true},
+		{addr: "0.0.0.0", wantErr: true},
+		{addr: "[::]:80", wantErr: true},
+		{addr: "[::]", wantErr: true},
+		{addr: "[::0]:80", wantErr: true},
+		{addr: "[::0]", wantErr: true},
+		{addr: "[0::0]:80", wantErr: true},
+		{addr: "[0:0:0:0:0:0:0:0]:80", wantErr: true},
+		{addr: "[0000:0000:0000:0000:0000:0000:0000:0000]:80", wantErr: true},
+		{addr: "[::0.0.0.0]:80", wantErr: true},
+		{addr: "[::ffff:0.0.0.0]:80", wantErr: true},
+		{addr: "[::ffff:0:0]:80", wantErr: true},
+		{addr: "[::FFFF:0.0.0.0]:80", wantErr: true},
+		{addr: "[::%lo]:80", wantErr: true},
+		{addr: "[::ffff:0.0.0.0%lo]:80", wantErr: true},
+		{addr: "[0:0:0:0:0:0:0:0%lo]:80", wantErr: true},
+		{addr: "127.0.0.1:0"},
+		{addr: "[::1]:80"},
+		{addr: "localhost:80"},
+		{addr: "192.0.2.10:80"},
+		{addr: "[::1%lo]:80"},
+		{addr: "0.0.0.0:80", advertise: "192.0.2.10"},
+		{addr: ":8080", advertise: "192.0.2.10"},
+		{addr: "0:80", advertise: "192.0.2.10"},
+		{addr: "[::0]:80", advertise: "192.0.2.10"},
+		{addr: "[::ffff:0.0.0.0%lo]:80", advertise: "192.0.2.10"},
 	}
-	if err := refuseWildcardBind("[::]:80", ""); err == nil {
-		t.Fatal("[::] was accepted")
-	}
-	if err := refuseWildcardBind("127.0.0.1:0", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := refuseWildcardBind("0.0.0.0:80", "192.0.2.10"); err != nil {
-		t.Fatal(err)
+	for _, tt := range tests {
+		err := refuseWildcardBind(tt.addr, tt.advertise)
+		if tt.wantErr && err == nil {
+			t.Errorf("%s was accepted", tt.addr)
+		}
+		if !tt.wantErr && err != nil {
+			t.Errorf("%s advertise %q: %v", tt.addr, tt.advertise, err)
+		}
 	}
 	dir := t.TempDir()
-	_, closer, _, err := serveLocalBackup(importRequest{
-		store: &localStore{root: dir},
-		root:  Location{Kind: "file", Root: dir},
-		opt:   RestoreOptions{ServeAddr: "0.0.0.0:0", ImportListen: defaultImportListen},
-	})
-	if closer != nil {
-		closer()
-	}
-	if err == nil || !strings.Contains(err.Error(), "--serve-advertise") {
-		t.Fatalf("wildcard error = %v", err)
+	for _, addr := range []string{"0.0.0.0:0", ":0"} {
+		_, closer, _, err := serveLocalBackup(importRequest{
+			store: &localStore{root: dir},
+			root:  Location{Kind: "file", Root: dir},
+			opt:   RestoreOptions{ServeAddr: addr, ImportListen: defaultImportListen},
+		})
+		if closer != nil {
+			closer()
+		}
+		if err == nil || !strings.Contains(err.Error(), "--serve-advertise") {
+			t.Errorf("%s wildcard error = %v", addr, err)
+		}
 	}
 }
 

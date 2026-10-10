@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -952,13 +953,26 @@ func bindHost(addr string) string {
 	return host
 }
 
+// wildcardHost reports whether host is an unspecified bind. An empty host is
+// the :port form, which net.Listen treats as every interface. The host "0"
+// is the same bind written as 0:port. Zoned forms such as ::%lo are included
+// because ParseIP rejects the zone.
 func wildcardHost(host string) bool {
-	switch host {
-	case "0.0.0.0", "::":
+	if host == "" || host == "0" {
 		return true
-	default:
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsUnspecified()
+	}
+	return zonedUnspecified(host)
+}
+
+func zonedUnspecified(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
 		return false
 	}
+	return net.IP(addr.WithZone("").AsSlice()).IsUnspecified()
 }
 
 func maybeTLSListener(ln net.Listener, opt RestoreOptions) (net.Listener, error) {

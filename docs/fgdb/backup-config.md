@@ -279,9 +279,11 @@ It is not a new token per file.
 
 `--serve-advertise` is the host the database nodes dial. When the bind
 address is a specific host, the default advertise address is that host and
-the port the server actually got. Binding to `0.0.0.0` or `[::]` is refused
-unless you pass `--serve-advertise`, because a URL that contains `0.0.0.0`
-points each node at itself.
+the port the server actually got. A bind that listens on every interface is
+refused unless you pass `--serve-advertise`. That includes an empty host
+(`:8080`), `0:8080`, `0.0.0.0`, `[::]`, `[::0]`, and any other spelling of an
+unspecified address. A URL that contains one of those addresses points each
+node at itself.
 
 ```bash
 fgdb-backup restore --url "$URL" --src /backups/app/latest \

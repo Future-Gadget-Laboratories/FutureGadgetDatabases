@@ -322,7 +322,7 @@ func cmdRestore(args []string) int {
 	load := fs.String("load", "import", "import (IMPORT INTO) or copy (COPY FROM STDIN)")
 	listen := fs.String(flagImportListen, defaultImportListen, "address the database dials when importing a local backup")
 	serveAddr := fs.String(flagServeAddr, "", "address the local import file server binds; used instead of --"+flagImportListen+" when set")
-	serveAdvertise := fs.String(flagServeAdvertise, "", "host or host:port the database nodes dial; required when the bind address is 0.0.0.0 or [::]")
+	serveAdvertise := fs.String(flagServeAdvertise, "", "host or host:port the database nodes dial; required for an unspecified bind such as :8080, 0:8080, 0.0.0.0, or [::]")
 	serveTLSCert := fs.String(flagServeTLSCert, "", "TLS certificate for the local import file server")
 	serveTLSKey := fs.String(flagServeTLSKey, "", "TLS private key for the local import file server")
 	region := fs.String(flagS3Region, "", helpS3Region)
