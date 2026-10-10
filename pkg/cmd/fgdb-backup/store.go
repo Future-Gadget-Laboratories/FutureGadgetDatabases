@@ -28,66 +28,95 @@ type Location struct {
 	Endpoint             string
 	SSE                  string
 	KMSKeyID             string
-	ImportAuth           string // auto, implicit, specified
+	ImportAuth           string // auto, implicit, specified, served
 	FileMode             os.FileMode
 	AllowUnsafeOverwrite bool
+	// ProbeConditionalWrites is set by backup and unlock. Restore, verify,
+	// and list leave it false so opening the bucket does not PUT a probe.
+	ProbeConditionalWrites bool
 }
+
+const s3ImportAuthList = "auto, implicit, specified, or served"
 
 func parseLocation(raw, region, endpoint, sse, kms, importAuth string) (Location, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return Location{}, fmt.Errorf("path is empty")
 	}
-	if importAuth == "" {
-		importAuth = "auto"
+	importAuth, err := normalizeImportAuth(importAuth)
+	if err != nil {
+		return Location{}, err
 	}
-	switch importAuth {
-	case "auto", "implicit", "specified", "served":
-	default:
-		return Location{}, fmt.Errorf("--s3-import-auth must be auto, implicit, or specified")
-	}
-	switch sse {
-	case "", "AES256", "aws:kms":
-	default:
-		return Location{}, fmt.Errorf("--sse must be AES256 or aws:kms")
-	}
-	if sse == "aws:kms" && kms == "" {
-		return Location{}, fmt.Errorf("--sse aws:kms requires --sse-kms-key-id")
+	if err := validateSSE(sse, kms); err != nil {
+		return Location{}, err
 	}
 	if strings.HasPrefix(raw, "s3://") {
-		u, err := url.Parse(raw)
-		if err != nil {
-			return Location{}, err
-		}
-		if u.Host == "" {
-			return Location{}, fmt.Errorf("s3 url %q is missing a bucket", raw)
-		}
-		if region == "" {
-			region = os.Getenv("AWS_REGION")
-		}
-		if region == "" {
-			region = os.Getenv("AWS_DEFAULT_REGION")
-		}
-		if region == "" {
-			return Location{}, fmt.Errorf("s3 destinations need a region: set AWS_REGION or pass --s3-region")
-		}
-		root := strings.Trim(u.Path, "/")
-		return Location{
-			Kind:       "s3",
-			Bucket:     u.Host,
-			Root:       root,
-			Region:     region,
-			Endpoint:   endpoint,
-			SSE:        sse,
-			KMSKeyID:   kms,
-			ImportAuth: importAuth,
-		}, nil
+		return parseS3Location(raw, region, endpoint, sse, kms, importAuth)
 	}
 	abs, err := filepath.Abs(raw)
 	if err != nil {
 		return Location{}, err
 	}
 	return Location{Kind: "file", Root: abs, ImportAuth: importAuth}, nil
+}
+
+func normalizeImportAuth(importAuth string) (string, error) {
+	if importAuth == "" {
+		importAuth = "auto"
+	}
+	if !validImportAuth(importAuth) {
+		return "", fmt.Errorf("--s3-import-auth must be %s", s3ImportAuthList)
+	}
+	return importAuth, nil
+}
+
+func validateSSE(sse, kms string) error {
+	switch sse {
+	case "", "AES256", "aws:kms":
+	default:
+		return fmt.Errorf("--sse must be AES256 or aws:kms")
+	}
+	if sse == "aws:kms" && kms == "" {
+		return fmt.Errorf("--sse aws:kms requires --sse-kms-key-id")
+	}
+	return nil
+}
+
+func parseS3Location(raw, region, endpoint, sse, kms, importAuth string) (Location, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return Location{}, err
+	}
+	if u.Host == "" {
+		return Location{}, fmt.Errorf("s3 url %q is missing a bucket", raw)
+	}
+	region, err = requiredS3Region(region)
+	if err != nil {
+		return Location{}, err
+	}
+	return Location{
+		Kind:       "s3",
+		Bucket:     u.Host,
+		Root:       strings.Trim(u.Path, "/"),
+		Region:     region,
+		Endpoint:   endpoint,
+		SSE:        sse,
+		KMSKeyID:   kms,
+		ImportAuth: importAuth,
+	}, nil
+}
+
+func requiredS3Region(region string) (string, error) {
+	if region == "" {
+		region = os.Getenv("AWS_REGION")
+	}
+	if region == "" {
+		region = os.Getenv("AWS_DEFAULT_REGION")
+	}
+	if region == "" {
+		return "", fmt.Errorf("s3 destinations need a region: set AWS_REGION or pass --s3-region")
+	}
+	return region, nil
 }
 
 func (l Location) String() string {
