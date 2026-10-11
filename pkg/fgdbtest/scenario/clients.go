@@ -5,6 +5,7 @@
 package scenario
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,9 +15,11 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster"
+	"golang.org/x/sys/unix"
 )
 
 const clientBackstop = 30 * time.Minute
+const clientStopWait = 10 * time.Second
 
 const (
 	tolerateFlag = "--tolerate-errors"
@@ -133,8 +136,16 @@ func (r *run) recorderBin() (string, error) {
 	return out, nil
 }
 
+type procHandle struct {
+	name string
+	cmd  *exec.Cmd
+	id   cluster.Identity
+}
+
 type procSet struct {
-	cmds []*exec.Cmd
+	handles []procHandle
+	stopped bool
+	stopErr error
 }
 
 func (p *procSet) start(dir, name, bin string, args []string) error {
@@ -149,46 +160,75 @@ func (p *procSet) start(dir, name, bin string, args []string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
-		return fmt.Errorf("start %s: %w", name, err)
+		return startClientErr(name, err)
 	}
 	// The child keeps the inherited descriptor. The parent does not.
 	_ = logFile.Close()
-	p.cmds = append(p.cmds, cmd)
+	id, err := cluster.Capture(cmd.Process.Pid, bin)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return startClientErr(name, err)
+	}
+	p.handles = append(p.handles, procHandle{name: name, cmd: cmd, id: id})
 	return nil
 }
 
 func (p *procSet) running() error {
-	if len(p.cmds) != 3 {
-		return fmt.Errorf("expected 3 client processes, have %d", len(p.cmds))
+	if len(p.handles) != 3 {
+		return fmt.Errorf("expected 3 client processes, have %d", len(p.handles))
 	}
-	for _, cmd := range p.cmds {
-		if cmd.Process == nil || !procAlive(cmd.Process.Pid) {
+	for _, handle := range p.handles {
+		if err := cluster.Match(handle.id); err != nil {
 			return fmt.Errorf("a client process exited during warmup")
 		}
 	}
 	return nil
 }
 
-func (p *procSet) stop() {
-	for _, cmd := range p.cmds {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		}
+func (p *procSet) stop() error {
+	if p == nil {
+		return nil
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for _, cmd := range p.cmds {
-		waitProc(cmd, deadline)
+	if p.stopped {
+		return p.stopErr
 	}
-	for _, cmd := range p.cmds {
-		if cmd.Process != nil && procAlive(cmd.Process.Pid) {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
+	p.stopped = true
+	var err error
+	for _, handle := range p.handles {
+		err = errors.Join(err, signalClient(handle, unix.SIGTERM))
 	}
+	deadline := time.Now().Add(clientStopWait)
+	for _, handle := range p.handles {
+		waitProc(handle.cmd, deadline)
+	}
+	p.stopErr = err
+	return err
 }
 
-func procAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
+func (p *procSet) reap() error {
+	if p == nil {
+		return nil
+	}
+	var err error
+	for _, handle := range p.handles {
+		if one := cluster.ReapProcess(handle.id); one != nil {
+			err = errors.Join(err, fmt.Errorf("%s: %w", handle.name, one))
+		}
+	}
+	return err
+}
+
+func startClientErr(name string, err error) error {
+	return fmt.Errorf("start %s: %w", name, err)
+}
+
+func signalClient(handle procHandle, sig unix.Signal) error {
+	err := cluster.Signal(handle.id, sig)
+	if err == nil || errors.Is(err, cluster.ErrGone) {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", handle.name, err)
 }
 
 func waitProc(cmd *exec.Cmd, deadline time.Time) {

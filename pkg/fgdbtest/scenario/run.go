@@ -15,26 +15,28 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/faults"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/labels"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/report"
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/workdir"
 )
 
 // Run starts a 3-node cluster and records one claim outcome per interim step.
 // Partition and disk faults are recorded as not tested. They are not skipped quietly.
-func Run(ctx context.Context, cfg Config) (*report.Report, error) {
+func Run(ctx context.Context, cfg Config) (rep *report.Report, err error) {
 	cfg = ApplyDefaults(cfg)
-	rep := report.New(cfg.Meta)
+	rep = report.New(cfg.Meta)
 	r := &run{ctx: ctx, cfg: cfg, rep: rep, history: filepath.Join(cfg.WorkDir, "history.jsonl")}
-	defer r.finish()
-	if err := r.prepare(); err != nil {
+	defer func() {
+		err = joinCleanup(err, r.finish())
+	}()
+	if err = r.prepare(); err != nil {
 		r.noteSetup(err)
-		r.err = err
 		return rep, err
 	}
 	r.phases()
 	r.failUnrecorded("step did not run")
 	if r.failed {
-		r.err = errors.New("interim cluster slice failed")
+		err = errors.New("interim cluster slice failed")
 	}
-	return rep, r.err
+	return rep, err
 }
 
 type run struct {
@@ -46,29 +48,60 @@ type run struct {
 	history   string
 	clientBin string
 	failed    bool
-	err       error
+	halt      func(context.Context) error
 }
 
-func (r *run) finish() {
-	if r.clients != nil {
-		r.clients.stop()
-	}
-	if r.cluster != nil {
-		_ = r.cluster.Stop(context.Background())
+const cleanupStep = "cleanup"
+
+// joinCleanup keeps a stop or reap error attached to the scenario result.
+func joinCleanup(result, cleanup error) error {
+	return errors.Join(result, cleanup)
+}
+
+func (r *run) finish() error {
+	err := r.stopAll()
+	if err != nil {
+		r.failed = true
+		r.rep.AddStep(report.StepResult{
+			ID: cleanupStep, Outcome: labels.Fail, Detail: err.Error(), Required: true,
+		})
 	}
 	r.rep.Set(ClaimPartition, labels.NotTested, faults.Partition().Detail)
 	r.rep.Set(ClaimDisk, labels.NotTested, faults.Disk().Detail)
 	if r.cfg.OutputDir != "" {
-		_ = r.rep.Write(r.cfg.OutputDir)
+		err = errors.Join(err, r.rep.Write(r.cfg.OutputDir))
 	}
+	return err
+}
+
+func (r *run) stopAll() error {
+	var err error
+	if r.clients != nil {
+		err = errors.Join(err, r.clients.stop(), r.clients.reap())
+	}
+	err = errors.Join(err, r.haltNodes(context.Background()))
+	if r.cluster != nil && r.halt == nil {
+		err = errors.Join(err, r.cluster.Reap())
+	}
+	return err
+}
+
+func (r *run) haltNodes(ctx context.Context) error {
+	if r.halt != nil {
+		return r.halt(ctx)
+	}
+	if r.cluster == nil {
+		return nil
+	}
+	return r.cluster.Stop(ctx)
 }
 
 func (r *run) prepare() error {
 	if r.cfg.Candidate == "" {
 		return errors.New("candidate cockroach binary is empty")
 	}
-	if r.cfg.WorkDir == "" {
-		return errors.New("work directory is empty")
+	if err := workdir.Require(r.cfg.WorkDir); err != nil {
+		return err
 	}
 	useSiblingLib(r.cfg.Candidate)
 	useSiblingLib(r.cfg.Previous)
@@ -81,10 +114,8 @@ func (r *run) prepare() error {
 	}
 	r.clientBin = bin
 	spec := cluster.Spec{
-		Binary:       bin,
-		Dir:          filepath.Join(r.cfg.WorkDir, "cluster"),
-		SQLPortBase:  r.cfg.SQLPortBase,
-		HTTPPortBase: r.cfg.HTTPPortBase,
+		Binary: bin,
+		Dir:    filepath.Join(r.cfg.WorkDir, "cluster"),
 	}
 	started, err := cluster.Start(r.ctx, spec)
 	if err != nil {
@@ -201,11 +232,11 @@ func (r *run) failUnrecorded(msg string) {
 	}
 }
 
-func (r *run) stopClients() {
-	if r.clients != nil {
-		r.clients.stop()
-		r.clients = nil
+func (r *run) stopClients() error {
+	if r.clients == nil {
+		return nil
 	}
+	return r.clients.stop()
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

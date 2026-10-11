@@ -148,13 +148,13 @@ func oneClient(ctx context.Context, id int, pool *pgxpool.Pool, w *histWriter) {
 func writeOnce(ctx context.Context, id int, pool *pgxpool.Pool, w *histWriter) {
 	value := int(atomic.AddInt64(&seq, 1))
 	call := time.Now().UnixNano()
-	err := writeTxn(ctx, pool, value)
-	if ctx.Err() != nil && err != nil {
+	result := performWrite(ctx, pool, value)
+	if result == "" {
 		return
 	}
 	_ = w.write(invariants.Op{
 		Client: id, Kind: labels.KindWrite, Value: value,
-		CallNS: call, ReturnNS: time.Now().UnixNano(), Result: classify(err),
+		CallNS: call, ReturnNS: time.Now().UnixNano(), Result: result,
 	})
 }
 
@@ -172,19 +172,30 @@ func readOnce(ctx context.Context, id int, pool *pgxpool.Pool, w *histWriter) {
 
 var seq int64
 
-func writeTxn(ctx context.Context, pool *pgxpool.Pool, value int) error {
+func performWrite(ctx context.Context, pool *pgxpool.Pool, value int) string {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return err
+		return keepResult(ctx, classify(err))
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, insertAck, value); err != nil {
-		return err
+	if _, err = tx.Exec(ctx, insertAck, value); err != nil {
+		return keepResult(ctx, classify(err))
 	}
-	if _, err := tx.Exec(ctx, upsertReg, value); err != nil {
-		return err
+	if _, err = tx.Exec(ctx, upsertReg, value); err != nil {
+		return keepResult(ctx, classify(err))
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return keepResult(ctx, classifyCommit(err))
+	}
+	return labels.ResultOK
+}
+
+// keepResult drops an unfinished call when the process is shutting down.
+func keepResult(ctx context.Context, result string) string {
+	if ctx.Err() != nil && result != labels.ResultOK {
+		return ""
+	}
+	return result
 }
 
 func readValue(ctx context.Context, pool *pgxpool.Pool) (int, error) {
@@ -196,26 +207,40 @@ func readValue(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	return value, err
 }
 
+var (
+	unsureNeedles = []string{"timeout", "eof", "connection reset", "broken pipe", "deadline", "ambiguous"}
+	commitNeedles = []string{"connection refused", "conn closed", "bad connection", "unavailable", "failed to send"}
+)
+
 func classify(err error) string {
 	if err == nil {
 		return labels.ResultOK
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "40001" {
-		return labels.ResultFail
-	}
-	if errors.As(err, &pgErr) {
-		return labels.ResultFail
-	}
-	if ambiguous(err.Error()) {
+	if containsAny(err.Error(), unsureNeedles) {
 		return labels.ResultUnknown
 	}
 	return labels.ResultFail
 }
 
-func ambiguous(text string) bool {
+// classifyCommit handles the error from COMMIT. A lost response can still
+// mean the transaction landed, so transport failures stay unknown.
+func classifyCommit(err error) string {
+	if err == nil {
+		return labels.ResultOK
+	}
+	if containsAny(err.Error(), unsureNeedles) || containsAny(err.Error(), commitNeedles) {
+		return labels.ResultUnknown
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return labels.ResultFail
+	}
+	return labels.ResultUnknown
+}
+
+func containsAny(text string, needles []string) bool {
 	low := strings.ToLower(text)
-	for _, needle := range []string{"timeout", "eof", "connection reset", "broken pipe", "deadline"} {
+	for _, needle := range needles {
 		if strings.Contains(low, needle) {
 			return true
 		}

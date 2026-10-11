@@ -44,6 +44,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
 
       - name: Install the pinned Go toolchain
@@ -92,6 +93,8 @@ jobs:
           CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC1091
+          . fgdb/test/scripts/scrub-credentials.sh
           case "$CANDIDATE_URL" in
             https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/*) ;;
             *)
@@ -107,11 +110,12 @@ jobs:
           printf '%s  %s\n' "$CANDIDATE_SHA256" "${FGDB_WORK}/candidate.tgz" | sha256sum -c -
           curl -fsSL "$PREVIOUS_URL" -o "${FGDB_WORK}/previous.tgz"
           printf '%s  %s\n' "$PREVIOUS_SHA256" "${FGDB_WORK}/previous.tgz" | sha256sum -c -
-          mkdir -p "${FGDB_WORK}/candidate" "${FGDB_WORK}/previous"
-          tar -xzf "${FGDB_WORK}/candidate.tgz" -C "${FGDB_WORK}/candidate"
-          tar -xzf "${FGDB_WORK}/previous.tgz" -C "${FGDB_WORK}/previous"
-          candidate=$(find "${FGDB_WORK}/candidate" -type f -name cockroach -print -quit)
-          previous=$(find "${FGDB_WORK}/previous" -type f -name cockroach -print -quit)
+          # Checksums are verified above. unpack-tarball.sh lists members, rejects
+          # unsafe ones, and extracts unprivileged into a fresh directory.
+          candidate_dir=$(bash fgdb/test/scripts/unpack-tarball.sh "${FGDB_WORK}/candidate.tgz" "$FGDB_WORK")
+          previous_dir=$(bash fgdb/test/scripts/unpack-tarball.sh "${FGDB_WORK}/previous.tgz" "$FGDB_WORK")
+          candidate=$(find "$candidate_dir" -type f -name cockroach -print -quit)
+          previous=$(find "$previous_dir" -type f -name cockroach -print -quit)
           if [[ -z "$candidate" || -z "$previous" ]]; then
             echo "a tarball did not contain a cockroach binary" >&2
             exit 1
@@ -132,6 +136,8 @@ jobs:
           FGDB_OUTPUT: ${{ env.FGDB_WORK }}/out
         run: |
           set -euo pipefail
+          # run.sh drops GITHUB_TOKEN and the other runner credential variables
+          # before it builds or starts a binary. Checkout left no token in .git/config.
           bash fgdb/test/run.sh interim
 
       - name: Show the summary

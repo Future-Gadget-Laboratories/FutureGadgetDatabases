@@ -5,8 +5,6 @@
 package scenario
 
 import (
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,8 +18,6 @@ type Config struct {
 	WorkDir       string
 	OutputDir     string
 	RepoRoot      string
-	SQLPortBase   int
-	HTTPPortBase  int
 	BankRows      int
 	KVConcurrency int
 	Outage        time.Duration
@@ -58,12 +54,6 @@ func ApplyDefaults(cfg Config) Config {
 	if cfg.Warmup == 0 {
 		cfg.Warmup = 5 * time.Second
 	}
-	if cfg.SQLPortBase == 0 {
-		cfg.SQLPortBase = envInt("FGDB_SQL_PORT_BASE", 27257)
-	}
-	if cfg.HTTPPortBase == 0 {
-		cfg.HTTPPortBase = envInt("FGDB_HTTP_PORT_BASE", 28080)
-	}
 	return cfg
 }
 
@@ -81,16 +71,4 @@ func ParseOnly(text string) map[string]struct{} {
 		}
 	}
 	return out
-}
-
-func envInt(name string, fallback int) int {
-	text := os.Getenv(name)
-	if text == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(text)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n
 }

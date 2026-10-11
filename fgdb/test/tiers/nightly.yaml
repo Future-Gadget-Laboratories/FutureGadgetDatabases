@@ -17,6 +17,7 @@ steps:
       - ./pkg/fgdbtest/report
       - ./pkg/fgdbtest/scenario
       - ./pkg/fgdbtest/scenarios/claims
+      - ./pkg/fgdbtest/workdir
       - ./pkg/cmd/fgdb-test
   - id: SQL-LOCAL
     kind: bazel

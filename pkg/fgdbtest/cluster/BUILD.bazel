@@ -5,15 +5,22 @@ go_library(
     testonly = True,
     srcs = [
         "cluster.go",
+        "identity.go",
+        "ports.go",
         "proc.go",
         "sql.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster",
     visibility = ["//visibility:public"],
+    deps = ["@org_golang_x_sys//unix"],
 )
 
 go_test(
     name = "cluster_test",
-    srcs = ["url_test.go"],
+    srcs = [
+        "proc_test.go",
+        "url_test.go",
+    ],
     embed = [":cluster"],
+    deps = ["@org_golang_x_sys//unix"],
 )

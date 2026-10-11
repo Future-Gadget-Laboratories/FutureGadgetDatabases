@@ -42,6 +42,8 @@ fgdb/test/run.sh interim
 
 `fgdb/test/scripts/run-local.sh --tier=pr` is the same entry point.
 
+The 3-node cluster asks the operating system for free ports and tries a new set if a port is already taken. Temporary files for one run sit under `FGDB_WORK`, or under `RUNNER_TEMP` or `TMPDIR` when that is unset. `run.sh` removes the directory when it created it. The interim workflow removes its directory at the end of the job, including when the suite fails. That workflow does not leave a GitHub token in `.git/config`, and the runner drops the token variables before it starts a database or test binary.
+
 The run writes `result.json` and `summary.md`. The first two lines of the summary are always:
 
 ```text

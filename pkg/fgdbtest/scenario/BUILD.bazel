@@ -24,11 +24,16 @@ go_library(
         "//pkg/fgdbtest/invariants",
         "//pkg/fgdbtest/labels",
         "//pkg/fgdbtest/report",
+        "//pkg/fgdbtest/workdir",
+        "@org_golang_x_sys//unix",
     ],
 )
 
 go_test(
     name = "scenario_test",
-    srcs = ["checks_test.go"],
+    srcs = [
+        "checks_test.go",
+        "cleanup_test.go",
+    ],
     embed = [":scenario"],
 )

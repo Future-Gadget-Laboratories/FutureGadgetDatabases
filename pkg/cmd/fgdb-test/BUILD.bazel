@@ -9,6 +9,7 @@ go_library(
     deps = [
         "//pkg/fgdbtest/harness",
         "//pkg/fgdbtest/record",
+        "//pkg/fgdbtest/workdir",
     ],
 )
 

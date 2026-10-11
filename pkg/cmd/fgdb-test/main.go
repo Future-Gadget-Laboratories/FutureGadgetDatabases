@@ -14,6 +14,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/harness"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/record"
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/workdir"
 )
 
 func main() {
@@ -76,10 +77,13 @@ func execute(ctx context.Context, tier, root, output string) error {
 		return err
 	}
 	if output == "" {
-		output, err = os.MkdirTemp("", "fgdb-suite-")
+		output, err = workdir.Mkdir("fgdb-suite-")
 		if err != nil {
 			return err
 		}
+	}
+	if err := workdir.Require(output); err != nil {
+		return err
 	}
 	h := &harness.Harness{Root: found, TierName: tier, Output: output}
 	fmt.Printf("report directory: %s\n", output)

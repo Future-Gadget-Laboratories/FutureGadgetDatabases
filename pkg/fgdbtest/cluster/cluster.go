@@ -7,6 +7,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,8 +18,6 @@ const (
 	defaultNodes     = 3
 	defaultCache     = "128MiB"
 	defaultSQLMemory = "128MiB"
-	defaultSQLPort   = 27257
-	defaultHTTPPort  = 28080
 	startTimeout     = 3 * time.Minute
 	stopTimeout      = 30 * time.Second
 	diagnosticsEnv   = "COCKROACH_SKIP_ENABLING_DIAGNOSTIC_REPORTING=true"
@@ -26,14 +25,13 @@ const (
 )
 
 // Spec describes one local cluster.
+// SQL and HTTP ports are chosen when the cluster starts.
 type Spec struct {
-	Binary       string
-	Dir          string
-	Nodes        int
-	SQLPortBase  int
-	HTTPPortBase int
-	Cache        string
-	SQLMemory    string
+	Binary    string
+	Dir       string
+	Nodes     int
+	Cache     string
+	SQLMemory string
 }
 
 // Node is one cockroach-oss process.
@@ -46,6 +44,7 @@ type Node struct {
 	PidFile  string
 	Cache    string
 	SQLMem   string
+	ID       Identity
 }
 
 // Cluster is a group of nodes that share one join list.
@@ -57,22 +56,45 @@ type Cluster struct {
 }
 
 // Start creates store directories and launches every node.
+// A bind conflict picks a new set of ports and tries again.
 func Start(ctx context.Context, spec Spec) (*Cluster, error) {
 	spec = fillSpec(spec)
-	if spec.Binary == "" {
-		return nil, fmt.Errorf("cockroach binary is empty")
+	if err := checkBinary(spec.Binary); err != nil {
+		return nil, err
 	}
-	if _, err := os.Stat(spec.Binary); err != nil {
-		return nil, fmt.Errorf("cockroach binary: %w", err)
+	var last error
+	for attempt := 0; attempt < portAttempts; attempt++ {
+		c, err := launch(ctx, spec, attempt)
+		if err == nil {
+			return c, nil
+		}
+		last = err
+		if !bindConflict(err) {
+			return nil, err
+		}
 	}
+	return nil, fmt.Errorf("ports stayed busy: %w", last)
+}
+
+func checkBinary(path string) error {
+	if path == "" {
+		return fmt.Errorf("cockroach binary is empty")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("cockroach binary: %w", err)
+	}
+	return nil
+}
+
+func launch(ctx context.Context, spec Spec, attempt int) (*Cluster, error) {
+	spec.Dir = filepath.Join(spec.Dir, fmt.Sprintf("try-%d", attempt))
 	c := &Cluster{spec: spec, env: append(os.Environ(), diagnosticsEnv)}
 	if err := c.layout(); err != nil {
 		return nil, err
 	}
 	for i := range c.nodes {
 		if err := c.StartNode(ctx, i); err != nil {
-			_ = c.Stop(context.Background())
-			return nil, err
+			return nil, errors.Join(err, c.Stop(context.Background()))
 		}
 	}
 	return c, nil
@@ -81,12 +103,6 @@ func Start(ctx context.Context, spec Spec) (*Cluster, error) {
 func fillSpec(spec Spec) Spec {
 	if spec.Nodes == 0 {
 		spec.Nodes = defaultNodes
-	}
-	if spec.SQLPortBase == 0 {
-		spec.SQLPortBase = defaultSQLPort
-	}
-	if spec.HTTPPortBase == 0 {
-		spec.HTTPPortBase = defaultHTTPPort
 	}
 	if spec.Cache == "" {
 		spec.Cache = defaultCache
@@ -101,17 +117,19 @@ func (c *Cluster) layout() error {
 	if err := os.MkdirAll(c.spec.Dir, 0o755); err != nil {
 		return err
 	}
+	sqlPorts, httpPorts, err := assignPorts(c.spec.Nodes)
+	if err != nil {
+		return err
+	}
 	c.nodes = make([]Node, c.spec.Nodes)
 	addrs := make([]string, c.spec.Nodes)
 	for i := 0; i < c.spec.Nodes; i++ {
-		sqlPort := c.spec.SQLPortBase + i
-		httpPort := c.spec.HTTPPortBase + i
-		listen := fmt.Sprintf("127.0.0.1:%d", sqlPort)
+		listen := fmt.Sprintf(listenFormat, sqlPorts[i])
 		n := Node{
 			Index:    i,
 			Binary:   c.spec.Binary,
 			Listen:   listen,
-			HTTP:     fmt.Sprintf("127.0.0.1:%d", httpPort),
+			HTTP:     fmt.Sprintf(listenFormat, httpPorts[i]),
 			StoreDir: filepath.Join(c.spec.Dir, fmt.Sprintf("node%d", i+1)),
 			PidFile:  filepath.Join(c.spec.Dir, fmt.Sprintf("node%d.pid", i+1)),
 			Cache:    c.spec.Cache,
@@ -160,18 +178,34 @@ func (c *Cluster) StartNode(ctx context.Context, index int) error {
 	if err != nil {
 		return err
 	}
-	if pid, readErr := readPid(n.PidFile); readErr == nil && alive(pid) {
-		return fmt.Errorf("node %d is already running", index+1)
+	if n.ID.PID > 0 {
+		if err := Match(n.ID); err == nil {
+			return fmt.Errorf("node %d is already running", index+1)
+		}
 	}
 	_ = os.Remove(n.PidFile)
 	startCtx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
 	if err := c.runStart(startCtx, n, startArgs(n, c.join)); err != nil {
-		return fmt.Errorf("start node %d: %w", index+1, err)
+		return startNodeErr(index, err)
 	}
-	if _, err := readPid(n.PidFile); err != nil {
+	return c.noteStarted(index, n)
+}
+
+func startNodeErr(index int, err error) error {
+	return fmt.Errorf("start node %d: %w", index+1, err)
+}
+
+func (c *Cluster) noteStarted(index int, n Node) error {
+	pid, err := readPid(n.PidFile)
+	if err != nil {
 		return fmt.Errorf("start node %d: pid file: %w", index+1, err)
 	}
+	id, err := Capture(pid, n.Binary)
+	if err != nil {
+		return startNodeErr(index, err)
+	}
+	c.nodes[index].ID = id
 	return nil
 }
 
@@ -196,13 +230,11 @@ func (c *Cluster) Stop(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
-	var first error
+	var err error
 	for i := range c.nodes {
-		if err := c.StopNode(ctx, i); err != nil && first == nil {
-			first = err
-		}
+		err = errors.Join(err, c.StopNode(ctx, i))
 	}
-	return first
+	return err
 }
 
 // StopNode sends SIGTERM, then SIGKILL if the process stays up.
@@ -217,20 +249,12 @@ func (c *Cluster) KillNode(index int) error {
 
 // PauseNode freezes a node with SIGSTOP.
 func (c *Cluster) PauseNode(index int) error {
-	pid, err := c.pid(index)
-	if err != nil {
-		return err
-	}
-	return signal(pid, sigStop)
+	return c.signalOwned(index, sigStop)
 }
 
 // ResumeNode continues a paused node with SIGCONT.
 func (c *Cluster) ResumeNode(index int) error {
-	pid, err := c.pid(index)
-	if err != nil {
-		return err
-	}
-	return signal(pid, sigCont)
+	return c.signalOwned(index, sigCont)
 }
 
 func (c *Cluster) node(index int) (Node, error) {
