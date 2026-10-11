@@ -11,6 +11,7 @@ go_library(
         "proc.go",
         "sql.go",
     ],
+    embedsrcs = ["allowlist.txt"],
     importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster",
     visibility = ["//visibility:public"],
     deps = ["@org_golang_x_sys//unix"],
@@ -19,6 +20,7 @@ go_library(
 go_test(
     name = "cluster_test",
     srcs = [
+        "env_test.go",
         "proc_test.go",
         "url_test.go",
     ],

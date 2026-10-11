@@ -71,16 +71,27 @@ func (c *Cluster) runStart(ctx context.Context, n Node, args []string) error {
 }
 
 func (c *Cluster) applyEnv(cmd *exec.Cmd) error {
-	if c != nil && len(c.env) > 0 {
-		cmd.Env = c.env
-		return nil
+	base := []string(nil)
+	if c != nil {
+		base = c.env
 	}
-	env, err := CommandEnv()
+	env, err := envFor(base, cmd.Path)
 	if err != nil {
 		return err
 	}
 	cmd.Env = env
 	return nil
+}
+
+func envFor(base []string, binary string) ([]string, error) {
+	if len(base) == 0 {
+		var err error
+		base, err = CommandEnv()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return withReleaseLib(base, binary)
 }
 
 func trimOutput(text string) string {
@@ -107,7 +118,7 @@ func (c *Cluster) Init(ctx context.Context) error {
 // Version runs `version` on the cluster binary and checks Distribution: OSS.
 func Version(ctx context.Context, binary, expectGo string) error {
 	cmd := exec.CommandContext(ctx, binary, "version")
-	env, err := CommandEnv()
+	env, err := ProcessEnv(binary)
 	if err != nil {
 		return err
 	}

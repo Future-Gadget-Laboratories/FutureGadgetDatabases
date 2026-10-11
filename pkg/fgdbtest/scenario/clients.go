@@ -227,7 +227,7 @@ func (p *procSet) reap() error {
 }
 
 func useCleanEnv(cmd *exec.Cmd) error {
-	env, err := cluster.CommandEnv()
+	env, err := cluster.ProcessEnv(cmd.Path)
 	if err != nil {
 		return err
 	}

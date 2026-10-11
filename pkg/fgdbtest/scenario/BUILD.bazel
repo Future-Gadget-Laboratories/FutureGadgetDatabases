@@ -12,7 +12,6 @@ go_library(
         "config.go",
         "faultsteps.go",
         "ids.go",
-        "libpath.go",
         "run.go",
         "upgrade.go",
     ],

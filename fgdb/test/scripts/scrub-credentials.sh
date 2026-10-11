@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Allowlisted environment for candidate binaries and workload processes.
 # Source this file, then start those programs with fgdb_exec.
-# fgdb_exec uses env -i. A credential name or an Actions variable is refused
-# even if an allowlist rule would have copied it.
+# Names are the exact lines in pkg/fgdbtest/cluster/allowlist.txt.
+# fgdb_exec uses env -i. A credential name on that list is refused.
+
+_fgdb_script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+_fgdb_allow_file="$_fgdb_script_dir/../../../pkg/fgdbtest/cluster/allowlist.txt"
 
 fgdb_deny_name() {
   case "$1" in
@@ -18,7 +21,7 @@ fgdb_deny_name() {
 fgdb_exec() {
   local -a clean=()
   local -A seen=()
-  local key item
+  local line item
 
   fgdb_take() {
     local name=$1
@@ -35,23 +38,22 @@ fgdb_exec() {
     fi
   }
 
-  for key in PATH HOME TMPDIR TEMP TMP LANG LC_ALL LC_CTYPE LANGUAGE \
-    USER LOGNAME SHELL TZ LD_LIBRARY_PATH PWD \
-    CGO_ENABLED CC CXX PKG_CONFIG_PATH \
-    SSL_CERT_FILE SSL_CERT_DIR \
-    HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
-    fgdb_take "$key" || return 1
-  done
-  while IFS= read -r key; do
-    case "$key" in
-      FGDB_* | LC_* | GO*)
-        case "$key" in
-          GOOGLE*) ;;
-          *) fgdb_take "$key" || return 1 ;;
-        esac
+  if [[ ! -f "$_fgdb_allow_file" ]]; then
+    echo "allowlist not found: $_fgdb_allow_file" >&2
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      '' | \#*) continue ;;
+    esac
+    case "$line" in
+      *'*'* | *'?'* | *'='*)
+        echo "allowlist entry is not an exact name: $line" >&2
+        return 1
         ;;
     esac
-  done < <(compgen -e)
+    fgdb_take "$line" || return 1
+  done < "$_fgdb_allow_file"
   for item in "${clean[@]}"; do
     if fgdb_deny_name "${item%%=*}"; then
       echo "refusing environment variable ${item%%=*}" >&2

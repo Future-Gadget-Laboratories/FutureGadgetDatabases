@@ -158,6 +158,7 @@ func TestCommandEnvDropsCredentials(t *testing.T) {
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "secret-actions")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret-aws")
 	t.Setenv("MY_PASSWORD", "secret-pass")
+	setSecretEnv(t)
 	t.Setenv("FGDB_COCKROACH", "/tmp/cockroach")
 	t.Setenv("PATH", "/usr/bin")
 	env, err := CommandEnv()
@@ -165,7 +166,11 @@ func TestCommandEnvDropsCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := strings.Join(env, "\n")
-	for _, leaked := range []string{"secret-token", "secret-actions", "secret-aws", "secret-pass", "GITHUB_TOKEN", "ACTIONS_"} {
+	for _, leaked := range []string{
+		"secret-token", "secret-actions", "secret-aws", "secret-pass",
+		"GITHUB_TOKEN", "ACTIONS_", "FGDB_DATABASE_URL", "postgres://user:secret",
+		"GOPROXY=", "password@proxy", "GOFLAGS=", "GONOSUMDB=", "LD_LIBRARY_PATH=", "/tmp/evil-lib",
+	} {
 		if strings.Contains(text, leaked) {
 			t.Fatalf("environment kept %s\n%s", leaked, text)
 		}
@@ -173,9 +178,32 @@ func TestCommandEnvDropsCredentials(t *testing.T) {
 	if !strings.Contains(text, "FGDB_COCKROACH=/tmp/cockroach") {
 		t.Fatalf("missing allowlisted variable\n%s", text)
 	}
-	t.Setenv("FGDB_TOKEN", "nope")
-	if _, err := CommandEnv(); err == nil {
-		t.Fatal("an allowlisted token name survived")
+}
+
+func TestFaultGoneIsAnError(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	id, err := Capture(cmd.Process.Pid, cmd.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmd.Process.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	c := &Cluster{nodes: []Node{{Index: 0, ID: id, PidFile: filepathUnused(t)}}}
+	if err := c.KillNode(0); !errors.Is(err, ErrGone) {
+		t.Fatalf("kill of a gone process: %v", err)
+	}
+	if err := c.PauseNode(0); !errors.Is(err, ErrGone) {
+		t.Fatalf("pause of a gone process: %v", err)
+	}
+	if err := c.StopNode(context.Background(), 0); err != nil {
+		t.Fatalf("cleanup rejected a gone process: %v", err)
 	}
 }
 

@@ -107,8 +107,6 @@ func (r *run) prepare() error {
 	if err := workdir.Require(r.cfg.WorkDir); err != nil {
 		return err
 	}
-	useSiblingLib(r.cfg.Candidate)
-	useSiblingLib(r.cfg.Previous)
 	if err := cluster.Version(r.ctx, r.cfg.Candidate, r.cfg.ExpectGo); err != nil {
 		return err
 	}

@@ -51,21 +51,14 @@ func (c *Cluster) signalNode(ctx context.Context, index int, kill bool) error {
 	return nil
 }
 
-// sendSignal returns an identity mismatch from a fault.
-// Cleanup (SIGTERM) reports that the original process was not found.
+// sendSignal returns every Signal error from a fault, including ErrGone.
+// Cleanup tolerates a process that has already exited.
 func sendSignal(id Identity, sig unix.Signal, kill bool) error {
 	err := Signal(id, sig)
 	if kill {
-		return faultResult(err)
+		return err
 	}
 	return cleanupResult(err)
-}
-
-func faultResult(err error) error {
-	if errors.Is(err, ErrGone) {
-		return nil
-	}
-	return err
 }
 
 func cleanupResult(err error) error {
