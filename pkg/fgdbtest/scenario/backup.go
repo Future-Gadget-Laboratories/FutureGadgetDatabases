@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 )
 
+const jsonFlag = "--json"
+
 func (r *run) backup() error {
 	if !r.want(stepBackup) {
 		return errNotRun
@@ -37,17 +39,17 @@ func (r *run) backup() error {
 		return err
 	}
 	latest := filepath.Join(dest, "bank", "latest")
-	if err := runTool(r.ctx, bin, "backup", "--json", "--url", srcURL, "--dest", dest,
+	if err := runTool(r.ctx, bin, "backup", jsonFlag, "--url", srcURL, "--dest", dest,
 		"--database", "bank", "--name", "bank"); err != nil {
 		return err
 	}
-	if err := runTool(r.ctx, bin, "verify", "--json", "--src", latest); err != nil {
+	if err := runTool(r.ctx, bin, "verify", jsonFlag, "--src", latest); err != nil {
 		return err
 	}
 	if _, err := r.cluster.SQL(r.ctx, 0, `DROP DATABASE bank CASCADE`); err != nil {
 		return err
 	}
-	if err := runTool(r.ctx, bin, "restore", "--json", "--url", dstURL, "--src", latest, "--load", "copy"); err != nil {
+	if err := runTool(r.ctx, bin, "restore", jsonFlag, "--url", dstURL, "--src", latest, "--load", "copy"); err != nil {
 		return err
 	}
 	after, err := r.snapBank(1)

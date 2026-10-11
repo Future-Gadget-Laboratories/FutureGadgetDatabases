@@ -15,6 +15,8 @@ import (
 	"strings"
 )
 
+const hostFlag = "--host="
+
 // SQL runs one statement through `cockroach sql` and returns stdout.
 func (c *Cluster) SQL(ctx context.Context, index int, statement string) (string, error) {
 	n, err := c.node(index)
@@ -22,7 +24,7 @@ func (c *Cluster) SQL(ctx context.Context, index int, statement string) (string,
 		return "", err
 	}
 	return c.run(ctx, n.Binary, []string{
-		"sql", insecureFlag, "--host=" + n.Listen, "--format=csv", "-e", statement,
+		"sql", insecureFlag, hostFlag + n.Listen, "--format=csv", "-e", statement,
 	})
 }
 
@@ -108,7 +110,7 @@ func (c *Cluster) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.run(ctx, n.Binary, []string{"init", insecureFlag, "--host=" + n.Listen})
+	_, err = c.run(ctx, n.Binary, []string{"init", insecureFlag, hostFlag + n.Listen})
 	if err != nil {
 		return fmt.Errorf("init: %w", err)
 	}
@@ -158,7 +160,7 @@ func (c *Cluster) RangeHealth(ctx context.Context, index int) (unavailable, unde
 		return 0, 0, err
 	}
 	out, err := c.run(ctx, n.Binary, []string{
-		"node", "status", "--ranges", insecureFlag, "--host=" + n.Listen, "--format=csv",
+		"node", "status", "--ranges", insecureFlag, hostFlag + n.Listen, "--format=csv",
 	})
 	if err != nil {
 		return 0, 0, err
@@ -272,7 +274,7 @@ func (c *Cluster) Drain(ctx context.Context, index int) error {
 		return err
 	}
 	_, err = c.run(ctx, n.Binary, []string{
-		"node", "drain", "--self", insecureFlag, "--host=" + n.Listen,
+		"node", "drain", "--self", insecureFlag, hostFlag + n.Listen,
 	})
 	if err != nil {
 		return fmt.Errorf("drain node %d: %w", index+1, err)
