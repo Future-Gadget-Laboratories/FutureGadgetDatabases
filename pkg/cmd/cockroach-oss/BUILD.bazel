@@ -24,5 +24,7 @@ disallowed_imports_test(
     disallowed_prefixes = [
         "pkg/ccl",
         "pkg/ui/distccl",
+        # The suite is test-only. The release binary must not link it.
+        "pkg/fgdbtest",
     ],
 )

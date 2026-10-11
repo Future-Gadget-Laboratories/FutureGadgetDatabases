@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "harness",
+    testonly = True,
+    srcs = [
+        "root.go",
+        "run.go",
+        "tier.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/harness",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/fgdbtest/claims",
+        "//pkg/fgdbtest/faults",
+        "//pkg/fgdbtest/labels",
+        "//pkg/fgdbtest/prodimport",
+        "//pkg/fgdbtest/report",
+        "//pkg/fgdbtest/scenario",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_test(
+    name = "harness_test",
+    srcs = ["run_test.go"],
+    embed = [":harness"],
+)

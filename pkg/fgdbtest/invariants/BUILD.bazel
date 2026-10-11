@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "invariants",
+    testonly = True,
+    srcs = [
+        "history.go",
+        "porcupine.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/invariants",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/fgdbtest/labels",
+        "//pkg/fgdbtest/third_party/porcupine",
+    ],
+)
+
+go_test(
+    name = "invariants_test",
+    srcs = [
+        "history_test.go",
+        "porcupine_test.go",
+    ],
+    embed = [":invariants"],
+    deps = ["//pkg/fgdbtest/labels"],
+)

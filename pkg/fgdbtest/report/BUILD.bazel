@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "report",
+    testonly = True,
+    srcs = ["report.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/report",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/fgdbtest/labels"],
+)
+
+go_test(
+    name = "report_test",
+    srcs = ["report_test.go"],
+    embed = [":report"],
+    deps = ["//pkg/fgdbtest/labels"],
+)

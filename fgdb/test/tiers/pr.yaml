@@ -1,0 +1,20 @@
+name: pr
+steps:
+  - id: CHECK-CLAIMS
+    kind: check-claims
+  - id: CHECK-IMPORTS
+    kind: check-imports
+  - id: UNIT
+    kind: go-test
+    packages:
+      - ./pkg/fgdbtest/claims
+      - ./pkg/fgdbtest/cluster
+      - ./pkg/fgdbtest/faults
+      - ./pkg/fgdbtest/harness
+      - ./pkg/fgdbtest/invariants
+      - ./pkg/fgdbtest/prodimport
+      - ./pkg/fgdbtest/record
+      - ./pkg/fgdbtest/report
+      - ./pkg/fgdbtest/scenario
+      - ./pkg/fgdbtest/scenarios/claims
+      - ./pkg/cmd/fgdb-test

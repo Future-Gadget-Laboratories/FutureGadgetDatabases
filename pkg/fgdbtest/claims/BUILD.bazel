@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "claims",
+    testonly = True,
+    srcs = [
+        "claims.go",
+        "docwarn.go",
+        "skips.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/claims",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/fgdbtest/labels",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_test(
+    name = "claims_test",
+    srcs = [
+        "claims_test.go",
+        "docwarn_test.go",
+    ],
+    embed = [":claims"],
+)

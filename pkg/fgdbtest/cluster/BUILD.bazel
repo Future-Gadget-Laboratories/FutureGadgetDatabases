@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cluster",
+    testonly = True,
+    srcs = [
+        "cluster.go",
+        "proc.go",
+        "sql.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "cluster_test",
+    srcs = ["url_test.go"],
+    embed = [":cluster"],
+)

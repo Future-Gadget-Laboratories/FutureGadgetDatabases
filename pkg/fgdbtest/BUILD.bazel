@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "fgdbtest",
+    testonly = True,
+    srcs = ["doc.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest",
+    visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "pr_tier",
+    tests = [
+        "//pkg/cmd/fgdb-test:fgdb-test_test",
+        "//pkg/fgdbtest/claims:claims_test",
+        "//pkg/fgdbtest/cluster:cluster_test",
+        "//pkg/fgdbtest/faults:faults_test",
+        "//pkg/fgdbtest/harness:harness_test",
+        "//pkg/fgdbtest/invariants:invariants_test",
+        "//pkg/fgdbtest/prodimport:prodimport_test",
+        "//pkg/fgdbtest/report:report_test",
+        "//pkg/fgdbtest/scenario:scenario_test",
+        "//pkg/fgdbtest/scenarios/claims:claims_test",
+    ],
+)
+
+test_suite(
+    name = "nightly_tier",
+    tests = [
+        ":pr_tier",
+        "//pkg/fgdbtest/scenarios/cluster:cluster_test",
+    ],
+)
+
+test_suite(
+    name = "weekly_tier",
+    tests = [":nightly_tier"],
+)
+
+test_suite(
+    name = "interim_tier",
+    tests = [":nightly_tier"],
+)

@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "porcupine",
+    testonly = True,
+    srcs = [
+        "bitset.go",
+        "checker.go",
+        "model.go",
+        "porcupine.go",
+        "visualization.go",
+    ],
+    embedsrcs = glob(["visualization/**"]),
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/third_party/porcupine",
+    visibility = ["//pkg/fgdbtest:__subpackages__"],
+)
