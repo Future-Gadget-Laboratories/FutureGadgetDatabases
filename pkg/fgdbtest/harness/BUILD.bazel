@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/fgdbtest/claims",
+        "//pkg/fgdbtest/cluster",
         "//pkg/fgdbtest/faults",
         "//pkg/fgdbtest/labels",
         "//pkg/fgdbtest/prodimport",

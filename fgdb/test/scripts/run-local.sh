@@ -63,7 +63,7 @@ trap cleanup_work EXIT
 
 cli=${FGDB_TEST_BIN:-$FGDB_WORK/fgdb-test}
 if [[ ! -x "$cli" ]]; then
-  (cd "$root" && go build -o "$cli" ./pkg/cmd/fgdb-test)
+  (cd "$root" && fgdb_exec go build -o "$cli" ./pkg/cmd/fgdb-test)
 fi
 
 out=${FGDB_OUTPUT:-$FGDB_WORK/out}
@@ -76,7 +76,8 @@ case "$out" in
 esac
 mkdir -p "$out"
 cd "$root"
-"$cli" run --tier "$tier" --root "$root" --output "$out"
+# Candidate binaries and workloads are started with an allowlisted environment.
+fgdb_exec "$cli" run --tier "$tier" --root "$root" --output "$out"
 echo "summary: $out/summary.md"
 if [[ -f "$out/summary.md" ]]; then
   cat "$out/summary.md"

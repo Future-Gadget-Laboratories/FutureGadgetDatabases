@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/claims"
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/faults"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/labels"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/prodimport"
@@ -209,6 +210,11 @@ func (h *Harness) ensureFaultLines() {
 
 func runCommand(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	env, err := cluster.CommandEnv()
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = os.Getenv("FGDB_REPO_ROOT")

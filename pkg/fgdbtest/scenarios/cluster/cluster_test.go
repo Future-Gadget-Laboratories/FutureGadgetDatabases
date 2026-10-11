@@ -51,9 +51,10 @@ func TestThreeNodeSlice(t *testing.T) {
 			SourceSHA:       os.Getenv("FGDB_SOURCE_SHA"),
 			CandidateSHA256: os.Getenv("FGDB_CANDIDATE_SHA256"),
 			PreviousSHA256:  os.Getenv("FGDB_PREVIOUS_SHA256"),
-			Tier:            "interim",
+			Tier:            tierName(),
 		},
-		OnlySteps: scenario.ParseOnly(os.Getenv("FGDB_ONLY_STEPS")),
+		OnlySteps:      scenario.ParseOnly(os.Getenv("FGDB_ONLY_STEPS")),
+		RequireCluster: os.Getenv("FGDB_REQUIRE_CLUSTER") == "1",
 	})
 	if rep != nil {
 		t.Log(rep.Markdown())
@@ -61,4 +62,11 @@ func TestThreeNodeSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func tierName() string {
+	if tier := os.Getenv("FGDB_TIER"); tier != "" {
+		return tier
+	}
+	return "interim"
 }

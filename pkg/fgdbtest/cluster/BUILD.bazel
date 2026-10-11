@@ -5,6 +5,7 @@ go_library(
     testonly = True,
     srcs = [
         "cluster.go",
+        "env.go",
         "identity.go",
         "ports.go",
         "proc.go",

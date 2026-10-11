@@ -14,7 +14,7 @@ import (
 
 func (r *run) backup() error {
 	if !r.want(stepBackup) {
-		return nil
+		return errNotRun
 	}
 	bin, err := r.backupBin()
 	if err != nil {
@@ -66,6 +66,9 @@ func (r *run) backupBin() (string, error) {
 	}
 	out := filepath.Join(r.cfg.WorkDir, "fgdb-backup")
 	cmd := exec.CommandContext(r.ctx, "go", "build", "-o", out, ".")
+	if err := useCleanEnv(cmd); err != nil {
+		return "", err
+	}
 	cmd.Dir = filepath.Join(r.cfg.RepoRoot, "pkg", "cmd", "fgdb-backup")
 	log, err := cmd.CombinedOutput()
 	if err != nil {
@@ -76,6 +79,9 @@ func (r *run) backupBin() (string, error) {
 
 func runTool(ctx context.Context, bin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, bin, args...)
+	if err := useCleanEnv(cmd); err != nil {
+		return err
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("fgdb-backup %s: %w\n%s", args[0], err, out)

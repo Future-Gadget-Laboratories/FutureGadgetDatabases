@@ -27,6 +27,10 @@ func Run(ctx context.Context, cfg Config) (rep *report.Report, err error) {
 	defer func() {
 		err = joinCleanup(err, r.finish())
 	}()
+	if err = rejectOnlySteps(cfg); err != nil {
+		r.noteSetup(err)
+		return rep, err
+	}
 	if err = r.prepare(); err != nil {
 		r.noteSetup(err)
 		return rep, err
@@ -170,8 +174,31 @@ func (r *run) want(step string) bool {
 	return ok
 }
 
+const (
+	tierInterim    = "interim"
+	tierRelease    = "release"
+	omittedDetail  = "omitted by FGDB_ONLY_STEPS"
+	onlyStepsBlock = "FGDB_ONLY_STEPS is not allowed when the cluster is required or the tier is interim or release"
+)
+
+// rejectOnlySteps reports a filter that would skip required checks on a
+// release run. A local tier may filter, and those runs are not a pass.
+func rejectOnlySteps(cfg Config) error {
+	if len(cfg.OnlySteps) == 0 {
+		return nil
+	}
+	if cfg.RequireCluster || cfg.Meta.Tier == tierInterim || cfg.Meta.Tier == tierRelease {
+		return errors.New(onlyStepsBlock)
+	}
+	return nil
+}
+
+// errNotRun means the step was filtered out. Its claim stays unrecorded
+// until the omitted-check pass marks it not tested.
+var errNotRun = errors.New("step was not selected")
+
 func (r *run) note(id string, err error) {
-	if !r.want(stepFor(id)) && len(r.cfg.OnlySteps) > 0 {
+	if errors.Is(err, errNotRun) {
 		return
 	}
 	outcome := labels.Pass
@@ -218,18 +245,27 @@ func (r *run) noteSetup(err error) {
 }
 
 func (r *run) failUnrecorded(msg string) {
+	outcome := labels.Fail
+	detail := msg
 	if len(r.cfg.OnlySteps) > 0 {
-		return
+		outcome = labels.NotTested
+		detail = omittedDetail
 	}
 	for _, id := range ClusterClaims() {
 		if id == ClaimPartition || id == ClaimDisk {
 			continue
 		}
-		if r.rep.Outcome(id) == "" {
-			r.rep.Set(id, labels.Fail, msg)
-			r.failed = true
-		}
+		r.missed(id, outcome, detail)
 	}
+}
+
+func (r *run) missed(id, outcome, detail string) {
+	if r.rep.Outcome(id) != "" {
+		return
+	}
+	r.rep.Set(id, outcome, detail)
+	r.rep.AddStep(report.StepResult{ID: id, Outcome: outcome, Detail: detail, Required: true})
+	r.failed = true
 }
 
 func (r *run) stopClients() error {

@@ -128,6 +128,9 @@ func (r *run) recorderBin() (string, error) {
 	}
 	out := filepath.Join(r.cfg.WorkDir, "fgdb-test")
 	cmd := exec.Command("go", "build", "-o", out, "./pkg/cmd/fgdb-test")
+	if err := useCleanEnv(cmd); err != nil {
+		return "", err
+	}
 	cmd.Dir = r.cfg.RepoRoot
 	log, err := cmd.CombinedOutput()
 	if err != nil {
@@ -155,6 +158,10 @@ func (p *procSet) start(dir, name, bin string, args []string) error {
 		return err
 	}
 	cmd := exec.Command(bin, args...)
+	if err := useCleanEnv(cmd); err != nil {
+		_ = logFile.Close()
+		return err
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -217,6 +224,15 @@ func (p *procSet) reap() error {
 		}
 	}
 	return err
+}
+
+func useCleanEnv(cmd *exec.Cmd) error {
+	env, err := cluster.CommandEnv()
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
+	return nil
 }
 
 func startClientErr(name string, err error) error {

@@ -24,6 +24,7 @@ const (
 	pollInterval = 200 * time.Millisecond
 	survivorText = "still running"
 	stillRunning = "pid %d " + survivorText
+	notFoundText = "original process was not found"
 )
 
 func (c *Cluster) signalNode(ctx context.Context, index int, kill bool) error {
@@ -38,7 +39,7 @@ func (c *Cluster) signalNode(ctx context.Context, index int, kill bool) error {
 	if kill {
 		sig = sigKill
 	}
-	if err := deliver(n.ID, sig); err != nil {
+	if err := sendSignal(n.ID, sig, kill); err != nil {
 		return signalNodeErr(index, err)
 	}
 	if err := waitIdentity(ctx, n.ID, stopTimeout); err != nil {
@@ -50,16 +51,35 @@ func (c *Cluster) signalNode(ctx context.Context, index int, kill bool) error {
 	return nil
 }
 
-func deliver(id Identity, sig unix.Signal) error {
+// sendSignal returns an identity mismatch from a fault.
+// Cleanup (SIGTERM) reports that the original process was not found.
+func sendSignal(id Identity, sig unix.Signal, kill bool) error {
 	err := Signal(id, sig)
-	if errors.Is(err, ErrGone) || errors.Is(err, ErrMismatch) {
+	if kill {
+		return faultResult(err)
+	}
+	return cleanupResult(err)
+}
+
+func faultResult(err error) error {
+	if errors.Is(err, ErrGone) {
 		return nil
 	}
 	return err
 }
 
+func cleanupResult(err error) error {
+	if err == nil || errors.Is(err, ErrGone) {
+		return nil
+	}
+	if errors.Is(err, ErrMismatch) {
+		return fmt.Errorf("%s: %w", notFoundText, err)
+	}
+	return err
+}
+
 func finishStop(ctx context.Context, index int, id Identity, waitErr error) error {
-	if err := deliver(id, sigKill); err != nil {
+	if err := cleanupResult(Signal(id, sigKill)); err != nil {
 		return errors.Join(waitErr, signalNodeErr(index, err))
 	}
 	if err := waitIdentity(ctx, id, stopTimeout); err != nil {
@@ -162,12 +182,22 @@ func (c *Cluster) Reap() error {
 		return nil
 	}
 	var err error
-	for _, n := range c.nodes {
-		if one := reapOne(n.ID); one != nil {
-			err = errors.Join(err, fmt.Errorf("node %d: %w", n.Index+1, one))
+	for i := range c.nodes {
+		if one := c.finishNode(i); one != nil {
+			err = errors.Join(err, fmt.Errorf("node %d: %w", c.nodes[i].Index+1, one))
 		}
 	}
 	return err
+}
+
+func (c *Cluster) finishNode(index int) error {
+	if c.nodes[index].tracked {
+		return c.killTracked(index)
+	}
+	if c.nodes[index].ID.Start == "" {
+		return nil
+	}
+	return reapOne(c.nodes[index].ID)
 }
 
 // ReapProcess is the final kill-and-reap for one recorded process.
@@ -179,11 +209,87 @@ func reapOne(id Identity) error {
 	if id.PID <= 0 {
 		return nil
 	}
-	if err := deliver(id, sigKill); err != nil {
+	if id.Start == "" || id.Exe == "" {
+		return manualCleanup(id.PID, nil)
+	}
+	if err := cleanupResult(Signal(id, sigKill)); err != nil {
 		return err
 	}
 	if err := waitIdentity(context.Background(), id, stopTimeout); err != nil {
 		return fmt.Errorf(stillRunning, id.PID)
 	}
 	return nil
+}
+
+func (c *Cluster) remember(index, pid int) {
+	c.closeTracked(index)
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		c.nodes[index].ID = Identity{PID: pid}
+		return
+	}
+	fd, fdErr := unix.PidfdOpen(pid, 0)
+	c.nodes[index].proc = proc
+	c.nodes[index].ID = Identity{PID: pid}
+	if fdErr != nil {
+		return
+	}
+	c.nodes[index].pidfd = fd
+	c.nodes[index].tracked = true
+}
+
+func (c *Cluster) closeTracked(index int) {
+	n := &c.nodes[index]
+	if !n.tracked {
+		return
+	}
+	_ = unix.Close(n.pidfd)
+	n.tracked = false
+	n.pidfd = 0
+}
+
+func (c *Cluster) killTracked(index int) error {
+	n := &c.nodes[index]
+	pid := n.ID.PID
+	if !n.tracked {
+		if pid > 0 && n.ID.Start == "" {
+			return manualCleanup(pid, nil)
+		}
+		return nil
+	}
+	fd := n.pidfd
+	n.tracked = false
+	n.pidfd = 0
+	defer func() { _ = unix.Close(fd) }()
+	err := unix.PidfdSendSignal(fd, sigKill, nil, 0)
+	if err != nil && !errors.Is(err, unix.ESRCH) {
+		return manualCleanup(pid, err)
+	}
+	if n.proc != nil {
+		_, _ = n.proc.Wait()
+	}
+	return waitPidfd(context.Background(), fd, pid)
+}
+
+func waitPidfd(ctx context.Context, fd, pid int) error {
+	deadline := time.Now().Add(stopTimeout)
+	for {
+		err := unix.PidfdSendSignal(fd, sigKill, nil, 0)
+		if errors.Is(err, unix.ESRCH) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(stillRunning, pid)
+		}
+		if err := sleep(ctx, pollInterval); err != nil {
+			return err
+		}
+	}
+}
+
+func manualCleanup(pid int, err error) error {
+	if err == nil {
+		return fmt.Errorf("manual cleanup required for pid %d", pid)
+	}
+	return fmt.Errorf("manual cleanup required for pid %d: %w", pid, err)
 }

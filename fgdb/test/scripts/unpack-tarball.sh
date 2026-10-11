@@ -4,10 +4,6 @@
 # Members are written to stderr. The new directory is written to stdout.
 set -euo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=fgdb/test/scripts/scrub-credentials.sh
-. "$here/scrub-credentials.sh"
-
 if [[ "$(id -u)" -eq 0 ]]; then
   echo "refusing to extract a tarball as root" >&2
   exit 1

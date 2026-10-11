@@ -19,7 +19,7 @@ const bankSQL = `SELECT count(*)::INT, COALESCE(sum(balance), 0)::INT FROM bank.
 
 func (r *run) killOne() error {
 	if !r.want(stepKill) {
-		return nil
+		return errNotRun
 	}
 	if err := r.cluster.KillNode(0); err != nil {
 		return err
@@ -40,7 +40,7 @@ func (r *run) killOne() error {
 
 func (r *run) pauseOne() error {
 	if !r.want(stepPause) {
-		return nil
+		return errNotRun
 	}
 	if err := r.cluster.PauseNode(1); err != nil {
 		return err
@@ -56,7 +56,7 @@ func (r *run) pauseOne() error {
 
 func (r *run) killTwo() error {
 	if !r.want(stepKillTwo) {
-		return nil
+		return errNotRun
 	}
 	if err := r.cluster.KillNode(1); err != nil {
 		return err

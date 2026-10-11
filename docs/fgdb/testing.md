@@ -42,7 +42,7 @@ fgdb/test/run.sh interim
 
 `fgdb/test/scripts/run-local.sh --tier=pr` is the same entry point.
 
-The 3-node cluster asks the operating system for free ports and tries a new set if a port is already taken. Temporary files for one run sit under `FGDB_WORK`, or under `RUNNER_TEMP` or `TMPDIR` when that is unset. `run.sh` removes the directory when it created it. The interim workflow removes its directory at the end of the job, including when the suite fails. That workflow does not leave a GitHub token in `.git/config`, and the runner drops the token variables before it starts a database or test binary.
+The 3-node cluster asks the operating system for free ports and tries a new set if a port is already taken. Temporary files for one run sit under `FGDB_WORK`, or under `RUNNER_TEMP` or `TMPDIR` when that is unset. `run.sh` removes the directory when it created it. The interim workflow removes its directory at the end of the job, including when the suite fails. That workflow does not leave a GitHub token in `.git/config`. `run.sh` starts the suite with `env -i` and a short allowlist (`PATH`, `HOME`, `TMPDIR`, `FGDB_*`, `GO*`, and locale variables). Each database and workload process is given that same allowlist. A variable whose name contains `TOKEN`, `SECRET`, or `PASSWORD`, or whose name starts with `ACTIONS_`, fails the run.
 
 The run writes `result.json` and `summary.md`. The first two lines of the summary are always:
 
@@ -69,7 +69,7 @@ It then:
 10. Runs `crdb_internal.check_consistency`. If that call cannot run, the step fails.
 11. Builds `fgdb-backup` if `FGDB_BACKUP_BIN` is unset, backs up the bank database from one node, restores it on another, and compares the count, the sum, and a checksum.
 
-`FGDB_ONLY_STEPS` limits the fault steps. Example: `node-kill,node-pause`. The replication setup and the clients still run. A limited run does not mark the other claims as failed.
+`FGDB_ONLY_STEPS` limits the fault steps on a local tier such as `pr`. Example: `FGDB_TIER=pr FGDB_ONLY_STEPS=node-kill,node-pause`. The replication setup and the clients still run. Checks that were left out are marked not tested, and the summary result is not a pass. The interim tier, the release tier, and `FGDB_REQUIRE_CLUSTER=1` reject `FGDB_ONLY_STEPS`.
 
 You can run the same scenario as a Go test:
 

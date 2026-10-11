@@ -45,6 +45,9 @@ type Node struct {
 	Cache    string
 	SQLMem   string
 	ID       Identity
+	proc     *os.Process
+	pidfd    int
+	tracked  bool
 }
 
 // Cluster is a group of nodes that share one join list.
@@ -88,7 +91,11 @@ func checkBinary(path string) error {
 
 func launch(ctx context.Context, spec Spec, attempt int) (*Cluster, error) {
 	spec.Dir = filepath.Join(spec.Dir, fmt.Sprintf("try-%d", attempt))
-	c := &Cluster{spec: spec, env: append(os.Environ(), diagnosticsEnv)}
+	env, err := CommandEnv()
+	if err != nil {
+		return nil, err
+	}
+	c := &Cluster{spec: spec, env: env}
 	if err := c.layout(); err != nil {
 		return nil, err
 	}
@@ -201,12 +208,20 @@ func (c *Cluster) noteStarted(index int, n Node) error {
 	if err != nil {
 		return fmt.Errorf("start node %d: pid file: %w", index+1, err)
 	}
+	c.remember(index, pid)
 	id, err := Capture(pid, n.Binary)
 	if err != nil {
-		return startNodeErr(index, err)
+		return captureFailed(index, pid, c.nodes[index].tracked, err)
 	}
 	c.nodes[index].ID = id
 	return nil
+}
+
+func captureFailed(index, pid int, tracked bool, err error) error {
+	if tracked {
+		return fmt.Errorf("start node %d: recorded pid %d for cleanup: %w", index+1, pid, err)
+	}
+	return errors.Join(startNodeErr(index, err), manualCleanup(pid, nil))
 }
 
 func startArgs(n Node, join string) []string {
@@ -238,7 +253,15 @@ func (c *Cluster) Stop(ctx context.Context) error {
 }
 
 // StopNode sends SIGTERM, then SIGKILL if the process stays up.
+// A daemon recorded before its identity check is killed through its pidfd.
 func (c *Cluster) StopNode(ctx context.Context, index int) error {
+	n, err := c.node(index)
+	if err != nil {
+		return err
+	}
+	if n.ID.PID > 0 && n.ID.Start == "" {
+		return c.killTracked(index)
+	}
 	return c.signalNode(ctx, index, false)
 }
 

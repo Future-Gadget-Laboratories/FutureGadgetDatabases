@@ -93,8 +93,6 @@ jobs:
           CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
         run: |
           set -euo pipefail
-          # shellcheck disable=SC1091
-          . fgdb/test/scripts/scrub-credentials.sh
           case "$CANDIDATE_URL" in
             https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/*) ;;
             *)
@@ -136,8 +134,9 @@ jobs:
           FGDB_OUTPUT: ${{ env.FGDB_WORK }}/out
         run: |
           set -euo pipefail
-          # run.sh drops GITHUB_TOKEN and the other runner credential variables
-          # before it builds or starts a binary. Checkout left no token in .git/config.
+          # run.sh starts the suite with env -i and an allowlist. Go-spawned
+          # candidate binaries and workloads get that same allowlist in cmd.Env.
+          # Checkout left no token in .git/config.
           bash fgdb/test/run.sh interim
 
       - name: Show the summary

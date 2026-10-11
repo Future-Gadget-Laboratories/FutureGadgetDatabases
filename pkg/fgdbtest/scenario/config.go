@@ -5,6 +5,7 @@
 package scenario
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -13,22 +14,23 @@ import (
 
 // Config is one interim cluster run.
 type Config struct {
-	Candidate     string
-	Previous      string
-	WorkDir       string
-	OutputDir     string
-	RepoRoot      string
-	BankRows      int
-	KVConcurrency int
-	Outage        time.Duration
-	PauseFor      time.Duration
-	RecoverWait   time.Duration
-	ReplicateWait time.Duration
-	Warmup        time.Duration
-	ExpectGo      string
-	BackupBin     string
-	Meta          report.Meta
-	OnlySteps     map[string]struct{}
+	Candidate      string
+	Previous       string
+	WorkDir        string
+	OutputDir      string
+	RepoRoot       string
+	BankRows       int
+	KVConcurrency  int
+	Outage         time.Duration
+	PauseFor       time.Duration
+	RecoverWait    time.Duration
+	ReplicateWait  time.Duration
+	Warmup         time.Duration
+	ExpectGo       string
+	BackupBin      string
+	Meta           report.Meta
+	OnlySteps      map[string]struct{}
+	RequireCluster bool
 }
 
 // ApplyDefaults fills zero values used by a laptop-sized run.
@@ -53,6 +55,9 @@ func ApplyDefaults(cfg Config) Config {
 	}
 	if cfg.Warmup == 0 {
 		cfg.Warmup = 5 * time.Second
+	}
+	if !cfg.RequireCluster && os.Getenv("FGDB_REQUIRE_CLUSTER") == "1" {
+		cfg.RequireCluster = true
 	}
 	return cfg
 }

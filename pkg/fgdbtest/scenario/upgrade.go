@@ -11,7 +11,7 @@ import (
 
 func (r *run) upgrade() error {
 	if !r.want(stepUpgrade) {
-		return nil
+		return errNotRun
 	}
 	if r.cfg.Previous == "" || r.cfg.Candidate == "" {
 		return fmt.Errorf("rolling upgrade needs the previous release binary and the candidate binary")

@@ -144,7 +144,7 @@ func textOne(text string) string {
 
 func (r *run) porcupine() error {
 	if !r.want(stepPorcupine) {
-		return nil
+		return errNotRun
 	}
 	ops, err := invariants.ReadHistory(r.history)
 	if err != nil {
@@ -158,7 +158,7 @@ func (r *run) porcupine() error {
 
 func (r *run) consistency() error {
 	if !r.want(stepConsistency) {
-		return nil
+		return errNotRun
 	}
 	out, err := r.cluster.SQL(r.ctx, 0, consistencySQL)
 	if err != nil {

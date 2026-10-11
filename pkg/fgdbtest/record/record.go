@@ -161,12 +161,13 @@ func writeOnce(ctx context.Context, id int, pool *pgxpool.Pool, w *histWriter) {
 func readOnce(ctx context.Context, id int, pool *pgxpool.Pool, w *histWriter) {
 	call := time.Now().UnixNano()
 	value, err := readValue(ctx, pool)
-	if ctx.Err() != nil && err != nil {
+	result := keepResult(ctx, classify(err))
+	if result == "" {
 		return
 	}
 	_ = w.write(invariants.Op{
 		Client: id, Kind: labels.KindRead, Value: value,
-		CallNS: call, ReturnNS: time.Now().UnixNano(), Result: classify(err),
+		CallNS: call, ReturnNS: time.Now().UnixNano(), Result: result,
 	})
 }
 
@@ -190,9 +191,13 @@ func performWrite(ctx context.Context, pool *pgxpool.Pool, value int) string {
 	return labels.ResultOK
 }
 
-// keepResult drops an unfinished call when the process is shutting down.
+// keepResult keeps a call that may have been applied.
+// A shutdown drops a call only when it was definitely not applied.
 func keepResult(ctx context.Context, result string) string {
-	if ctx.Err() != nil && result != labels.ResultOK {
+	if result == labels.ResultUnknown || result == labels.ResultOK {
+		return result
+	}
+	if ctx.Err() != nil {
 		return ""
 	}
 	return result

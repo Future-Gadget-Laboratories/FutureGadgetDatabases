@@ -34,6 +34,7 @@ go_test(
     srcs = [
         "checks_test.go",
         "cleanup_test.go",
+        "onlysteps_test.go",
     ],
     embed = [":scenario"],
 )

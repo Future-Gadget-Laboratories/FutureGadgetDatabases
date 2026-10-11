@@ -37,7 +37,9 @@ func (c *Cluster) Exec(ctx context.Context, index int, args ...string) (string, 
 
 func (c *Cluster) run(ctx context.Context, binary string, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = c.env
+	if err := c.applyEnv(cmd); err != nil {
+		return "", err
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -56,13 +58,28 @@ func (c *Cluster) runStart(ctx context.Context, n Node, args []string) error {
 	}
 	defer logFile.Close()
 	cmd := exec.CommandContext(ctx, n.Binary, args...)
-	cmd.Env = c.env
+	if err := c.applyEnv(cmd); err != nil {
+		return err
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Run(); err != nil {
 		body, _ := os.ReadFile(logFile.Name())
 		return fmt.Errorf("%w\n%s", err, trimOutput(string(body)))
 	}
+	return nil
+}
+
+func (c *Cluster) applyEnv(cmd *exec.Cmd) error {
+	if c != nil && len(c.env) > 0 {
+		cmd.Env = c.env
+		return nil
+	}
+	env, err := CommandEnv()
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
 	return nil
 }
 
@@ -90,6 +107,11 @@ func (c *Cluster) Init(ctx context.Context) error {
 // Version runs `version` on the cluster binary and checks Distribution: OSS.
 func Version(ctx context.Context, binary, expectGo string) error {
 	cmd := exec.CommandContext(ctx, binary, "version")
+	env, err := CommandEnv()
+	if err != nil {
+		return err
+	}
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("version: %w\n%s", err, trimOutput(string(out)))
