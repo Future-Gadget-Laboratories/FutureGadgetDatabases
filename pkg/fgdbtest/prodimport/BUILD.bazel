@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "prodimport",
+    testonly = True,
+    srcs = ["scan.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/prodimport",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "prodimport_test",
+    srcs = ["scan_test.go"],
+    embed = [":prodimport"],
+)

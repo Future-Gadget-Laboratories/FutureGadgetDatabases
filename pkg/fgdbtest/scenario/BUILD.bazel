@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "scenario",
+    testonly = True,
+    srcs = [
+        "backup.go",
+        "binary.go",
+        "bootstrap.go",
+        "checks.go",
+        "clients.go",
+        "config.go",
+        "faultsteps.go",
+        "ids.go",
+        "run.go",
+        "upgrade.go",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/scenario",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/fgdbtest/cluster",
+        "//pkg/fgdbtest/faults",
+        "//pkg/fgdbtest/invariants",
+        "//pkg/fgdbtest/labels",
+        "//pkg/fgdbtest/report",
+        "//pkg/fgdbtest/workdir",
+        "@org_golang_x_sys//unix",
+    ],
+)
+
+go_test(
+    name = "scenario_test",
+    srcs = [
+        "checks_test.go",
+        "cleanup_test.go",
+        "onlysteps_test.go",
+    ],
+    embed = [":scenario"],
+)

@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "record",
+    testonly = True,
+    srcs = ["record.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/record",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/fgdbtest/invariants",
+        "//pkg/fgdbtest/labels",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_jackc_pgx_v5//pgconn",
+        "@com_github_jackc_pgx_v5//pgxpool",
+    ],
+)
+
+go_test(
+    name = "record_test",
+    srcs = [
+        "classify_test.go",
+        "keep_test.go",
+    ],
+    embed = [":record"],
+    deps = [
+        "//pkg/fgdbtest/invariants",
+        "//pkg/fgdbtest/labels",
+        "@com_github_jackc_pgx_v5//pgconn",
+    ],
+)

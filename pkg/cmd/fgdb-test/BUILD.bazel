@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "fgdb-test_lib",
+    testonly = True,
+    srcs = ["main.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/cmd/fgdb-test",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/fgdbtest/harness",
+        "//pkg/fgdbtest/record",
+        "//pkg/fgdbtest/workdir",
+    ],
+)
+
+go_binary(
+    name = "fgdb-test",
+    testonly = True,
+    embed = [":fgdb-test_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "fgdb-test_test",
+    srcs = ["main_test.go"],
+    embed = [":fgdb-test_lib"],
+)

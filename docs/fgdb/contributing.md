@@ -31,6 +31,8 @@ Build the open-source binary if your change affects what we ship:
 
 The `Distribution` line should still say `OSS`.
 
+The suite and how to run it are in [testing.md](testing.md). `fgdb/test/run.sh pr` checks the claims file and the new Go tests.
+
 The full release compile is the maintainer workflow in [RELEASING.md](RELEASING.md). You do not need to run it for a docs pull request.
 
 ## Where to ask

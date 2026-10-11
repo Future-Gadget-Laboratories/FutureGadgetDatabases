@@ -1,0 +1,170 @@
+# Interim slice of the FGDb suite.
+#
+# Trigger: workflow_dispatch only. Pull requests and ordinary pushes do not run it.
+# The job runs on a self-hosted runner labeled fgdb-build. It reads
+# /etc/fgdb/runner.env for the Bazel cache and resource caps, the same way
+# fgdb-oss-release.yml does. It has no secrets.
+#
+# Pass the candidate tarball URL and its sha256. The previous binary is the
+# v23.2.15-fgdb.1 release. Both checksums are verified before the suite starts.
+
+name: FGDB suite interim
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_url:
+        description: Public release URL of the candidate cockroach-oss tarball
+        required: true
+        type: string
+      candidate_sha256:
+        description: sha256 of the candidate tarball
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: fgdb-suite-interim
+  cancel-in-progress: false
+
+jobs:
+  interim:
+    name: Interim slice
+    runs-on: [self-hosted, fgdb-build]
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    env:
+      EXPECT_GO: go1.21.12
+      PREVIOUS_URL: https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-fgdb.1/cockroach-oss-v23.2.15.linux-amd64.tgz
+      PREVIOUS_SHA256: 5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.21.12"
+
+      - name: Require the runner cache paths
+        run: |
+          set -euo pipefail
+          if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
+            if [[ -f /etc/fgdb/runner.env ]]; then
+              set -a
+              # shellcheck disable=SC1091
+              . /etc/fgdb/runner.env
+              set +a
+            fi
+          fi
+          if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
+            echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
+            echo "The self-hosted runner labeled fgdb-build needs /etc/fgdb/runner.env." >&2
+            exit 1
+          fi
+          {
+            echo "FGDB_BAZEL_DISK_CACHE=${FGDB_BAZEL_DISK_CACHE}"
+            echo "FGDB_BAZEL_OUTPUT_BASE=${FGDB_BAZEL_OUTPUT_BASE}"
+            echo "FGDB_LOCAL_CPU=${FGDB_LOCAL_CPU:-24}"
+            echo "FGDB_LOCAL_RAM_MB=${FGDB_LOCAL_RAM_MB:-81920}"
+          } >> "$GITHUB_ENV"
+
+      - name: Write Bazel user config
+        run: |
+          set -euo pipefail
+          bash build/fgdb/write-bazelrc-user.sh "${PWD}"
+
+      - name: Prepare a per-run directory
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/fgdb-suite-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$work"
+          echo "FGDB_WORK=${work}" >> "$GITHUB_ENV"
+
+      - name: Download and verify the binaries
+        env:
+          CANDIDATE_URL: ${{ inputs.candidate_url }}
+          CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$CANDIDATE_URL" in
+            https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/*) ;;
+            *)
+              echo "candidate URL must be a release asset from this repository" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "$CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "candidate sha256 must be 64 hex characters" >&2
+            exit 1
+          fi
+          curl -fsSL "$CANDIDATE_URL" -o "${FGDB_WORK}/candidate.tgz"
+          printf '%s  %s\n' "$CANDIDATE_SHA256" "${FGDB_WORK}/candidate.tgz" | sha256sum -c -
+          curl -fsSL "$PREVIOUS_URL" -o "${FGDB_WORK}/previous.tgz"
+          printf '%s  %s\n' "$PREVIOUS_SHA256" "${FGDB_WORK}/previous.tgz" | sha256sum -c -
+          # Checksums are verified above. unpack-tarball.sh lists members, rejects
+          # unsafe ones, and extracts unprivileged into a fresh directory.
+          candidate_dir=$(bash fgdb/test/scripts/unpack-tarball.sh "${FGDB_WORK}/candidate.tgz" "$FGDB_WORK")
+          previous_dir=$(bash fgdb/test/scripts/unpack-tarball.sh "${FGDB_WORK}/previous.tgz" "$FGDB_WORK")
+          candidate=$(find "$candidate_dir" -type f -name cockroach -print -quit)
+          previous=$(find "$previous_dir" -type f -name cockroach -print -quit)
+          if [[ -z "$candidate" || -z "$previous" ]]; then
+            echo "a tarball did not contain a cockroach binary" >&2
+            exit 1
+          fi
+          {
+            echo "FGDB_COCKROACH=${candidate}"
+            echo "FGDB_PREVIOUS=${previous}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run the interim tier
+        env:
+          FGDB_EXPECT_GO: ${{ env.EXPECT_GO }}
+          FGDB_REQUIRE_CLUSTER: "1"
+          FGDB_RUN_ID: ${{ github.run_id }}
+          FGDB_SOURCE_SHA: ${{ github.sha }}
+          FGDB_CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+          FGDB_PREVIOUS_SHA256: ${{ env.PREVIOUS_SHA256 }}
+          FGDB_OUTPUT: ${{ env.FGDB_WORK }}/out
+        run: |
+          set -euo pipefail
+          # run.sh starts the suite with env -i and an allowlist. Go-spawned
+          # candidate binaries and workloads get that same allowlist in cmd.Env.
+          # Checkout left no token in .git/config.
+          bash fgdb/test/run.sh interim
+
+      - name: Show the summary
+        if: always()
+        run: |
+          set -euo pipefail
+          summary="${FGDB_WORK}/out/summary.md"
+          if [[ -f "$summary" ]]; then
+            cat "$summary"
+          else
+            echo "summary.md was not written"
+          fi
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fgdb-suite-interim
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ env.FGDB_WORK }}/out/result.json
+            ${{ env.FGDB_WORK }}/out/summary.md
+
+      - name: Clean the per-run directory
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -n "${FGDB_WORK:-}" ]]; then
+            rm -rf "${FGDB_WORK}"
+          fi

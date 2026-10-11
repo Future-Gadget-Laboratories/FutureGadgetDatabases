@@ -1,0 +1,123 @@
+# Claims FGDb makes in its public docs. One test id is required.
+# Status partial means a test exists and a full lab run is still the check
+# that moves it to tested. Untested fails the checker.
+# There is no downstream-product field. A downstream need arrives as an issue.
+- id: REPL-001
+  claim: Each range is copied to several nodes. The default for your tables is 3.
+  source: docs/fgdb/architecture.md#L35
+  category: replication
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: FT-001
+  claim: One node can die and the database can keep serving, as long as enough copies are left.
+  source: docs/fgdb/PROJECT.md#L10
+  category: faults
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: FT-002
+  claim: One stopped node leaves a majority. Reads and writes continue, and the node catches up when it starts again.
+  source: docs/fgdb/architecture.md#L47
+  category: faults
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: FT-003
+  claim: Two stopped nodes are not a majority. The range stops accepting writes until a second copy is back.
+  source: docs/fgdb/architecture.md#L48
+  category: faults
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: FT-010
+  claim: A network partition is not tested on one machine. The report says partition NOT tested.
+  source: docs/fgdb/testing.md
+  category: faults
+  tests:
+    - pkg/fgdbtest/report:TestSummaryLeadsWithUntestedFaults
+    - pkg/fgdbtest/faults:TestPartitionAndDiskStayNamed
+  tier: interim
+  status: partial
+- id: FT-011
+  claim: Disk faults are not tested on one machine. The report says disk faults NOT tested.
+  source: docs/fgdb/testing.md
+  category: faults
+  tests:
+    - pkg/fgdbtest/report:TestSummaryLeadsWithUntestedFaults
+    - pkg/fgdbtest/faults:TestPartitionAndDiskStayNamed
+  tier: interim
+  status: partial
+- id: CLIENT-001
+  claim: A client can use any live node. The bank workload, the kv workload, and the history recorder are separate processes.
+  source: docs/fgdb/architecture.md#L31
+  category: clients
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: CONS-001
+  claim: The bank workload only moves money. The row count stays at the loaded size and the sum of balances stays 0.
+  source: docs/fgdb/testing.md
+  category: consistency
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: CONS-002
+  claim: A single-key register history is checked with Porcupine. An empty history or a checker that cannot run is a failure.
+  source: docs/fgdb/testing.md
+  category: consistency
+  tests:
+    - pkg/fgdbtest/invariants:TestPorcupineAcceptsOrderedHistory
+    - pkg/fgdbtest/invariants:TestPorcupineRejectsEmptyHistory
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: CONS-003
+  claim: After the last fault, crdb_internal.check_consistency must run and report consistent ranges. Not being able to run it is a failure.
+  source: docs/fgdb/testing.md
+  category: consistency
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: SQL-001
+  claim: You talk to it with SQL. A logictest subset covers transactions, select, ranges, and distributed execution.
+  source: docs/fgdb/PROJECT.md#L10
+  category: sql
+  tests:
+    - //pkg/sql/logictest/tests/local:local_test
+    - //pkg/sql/logictest/tests/fakedist:fakedist_test
+    - //pkg/sql/logictest/tests/5node:5node_test
+  tier: interim
+  status: partial
+- id: KV-001
+  claim: The copies of one range use Raft to agree on the order of writes. kvnemesis checks the KV layer.
+  source: docs/fgdb/architecture.md#L37
+  category: kv
+  tests:
+    - //pkg/kv/kvnemesis:kvnemesis_test
+  tier: interim
+  status: partial
+- id: BAK-001
+  claim: fgdb-backup copies user databases with ordinary SQL and can restore them.
+  source: docs/fgdb/backup.md#L5
+  category: backup
+  tests:
+    - pkg/cmd/fgdb-backup:TestRoundtrip
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
+- id: UP-001
+  claim: A 3-node cluster can roll from the previous FGDb release binary to the candidate binary, one node at a time.
+  source: docs/fgdb/testing.md
+  category: upgrade
+  tests:
+    - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
+  tier: interim
+  status: partial
