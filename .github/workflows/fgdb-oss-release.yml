@@ -72,7 +72,7 @@ jobs:
       release_tag: ${{ steps.decide.outputs.release_tag }}
     steps:
       - name: Checkout helper scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
           sparse-checkout: build/fgdb
@@ -152,7 +152,7 @@ jobs:
       source_has_workflow: ${{ steps.meta.outputs.source_has_workflow }}
     steps:
       - name: Checkout release tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           path: tooling
@@ -163,7 +163,7 @@ jobs:
             build/deploy-oss
 
       - name: Checkout CockroachDB source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.gate.outputs.source_ref }}
           path: src
@@ -249,7 +249,7 @@ jobs:
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
 
       - name: Install the pinned Go toolchain
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.21.12"
 
@@ -291,7 +291,7 @@ jobs:
           echo "Built ${version} from ${source_sha}"
 
       - name: Upload tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fgdb-oss-linux-amd64
           retention-days: 14
@@ -312,13 +312,13 @@ jobs:
       contents: write
     steps:
       - name: Checkout release helper
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
           sparse-checkout: build/fgdb
 
       - name: Download tarball
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: fgdb-oss-linux-amd64
           path: dist
@@ -429,7 +429,7 @@ jobs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
       - name: Checkout image tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
           sparse-checkout: |
@@ -438,7 +438,7 @@ jobs:
             build/deploy-oss
 
       - name: Download tarball
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: fgdb-oss-linux-amd64
           path: dist
@@ -535,7 +535,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout release helper
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
           sparse-checkout: build/fgdb
