@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Fail when FGDb-owned source imports pkg/ccl or starts with a CSL header.
+# Starlark files (BUILD, WORKSPACE, .bazel, .bzl, .star) are included.
 # Usage: fgdb/test/scripts/check-boundary.sh
+# Set FGDB_BOUNDARY_ROOT to scan a fixture tree instead of this repository.
 set -euo pipefail
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-cd "$root"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 
 header_lines=25
 # The phrases are split so this file's own text is not a header match.
 csl_header='CockroachDB Software '"License"
 ccl_import='github.com/cockroachdb/cockroach/pkg/ccl'
 bazel_dep='//pkg/ccl'
-self_script='fgdb/test/scripts/check-boundary.sh'
 
 fail=0
 
@@ -35,10 +35,21 @@ bazel_depends_on_ccl() {
   grep -F -q -- "$bazel_dep" "$file"
 }
 
+if [[ -n "${FGDB_BOUNDARY_ROOT:-}" ]]; then
+  cd "$FGDB_BOUNDARY_ROOT"
+  find_roots=(.)
+else
+  cd "$repo_root"
+  find_roots=(pkg/fgdbtest pkg/cmd/fgdb-test pkg/cmd/fgdb-backup fgdb build/fgdb)
+fi
+
 while IFS= read -r file; do
-  if [[ "$file" == "$self_script" ]]; then
-    continue
-  fi
+  file=${file#./}
+  case "$file" in
+    fgdb/test/scripts/check-boundary.sh|fgdb/test/scripts/check-boundary_test.sh)
+      continue
+      ;;
+  esac
   case "$file" in
     *.go)
       if header_has_csl "$file"; then
@@ -53,14 +64,16 @@ while IFS= read -r file; do
         note "CSL header in ${file}"
       fi
       ;;
-    *.bazel)
+    *.bazel|*.bzl|*.star|BUILD|WORKSPACE|*/BUILD|*/WORKSPACE)
       if bazel_depends_on_ccl "$file"; then
         note "pkg/ccl Bazel dependency in ${file}"
       fi
       ;;
   esac
-done < <(find pkg/fgdbtest pkg/cmd/fgdb-test pkg/cmd/fgdb-backup fgdb build/fgdb \
-  -type f \( -name '*.go' -o -name '*.sh' -o -name '*.bazel' \) | sort)
+done < <(find "${find_roots[@]}" -type f \( \
+  -name '*.go' -o -name '*.sh' -o -name '*.bazel' -o -name '*.bzl' -o -name '*.star' \
+  -o -name 'BUILD' -o -name 'WORKSPACE' \
+\) | sort)
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1

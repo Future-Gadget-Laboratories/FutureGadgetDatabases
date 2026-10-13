@@ -1,10 +1,13 @@
 # Fast checks for FGDb-owned code.
 #
-# Runs on pull_request and on push to main, on GitHub-hosted ubuntu-latest.
-# It does not use a self-hosted runner, Bazel, or a lab host. It has no secrets.
+# Pull requests run when FGDb paths change. Every push to main runs the
+# same jobs, with no path filter. Both use GitHub-hosted ubuntu-latest.
+# This file does not use a self-hosted runner, Bazel, or a lab host.
+# It has no secrets.
 # The pr tier is fgdb/test/run.sh pr: claims, the production-import baseline,
 # and the Go tests that do not start a cluster.
 # Cluster-backed fgdb-backup tests stay in fgdb-backup-tests.yml.
+# The heavy compile is fgdb-pr-build.yml, and that file is workflow_dispatch only.
 
 name: FGDB checks
 
@@ -22,15 +25,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/**"
-      - "fgdb/**"
-      - "build/fgdb/**"
-      - "pkg/fgdbtest/**"
-      - "pkg/cmd/fgdb-test/**"
-      - "pkg/cmd/fgdb-backup/**"
-      - "go.mod"
-      - "go.sum"
 
 permissions: {}
 
@@ -203,6 +197,7 @@ jobs:
           bash build/fgdb/runner/read-config_test.sh
           bash build/fgdb/runner/update-checksums_test.sh
           bash build/fgdb/runner/runner-unit_test.sh
+          bash build/fgdb/require-repo-commit_test.sh
 
   boundary:
     name: CCL and CSL boundary
@@ -219,4 +214,7 @@ jobs:
           submodules: false
 
       - name: Check FGDb paths
-        run: bash fgdb/test/scripts/check-boundary.sh
+        run: |
+          set -euo pipefail
+          bash fgdb/test/scripts/check-boundary_test.sh
+          bash fgdb/test/scripts/check-boundary.sh
