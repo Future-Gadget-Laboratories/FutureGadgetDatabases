@@ -126,4 +126,10 @@ A doc line under `docs/fgdb/` that says "always", "guarantees", "survives", or "
 
 ## Where CI runs it
 
-`.github/workflows/fgdb-suite-interim.yml` is manual (`workflow_dispatch` only). It does not run on pull requests. It runs on a self-hosted runner labeled `fgdb-build`, reads `/etc/fgdb/runner.env` for the Bazel cache and the 24-thread / 96 GB limits, and has no secrets. You pass the candidate tarball URL and its sha256. The previous binary is the `v23.2.15-fgdb.1` release, checked against its published sha256.
+Three different workflows. They do not share a runner.
+
+`fgdb/test/run.sh pr` is the check you can run on a laptop. It needs Go 1.21. It does not need Bazel, and it does not start a cluster. The claims check, the production-import baseline, and the Go tests in `fgdb/test/tiers/pr.yaml` are the whole tier.
+
+A pull request that should compile `cockroach-oss` uses `.github/workflows/fgdb-pr-build.yml`. The workflow starts when the pull request is opened, reopened, marked ready for review, or gets a new commit. The build job runs only after a repository admin has marked it ready. That job asks for a self-hosted runner labeled `fgdb-pr-ephemeral`. It does not use the persistent runner labeled `fgdb-build`. The checkout has no credentials and the job has no secrets. Each pull request and commit gets its own Bazel output directory. Registering the ephemeral runner is a separate step. The workflow file does not do it. How to send a change is [contributing.md](contributing.md).
+
+`.github/workflows/fgdb-suite-interim.yml` is manual (`workflow_dispatch` only). It does not run on pull requests. It runs on a self-hosted runner labeled `fgdb-build` and reads `/etc/fgdb/runner.env`. Bazel is capped at 24 threads and 81920 MB of RAM. The runner slice itself has a 96G hard cap. Both numbers are in [RUNNER.md](RUNNER.md). The job has no secrets. You pass the candidate tarball URL and its sha256. The previous binary is the `v23.2.15-fgdb.1` release from [releases.md](releases.md), checked against sha256 `5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379`.

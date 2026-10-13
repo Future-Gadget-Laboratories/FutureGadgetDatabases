@@ -31,9 +31,17 @@ Build the open-source binary if your change affects what we ship:
 
 The `Distribution` line should still say `OSS`.
 
-The suite and how to run it are in [testing.md](testing.md). `fgdb/test/run.sh pr` checks the claims file and the new Go tests.
+The suite and how to run it are in [testing.md](testing.md). From the repository root:
 
-The full release compile is the maintainer workflow in [RELEASING.md](RELEASING.md). You do not need to run it for a docs pull request.
+```bash
+fgdb/test/run.sh pr
+```
+
+That checks the claims file, the production-import baseline, and the Go tests in the pr tier. It does not start a cluster and it does not need Bazel.
+
+A pull request that changes `pkg/` is compiled by `.github/workflows/fgdb-pr-build.yml` after a repository admin marks the pull request ready for review. The compile runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. It has no secrets. You do not start that compile by pushing alone. The release compile is the maintainer workflow in [RELEASING.md](RELEASING.md). You do not need either compile for a docs pull request.
+
+Newer behavior that is only in a CSL or Enterprise build goes through [CLEANROOM.md](CLEANROOM.md). A normal fix inside the v23.2.15 tree does not.
 
 ## Where to ask
 

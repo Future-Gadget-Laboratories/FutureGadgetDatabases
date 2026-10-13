@@ -11,6 +11,22 @@ ordinary pushes or pull requests. Pushing `v23.2.15-oss` publishes that
 release. Pushing `v23.2.15-fgdb.N` publishes a different release and leaves
 `v23.2.15-oss` where it is. `N` is an integer.
 
+## Already published
+
+Both of these exist. Download links, checksums, and digests for operators
+are in [releases.md](releases.md). Do not move either git tag.
+
+| Tag | What the public artifact is |
+| --- | --- |
+| `v23.2.15-oss` | First publish. Tarball sha256 `02a6b3dfdd69bcd54996a741cae3393202ba49560fc671f482b9a9ae61cef40f`. Image `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss` at `sha256:937ed06722111fe0a73a9bebb8b551edcda7169f75a4ceb02a906a2d89490828`. That tarball has `cockroach` and the GEOS libraries. |
+| `v23.2.15-fgdb.1` | Current publish. Tarball sha256 `5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379`. Image `:v23.2.15-fgdb.1` at `sha256:c71351abe5885f08f1e356c3497e1121591aed2110043d7adbfed577438bb173`. That tarball also has `fgdb-backup`. |
+
+The next fgdb tag would be `v23.2.15-fgdb.2`. Creating it is the same shape
+as the `v23.2.15-fgdb.1` section below, with the new number. The sections
+under "Cut" are the procedure that produced the tags above, including the
+failed publish attempts, so a later maintainer can see why the workflow
+looks the way it does.
+
 ## Before the first build
 
 1. Merge the workflow onto `main`.
@@ -25,6 +41,10 @@ The workflow does not start that build by itself; someone has to dispatch it
 or push the tag below.
 
 ## Cut v23.2.15-oss
+
+`v23.2.15-oss` is already published. This section is how that tag was cut.
+Pushing the tag again rebuilds and replaces the assets on the same commit.
+It does not move the tag.
 
 Recommended: one tag push, one build.
 
@@ -59,9 +79,10 @@ From the Actions tab, run **FGDB OSS release**:
 `publish=false` compiles and uploads a workflow artifact only. It does not
 create a Release or push an image.
 
-`publish=true` against the raw `v23.2.15` tag fails before the compile if
-release `v23.2.15-oss` does not exist yet. Dispatch with `ref` set to `main`
-(or push the tag) for the first publish.
+`publish=true` against the raw `v23.2.15` tag fails before the compile when
+release `v23.2.15-oss` is missing. That release exists, so use this path
+only for a smoke build. A first publish of the raw import tag is not how
+this project ships.
 
 Pushing the tag after a `publish=true` dispatch of the same commit does not
 start a second compile. The extra tag-triggered run is skipped while that
@@ -71,11 +92,15 @@ event is a tag push.
 
 ### Finish v23.2.15-oss without moving the tag
 
+This already happened. The GitHub Release exists. Leave the tag on
+`2df632c521c7266d268ba76f25b17bd1fc4c02a9`. The paragraphs below are the
+record of how it got there.
+
 Run `37705247405` built and verified commit `2df632c` (annotated tag
-`v23.2.15-oss`) and pushed the image. The Release was not created. The tag
-stays on that commit. Do not move it, and do not re-run the failed jobs of
-that run. Those jobs use the workflow file from `2df632c`, which still has
-the broken publish steps.
+`v23.2.15-oss`) and pushed the image. At that moment the Release had not
+been created. The tag stayed on that commit. Do not re-run the failed jobs
+of that run. Those jobs use the workflow file from `2df632c`, which still
+has the broken publish steps.
 
 After the publish fix is on `main`, start **FGDB OSS release** from `main`:
 
@@ -95,8 +120,9 @@ gh workflow run fgdb-oss-release.yml \
 `--ref main` chooses the workflow file. `-f ref=v23.2.15-oss` is the commit
 that gets compiled. That tag is `2df632c521c7266d268ba76f25b17bd1fc4c02a9`,
 which contains this workflow, so the guard that blocks a first publish of
-raw `v23.2.15` does not apply. `ref=v23.2.15` is refused while the Release
-does not exist, because that commit has no workflow file. `ref=main` would
+raw `v23.2.15` does not apply. During that first publish, `ref=v23.2.15`
+was refused because the Release was missing and that commit has no workflow
+file. `ref=main` would
 compile a later commit than the tag. The tag would not move, and the assets
 would not match it.
 
@@ -120,6 +146,11 @@ tag on the raw `v23.2.15` commit. The release for `v23.2.15-oss` was created
 after that failed run. A later publish replaces its assets.
 
 ## Cut v23.2.15-fgdb.1
+
+`v23.2.15-fgdb.1` is already published. The commands in this section are
+the ones that created it. For the next publish, change the tag to
+`v23.2.15-fgdb.2` and point it at the commit you mean to ship. Do not
+move `v23.2.15-fgdb.1`.
 
 `v23.2.15-oss` already points at its commit. Publishing current `main` must
 not move that git tag, and it must not move the image tags `:v23.2.15-oss`
@@ -182,45 +213,46 @@ publish. It does not create `v23.2.15-fgdb.1`.
 
 ## Artifacts
 
-Release tag: `v23.2.15-oss`
+The published files and their sha256 values are in [releases.md](releases.md).
+Both releases use the tarball name
+`cockroach-oss-v23.2.15.linux-amd64.tgz` and a `SHA256SUMS` file in
+two-space `sha256sum` format. The bytes differ. Check the sum for the tag
+you downloaded.
 
-Binary tarball (amd64 only):
-
-```text
-https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-oss/cockroach-oss-v23.2.15.linux-amd64.tgz
-```
-
-Checksums, two-space `sha256sum` format:
-
-```text
-https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-oss/SHA256SUMS
-```
-
-Inside the tarball:
+The `v23.2.15-oss` archive contains:
 
 ```text
 cockroach-oss-v23.2.15.linux-amd64/cockroach
-cockroach-oss-v23.2.15.linux-amd64/fgdb-backup
 cockroach-oss-v23.2.15.linux-amd64/lib/libgeos.so
 cockroach-oss-v23.2.15.linux-amd64/lib/libgeos_c.so
 cockroach-oss-v23.2.15.linux-amd64/LICENSE
 cockroach-oss-v23.2.15.linux-amd64/licenses/
 ```
 
+The `v23.2.15-fgdb.1` archive contains those paths and also:
+
+```text
+cockroach-oss-v23.2.15.linux-amd64/fgdb-backup
+```
+
 `cockroach` is the `cockroach-oss` binary under the upstream filename.
 `fgdb-backup` is a separate program that copies user databases with SQL.
 `build/fgdb/package-oss-tarball.sh` compiles it when `pkg/cmd/fgdb-backup/go.mod` is in the source tree. The image copies it to `/cockroach/fgdb-backup`.
+A rebuild of `v23.2.15-oss` from a tree that contains that `go.mod` would
+add `fgdb-backup` to that tarball too. The tarball that is published today
+under `v23.2.15-oss` was built before that program was in the tree.
 `licenses/CCL.txt` is license text from the source tree, not CCL code.
 `OSS-BUILD.txt` in the archive says the same thing.
 
 ## Container image
 
 The workflow pushes the image and does not change who can see the package.
-The first push leaves the package private. An organization owner opens the
-package settings and sets the visibility to public once. That cannot be
-undone. The job token's call to set visibility returned HTTP 404, because
-that API does not change visibility for an organization container package.
-The workflow no longer calls it.
+Both published tags are public: an anonymous pull of
+`:v23.2.15-fgdb.1` and `:v23.2.15-oss` succeeds. The job token's call to
+set visibility returned HTTP 404, because that API does not change
+visibility for an organization container package. The workflow no longer
+calls it. An organization owner sets visibility in the package settings.
+Making a package public cannot be undone.
 
 ```text
 ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss
@@ -260,16 +292,14 @@ securityContext:
 
 ### CipherBank pin
 
-Pin the digest from the release notes, not a floating tag:
+Pin the digest from [releases.md](releases.md). The current image is:
 
 ```text
-ghcr.io/future-gadget-laboratories/futuregadgetdatabases@sha256:<digest>
+ghcr.io/future-gadget-laboratories/futuregadgetdatabases@sha256:c71351abe5885f08f1e356c3497e1121591aed2110043d7adbfed577438bb173
 ```
 
-Example (the digest is filled in when the image is pushed; do not invent one):
-
 ```text
-image: ghcr.io/future-gadget-laboratories/futuregadgetdatabases@sha256:<digest>
+image: ghcr.io/future-gadget-laboratories/futuregadgetdatabases@sha256:c71351abe5885f08f1e356c3497e1121591aed2110043d7adbfed577438bb173
 ```
 
 The binary URL above is the drop-in for an installer that today fetches

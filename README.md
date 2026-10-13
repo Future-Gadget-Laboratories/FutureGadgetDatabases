@@ -19,12 +19,14 @@ The version pin is **v23.2.15**.
 | Upstream tree | [cockroachdb/cockroach](https://github.com/cockroachdb/cockroach) tag `v23.2.15`, commit `3497fb02dce0beb6fc2bbf76c1ed7ad69cc31344` |
 | Import commit in this repo | `a72022ff42bbceb6f0865b3b07e6fd6a9e94a6e1` |
 | Binary we ship | `cockroach-oss` (CCL-free). Bazel target `//pkg/cmd/cockroach-oss:cockroach-oss` |
-| Release tag, when published | `v23.2.15-oss` |
-| Image name, when published | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss` |
+| Current release | [`v23.2.15-fgdb.1`](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/tag/v23.2.15-fgdb.1). The tarball has `cockroach` and `fgdb-backup`. |
+| Earlier release | [`v23.2.15-oss`](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/tag/v23.2.15-oss). The tarball has `cockroach` and the GEOS libraries. It does not include `fgdb-backup`. |
+| Current image | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-fgdb.1` |
+| Earlier image | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss` |
 
 **CCL** means the CockroachDB Community License. It covers enterprise features under `pkg/ccl`. CCL has no date when it becomes Apache-2.0. The official Docker Hub image `cockroachdb/cockroach:v23.2.15` includes that code. FGDb's release builds the open-source binary instead.
 
-The GitHub Release and the image are produced by the workflow in [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md). Until that release exists, the download URLs in [docs/fgdb/releases.md](docs/fgdb/releases.md) are the planned names. They are not a promise that the files are already on the server. This document does not invent an image digest. Pin a digest after the release notes publish one.
+Both GitHub Releases and both images are already public. Download URLs, checksums, and the image digests are in [docs/fgdb/releases.md](docs/fgdb/releases.md). Maintainers cut a release with the workflow in [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md). Pin the digest from that page. A tag can be pushed again. A digest names one image.
 
 ## License, in short
 
@@ -36,7 +38,7 @@ Read [docs/fgdb/license.md](docs/fgdb/license.md) before you ship a binary. The 
 
 ## Try it
 
-A full build is heavy. A cold compile wants on the order of 32 GB of RAM, a large disk cache, and a few hours. If release `v23.2.15-oss` is already published, use the tarball in [docs/fgdb/releases.md](docs/fgdb/releases.md). Otherwise build the open-source target:
+A full build is heavy. A cold compile wants on the order of 32 GB of RAM, a large disk cache, and a few hours. For a laptop, unpack the `v23.2.15-fgdb.1` tarball from [docs/fgdb/releases.md](docs/fgdb/releases.md). To compile the open-source target yourself:
 
 ```bash
 ./dev doctor
@@ -74,10 +76,12 @@ These pages were written by Future Gadget Laboratories. They are marked in the p
 | Page | Read it when you want to |
 | --- | --- |
 | [Product brief](docs/fgdb/PROJECT.md) | Paste a short description into chat or a design note |
-| [Getting started](docs/fgdb/getting-started.md) | Build `cockroach-oss` and run one node, then three |
+| [Getting started](docs/fgdb/getting-started.md) | Unpack `v23.2.15-fgdb.1` or build `cockroach-oss`, then run one node and three |
+| [Testing](docs/fgdb/testing.md) | Run `fgdb/test/run.sh pr` and read what a 3-node run does and does not prove |
 | [Architecture](docs/fgdb/architecture.md) | See how a query, a range, and a crash fit together |
 | [License](docs/fgdb/license.md) | Decide what you are allowed to ship |
 | [Releases and pins](docs/fgdb/releases.md) | Download a binary or pin an image by digest |
+| [Logical backup](docs/fgdb/backup.md) | Copy user databases with `fgdb-backup` |
 | [Operations](docs/fgdb/operations.md) | Turn telemetry off, use certificates, practice a crash |
 | [Contributing](CONTRIBUTING.md) | Send a fix |
 | [Security](SECURITY.md) | Report a vulnerability in private |
@@ -87,7 +91,7 @@ These pages were written by Future Gadget Laboratories. They are marked in the p
 | [Cleanroom](docs/fgdb/CLEANROOM.md) | See how newer behavior is rewritten without copying proprietary code |
 | [Cleanroom sources](docs/fgdb/SOURCES.md) | Read the public sources for that process |
 | [Agent rules](docs/agent/CLEANROOM-ENFORCEMENT.md) | See when to refuse contaminated work |
-| [Release procedure](docs/fgdb/RELEASING.md) | Publish `v23.2.15-oss` (maintainers) |
+| [Release procedure](docs/fgdb/RELEASING.md) | See how `v23.2.15-oss` and `v23.2.15-fgdb.1` were published (maintainers) |
 | [Build machine](docs/fgdb/RUNNER.md) | Set up the machine that builds the release (maintainers) |
 
 Imported Cockroach Labs writing is still in the tree. The old root README is [docs/upstream/cockroach-v23.2.15-readme.md](docs/upstream/cockroach-v23.2.15-readme.md). The design note is [docs/design.md](docs/design.md). It still says RocksDB in places. This tree stores data with Pebble. Prefer [docs/fgdb/architecture.md](docs/fgdb/architecture.md) for a current sketch, and the [CockroachDB v23.2 architecture overview](https://www.cockroachlabs.com/docs/v23.2/architecture/overview.html) for the long upstream version. The "stable" docs on that site describe newer CockroachDB releases. Those releases are outside this pin.

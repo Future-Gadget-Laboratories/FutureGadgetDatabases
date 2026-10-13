@@ -45,7 +45,9 @@ In the description, write:
 
 Use the pull request template. It has a license checklist.
 
-If you change `pkg/`, say what database behavior can change: correctness, durability, or availability. Add or update a test when that area already has tests.
+If you change `pkg/`, say what database behavior can change: correctness, durability, or availability. Add or update a test when that area already has tests. From the repository root, `fgdb/test/run.sh pr` checks the claims file and the phase 0 Go tests. It does not need Bazel. How the tiers work is in [docs/fgdb/testing.md](docs/fgdb/testing.md).
+
+`.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` for a pull request after a repository admin marks it ready for review. The build runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. The job has no secrets. A docs-only pull request does not need that compile.
 
 If you build a binary, use:
 
@@ -56,7 +58,9 @@ If you build a binary, use:
 
 The `Distribution` line must say `OSS`. `./dev build` without `oss` links CCL code.
 
-The release workflow in [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) is how maintainers publish. Leave `.github/workflows/fgdb-oss-release.yml` and `build/fgdb/` runner scripts alone unless the change is about that release path.
+The release workflow in [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) is how maintainers publish. `v23.2.15-oss` and `v23.2.15-fgdb.1` are already published. The checksums are in [docs/fgdb/releases.md](docs/fgdb/releases.md). Leave `.github/workflows/fgdb-oss-release.yml` and `build/fgdb/` runner scripts alone unless the change is about that release path.
+
+A change that reimplements behavior from a CSL or Enterprise release uses the process in [docs/fgdb/CLEANROOM.md](docs/fgdb/CLEANROOM.md). The public sources for that process are [docs/fgdb/SOURCES.md](docs/fgdb/SOURCES.md).
 
 ## Issues
 
@@ -77,7 +81,7 @@ Label names the templates ask for:
 | `reliability` | Correctness, durability, replication, or availability |
 | `security` | Maintainers apply this on private advisories |
 
-Create those labels in the GitHub repository if they are missing. GitHub ignores a template label that does not exist yet.
+`bug`, `enhancement`, and `reliability` exist on the repository. `security` is not a public label. Maintainers apply it on private advisories. GitHub ignores a template label that does not exist yet.
 
 ## Commit messages
 
