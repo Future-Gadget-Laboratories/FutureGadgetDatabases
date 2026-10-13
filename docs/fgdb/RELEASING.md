@@ -57,11 +57,18 @@ git tag -a v23.2.15-oss origin/main -m "CCL-free cockroach-oss v23.2.15"
 git push origin v23.2.15-oss
 ```
 
-The tag must point at a commit that contains
-`.github/workflows/fgdb-oss-release.yml` and the guarded upstream workflows.
-Tagging the raw `v23.2.15` commit would run the old `bincheck` workflow
-(`macos-latest` and `macos-latest-xlarge`) because that commit does not have
-the fork guard. The publish job refuses to create the tag in that case.
+The commit you tag must contain `.github/workflows/fgdb-oss-release.yml`.
+The publish job checks for that file before it creates a tag. It does not
+look for `bincheck.yml` or the other workflows inherited from CockroachDB.
+The CI hygiene change removes those files from `main`. A tag of that `main`
+runs `fgdb-oss-release.yml`.
+
+Actions loads workflow files from the commit you tag. The raw import commit
+`a72022ff42bbceb6f0865b3b07e6fd6a9e94a6e1` (git tag `v23.2.15`) still has
+`bincheck.yml` in that commit, and it has no `fgdb-oss-release.yml`. Pushing
+a `v*` tag of that commit would start bincheck, including the `macos-latest`
+and `macos-latest-xlarge` jobs, because those files are in that tree. The
+publish job refuses to create a release tag on that commit.
 
 The tag push builds `//pkg/cmd/cockroach-oss:cockroach-oss` and
 `//c-deps:libgeos` on the `fgdb-build` runner, checks that the binary is

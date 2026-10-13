@@ -47,7 +47,9 @@ Use the pull request template. It has a license checklist.
 
 If you change `pkg/`, say what database behavior can change: correctness, durability, or availability. Add or update a test when that area already has tests. From the repository root, `fgdb/test/run.sh pr` checks the claims file and the phase 0 Go tests. It does not need Bazel. How the tiers work is in [docs/fgdb/testing.md](docs/fgdb/testing.md).
 
-`.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` for a pull request after a repository admin marks it ready for review. The build runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. The job has no secrets. A docs-only pull request does not need that compile.
+`.github/workflows/fgdb-checks.yml` runs the pr tier and the other fast checks on GitHub-hosted `ubuntu-latest`. Pull requests run it when they touch those paths. Every push to `main` runs it. A docs-only pull request does not need a Bazel compile.
+
+`.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` when a maintainer dispatches it with the 40-character SHA of a commit that is already on a branch or tag in this repository. A pull request does not start that workflow. The build runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. The job has no secrets. The same rules are in [docs/fgdb/testing.md](docs/fgdb/testing.md).
 
 If you build a binary, use:
 

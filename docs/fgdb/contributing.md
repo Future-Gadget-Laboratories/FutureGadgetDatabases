@@ -39,7 +39,9 @@ fgdb/test/run.sh pr
 
 That checks the claims file, the production-import baseline, and the Go tests in the pr tier. It does not start a cluster and it does not need Bazel.
 
-A pull request that changes `pkg/` is compiled by `.github/workflows/fgdb-pr-build.yml` after a repository admin marks the pull request ready for review. The compile runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. It has no secrets. You do not start that compile by pushing alone. The release compile is the maintainer workflow in [RELEASING.md](RELEASING.md). You do not need either compile for a docs pull request.
+Fast checks for a pull request live in `.github/workflows/fgdb-checks.yml` and run on GitHub-hosted `ubuntu-latest`. They include `fgdb/test/run.sh pr`. Every push to `main` runs that same workflow. A docs-only pull request does not need a compile.
+
+A maintainer compiles `cockroach-oss` by starting `.github/workflows/fgdb-pr-build.yml` from the Actions tab and passing the 40-character SHA of a commit already on a branch or tag in this repository. Opening a pull request does not start that workflow, and the workflow does not accept a fork repository name. The compile runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. It has no secrets. The release compile is the maintainer workflow in [RELEASING.md](RELEASING.md). The details are in [testing.md](testing.md).
 
 Newer behavior that is only in a CSL or Enterprise build goes through [CLEANROOM.md](CLEANROOM.md). A normal fix inside the v23.2.15 tree does not.
 

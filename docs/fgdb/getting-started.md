@@ -29,7 +29,7 @@ export BIN="$PWD/cockroach-oss-v23.2.15.linux-amd64/cockroach"
 "$BIN" version
 ```
 
-`sha256sum -c` checks the file against `SHA256SUMS`. The sums file uses the two-space format that `sha256sum` expects. The file inside the tarball is named `cockroach`. It is the `cockroach-oss` binary. `fgdb-backup` is the logical backup program described in [backup.md](backup.md). `lib/libgeos.so` and `lib/libgeos_c.so` sit next to `cockroach`. GEOS is the library used for spatial SQL. The binary looks for those files under a `lib/` directory beside itself.
+`sha256sum -c` checks the file against `SHA256SUMS`. The sums file uses the two-space format that `sha256sum` expects. The file inside the tarball is named `cockroach`. It is the `cockroach-oss` binary. `fgdb-backup` is the logical backup program. Flags and exit codes are in [backup-cli.md](backup-cli.md). The file layout is in [backup.md](backup.md). `lib/libgeos.so` and `lib/libgeos_c.so` sit next to `cockroach`. GEOS is the library used for spatial SQL. The binary looks for those files under a `lib/` directory beside itself.
 
 The `Distribution` line of `version` should say `OSS`. The build tag should say `v23.2.15`.
 

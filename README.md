@@ -81,7 +81,8 @@ These pages were written by Future Gadget Laboratories. They are marked in the p
 | [Architecture](docs/fgdb/architecture.md) | See how a query, a range, and a crash fit together |
 | [License](docs/fgdb/license.md) | Decide what you are allowed to ship |
 | [Releases and pins](docs/fgdb/releases.md) | Download a binary or pin an image by digest |
-| [Logical backup](docs/fgdb/backup.md) | Copy user databases with `fgdb-backup` |
+| [Logical backup command](docs/fgdb/backup-cli.md) | Flags, exit codes, and `prune` for `fgdb-backup`, checked against the source |
+| [Logical backup files](docs/fgdb/backup.md) | What a backup directory contains |
 | [Operations](docs/fgdb/operations.md) | Turn telemetry off, use certificates, practice a crash |
 | [Contributing](CONTRIBUTING.md) | Send a fix |
 | [Security](SECURITY.md) | Report a vulnerability in private |
