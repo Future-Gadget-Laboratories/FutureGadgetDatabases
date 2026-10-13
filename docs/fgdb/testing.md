@@ -5,6 +5,8 @@
 
 This page is for someone running the suite on a laptop or on a self-hosted runner. It covers the first slice: a 3-node cluster on one Linux machine, a few upstream tests, and a written list of claims.
 
+The `fgdb-backup` Go tests, the `build/fgdb` shell tests, and the patch-test workflow are at the end of this page. They are not part of `fgdb/test/run.sh`.
+
 The product claims live in `fgdb/test/claims.yaml`. Each claim names at least one test. The checker fails if a claim has no test, if that test is not in the tree, or if the status is `untested`. A waived claim needs an owner, a reason, and an expiry date.
 
 The registry has no field for a downstream product. A downstream need arrives as a feature or fix request issue. If it is accepted, it gets its own claim and its own test.
@@ -127,3 +129,68 @@ A doc line under `docs/fgdb/` that says "always", "guarantees", "survives", or "
 ## Where CI runs it
 
 `.github/workflows/fgdb-suite-interim.yml` is manual (`workflow_dispatch` only). It does not run on pull requests. It runs on a self-hosted runner labeled `fgdb-build`, reads `/etc/fgdb/runner.env` for the Bazel cache and the 24-thread / 96 GB limits, and has no secrets. You pass the candidate tarball URL and its sha256. The previous binary is the `v23.2.15-fgdb.1` release, checked against its published sha256.
+
+The patch-test workflow is a different file. It is described below.
+
+## fgdb-backup Go tests
+
+`pkg/cmd/fgdb-backup` is its own Go module (`github.com/cockroachdb/cockroach/pkg/cmd/fgdb-backup`). The patch-test workflow installs Go 1.21.12, the same toolchain named above.
+
+From the repository root:
+
+```bash
+cd pkg/cmd/fgdb-backup
+go test ./...
+go vet ./...
+```
+
+`go test ./...` runs the tests that stay inside the process: config parsing, SQL rewrite, the local store, the backup lease, and S3 against an in-process fake server. It also runs the seed inputs of `FuzzArrayStreamMatchesReference`.
+
+Tests in `roundtrip_test.go`, `review_test.go`, and `safety_test.go` start real `cockroach-oss` processes. They skip unless `FGDB_COCKROACH` is set, or unless `/tmp/fgdb-bin/cockroach` is present. A skip is not a failure. `FGDB_REQUIRE_CLUSTER` is not read by these tests.
+
+To run them, use a binary that prints `Distribution: OSS`, the same kind of binary the 3-node scenario uses. When that binary comes from the release tarball, set `LD_LIBRARY_PATH` to the tarball's `lib` directory. The test process passes its environment through to `cockroach`. From the repository root:
+
+```bash
+export FGDB_COCKROACH=/path/to/cockroach
+export LD_LIBRARY_PATH=/path/to/lib
+cd pkg/cmd/fgdb-backup
+go test -count=1 -v ./...
+```
+
+The last line is the command the integration job runs, with those two variables set. It needs a machine that can bind local ports. The job limit is 30 minutes.
+
+## build/fgdb shell tests
+
+These scripts live next to the tools they check. They use fixtures. They do not build Cockroach, and they do not need a GitHub token. From the repository root:
+
+```bash
+bash build/fgdb/release-tag_test.sh
+bash build/fgdb/skip-duplicate-tag-build_test.sh
+bash build/fgdb/verify-oss-binary_test.sh
+bash build/fgdb/runner/check-cache-dir_test.sh
+bash build/fgdb/runner/checksums_test.sh
+bash build/fgdb/runner/token-input_test.sh
+bash build/fgdb/runner/read-config_test.sh
+bash build/fgdb/runner/update-checksums_test.sh
+bash build/fgdb/runner/runner-unit_test.sh
+```
+
+Each script exits 0 when its checks pass.
+
+- `release-tag_test.sh` checks `build/fgdb/release-tag.sh`: which git tag is published, and which image tags that publish pushes.
+- `skip-duplicate-tag-build_test.sh` checks `build/fgdb/skip-duplicate-tag-build.sh` with a fixture in place of `curl`.
+- `verify-oss-binary_test.sh` checks `build/fgdb/verify-oss-binary.sh` against a stand-in binary that prints `Distribution: OSS`.
+- `check-cache-dir_test.sh` checks `build/fgdb/runner/check-cache-dir.sh` with stand-in `findmnt` and `stat` programs.
+- `checksums_test.sh` checks `build/fgdb/runner/checksums.txt`: five fields per row, a 64-character hash, no duplicate keys, and rows for `actions-runner 2.338.0 linux-x64` and `bazelisk 1.29.0 linux-amd64`.
+- `token-input_test.sh` checks `build/fgdb/runner/token-input.sh`. An empty token and a symlink are refused. A token from a file or from stdin is trimmed.
+- `read-config_test.sh` checks `build/fgdb/runner/read-config.sh`, the parser for the runner setup file.
+- `update-checksums_test.sh` checks `build/fgdb/runner/update-checksums.sh` and `checksum-notes.sh`. A downloaded file is not trusted unless the publisher hash matches.
+- `runner-unit_test.sh` checks `build/fgdb/runner/runner-unit.sh`, including the cache-check command line and the refusal of a missing or broken check script.
+
+## Patch-test workflow
+
+`.github/workflows/fgdb-backup-tests.yml` is named FGDB patch tests. It has `contents: read` and runs on `ubuntu-latest`. A pull request runs it when the change touches that workflow, `build/fgdb/**`, or `pkg/cmd/fgdb-backup/**`. It does not take a manual dispatch.
+
+`unit-and-script-tests` (15 minute limit) checks out the repository, installs Go 1.21.12, and runs `go test ./...`, `go vet ./...`, and the nine shell scripts above. The Go commands run in `pkg/cmd/fgdb-backup`. The shell scripts run from the repository root. This job does not set `FGDB_COCKROACH`, so the cluster tests skip.
+
+`integration` (30 minute limit) downloads the public `v23.2.15-fgdb.1` linux-amd64 tarball, checks the sha256 written in the workflow, and unpacks it. It sets `FGDB_COCKROACH` to `cockroach` in that tree and `LD_LIBRARY_PATH` to the `lib` directory beside it. In `pkg/cmd/fgdb-backup` it runs `go test -count=1 -v ./...`.
