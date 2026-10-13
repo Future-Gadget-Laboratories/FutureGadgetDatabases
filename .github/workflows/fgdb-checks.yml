@@ -1,0 +1,222 @@
+# Fast checks for FGDb-owned code.
+#
+# Runs on pull_request and on push to main, on GitHub-hosted ubuntu-latest.
+# It does not use a self-hosted runner, Bazel, or a lab host. It has no secrets.
+# The pr tier is fgdb/test/run.sh pr: claims, the production-import baseline,
+# and the Go tests that do not start a cluster.
+# Cluster-backed fgdb-backup tests stay in fgdb-backup-tests.yml.
+
+name: FGDB checks
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "fgdb/**"
+      - "build/fgdb/**"
+      - "pkg/fgdbtest/**"
+      - "pkg/cmd/fgdb-test/**"
+      - "pkg/cmd/fgdb-backup/**"
+      - "go.mod"
+      - "go.sum"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - "fgdb/**"
+      - "build/fgdb/**"
+      - "pkg/fgdbtest/**"
+      - "pkg/cmd/fgdb-test/**"
+      - "pkg/cmd/fgdb-backup/**"
+      - "go.mod"
+      - "go.sum"
+
+permissions: {}
+
+concurrency:
+  group: fgdb-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_URL: https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          set -euo pipefail
+          curl -fsSL "$ACTIONLINT_URL" -o actionlint.tar.gz
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" actionlint.tar.gz | sha256sum -c -
+          mkdir -p "$HOME/bin"
+          tar -xzf actionlint.tar.gz -C "$HOME/bin" actionlint
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Lint workflows
+        run: actionlint -color
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Install ShellCheck
+        env:
+          SHELLCHECK_URL: https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz
+          SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+        run: |
+          set -euo pipefail
+          curl -fsSL "$SHELLCHECK_URL" -o shellcheck.tar.xz
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" shellcheck.tar.xz | sha256sum -c -
+          tar -xJf shellcheck.tar.xz
+          mkdir -p "$HOME/bin"
+          install -m 0755 shellcheck-v0.10.0/shellcheck "$HOME/bin/shellcheck"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: ShellCheck FGDb scripts
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find fgdb build/fgdb -type f -name '*.sh' -print0)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "no FGDb shell scripts found" >&2
+            exit 1
+          fi
+          shellcheck --severity=warning "${files[@]}"
+
+  gofmt-vet:
+    name: gofmt and go vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Install Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.21.12"
+          cache-dependency-path: |
+            go.sum
+            pkg/cmd/fgdb-backup/go.sum
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          files=$(gofmt -l pkg/fgdbtest pkg/cmd/fgdb-test pkg/cmd/fgdb-backup)
+          if [[ -n "$files" ]]; then
+            echo "gofmt would change:" >&2
+            printf '%s\n' "$files" >&2
+            exit 1
+          fi
+
+      - name: go vet fgdbtest and fgdb-test
+        run: go vet ./pkg/fgdbtest/... ./pkg/cmd/fgdb-test/...
+
+      - name: go vet fgdb-backup
+        working-directory: pkg/cmd/fgdb-backup
+        run: go vet ./...
+
+  pr-tier:
+    name: pr tier
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Install Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.21.12"
+          cache-dependency-path: go.sum
+
+      - name: Run the pr tier
+        run: bash fgdb/test/run.sh pr
+
+  backup-unit:
+    name: fgdb-backup unit and script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Install Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.21.12"
+          cache-dependency-path: pkg/cmd/fgdb-backup/go.sum
+
+      - name: Unit tests
+        working-directory: pkg/cmd/fgdb-backup
+        run: go test -count=1 ./...
+
+      - name: Build script tests
+        run: |
+          set -euo pipefail
+          bash build/fgdb/release-tag_test.sh
+          bash build/fgdb/skip-duplicate-tag-build_test.sh
+          bash build/fgdb/verify-oss-binary_test.sh
+          bash build/fgdb/runner/check-cache-dir_test.sh
+          bash build/fgdb/runner/checksums_test.sh
+          bash build/fgdb/runner/token-input_test.sh
+          bash build/fgdb/runner/read-config_test.sh
+          bash build/fgdb/runner/update-checksums_test.sh
+          bash build/fgdb/runner/runner-unit_test.sh
+
+  boundary:
+    name: CCL and CSL boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Check FGDb paths
+        run: bash fgdb/test/scripts/check-boundary.sh
