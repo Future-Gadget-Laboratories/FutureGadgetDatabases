@@ -11,6 +11,7 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [getting-started.md](getting-started.md) | Build `cockroach-oss`, run one node, run three nodes, create a table |
 | [testing.md](testing.md) | Run the suite locally, and what a run does not prove yet |
 | [architecture.md](architecture.md) | SQL, ranges, copies, and what a crash means |
+| [architecture/README.md](architecture/README.md) | Code map: statement flow, subsystems, CCL boundaries |
 | [license.md](license.md) | BSL change date, CCL, CSL, and what not to ship |
 | [releases.md](releases.md) | Tarball URLs, image names, and digest pins |
 | [operations.md](operations.md) | Telemetry, certificates, a crash drill, and a careful note on decommission |
