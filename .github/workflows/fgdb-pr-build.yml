@@ -324,6 +324,18 @@ jobs:
             --test_output=errors \
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
 
+      - name: Replication manager hook regression
+        run: |
+          set -euo pipefail
+          cd src
+          if [[ ! -f pkg/repstream/api_test.go ]]; then
+            echo "repstream regression NOT tested: selected commit has no api_test.go"
+          else
+            bazel test //pkg/repstream:repstream_test \
+              --test_output=errors \
+              --test_tmpdir="${RUNNER_TEMP}/fgdb-repstream"
+          fi
+
       - name: Remove the workspace and this commit's Bazel directories
         if: always()
         env:
