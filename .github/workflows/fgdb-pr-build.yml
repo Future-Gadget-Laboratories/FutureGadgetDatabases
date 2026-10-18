@@ -1,0 +1,405 @@
+# Compile one commit on a self-hosted runner.
+#
+# Trigger: workflow_dispatch only. Opening, synchronizing, or marking a
+# pull request ready does not start this workflow. Fast checks stay in
+# fgdb-checks.yml on ubuntu-latest.
+#
+# commit_sha must be the full SHA of a commit that is already on a branch
+# or tag of this repository. The workflow does not take a repository name,
+# so a fork pull request cannot be checked out. build/fgdb/require-repo-commit.py
+# refuses the job before the source checkout if that check fails.
+#
+# The workflow file and the build tooling come from the branch or tag
+# selected in the Actions UI (github.sha). That ref is already in this
+# repository. The source tree is commit_sha, with credentials persistence
+# turned off. The job has no secrets.
+#
+# The build job asks for a runner labeled self-hosted and fgdb-pr-ephemeral.
+# It does not run on the persistent fgdb-build runner. The job stays queued
+# until a runner with that label exists. Registering that runner is a
+# separate prerequisite; this workflow does not do it.
+#
+# Each commit gets its own Bazel output base and disk cache. Both paths
+# end in -sha-<40 hex>. Cleanup removes only that commit's directories.
+#
+# Knobs (edit here):
+#   EXPECT_GO
+# Bazel CPU/RAM and the disk cache roots come from /etc/fgdb/runner.env
+# on the runner, the same way as fgdb-oss-release.yml.
+#
+# Issue notifications are a different workflow, fgdb-issue-notify.yml.
+# That file only posts a short note when an issue is opened. It does not
+# compile a commit.
+
+name: FGDB self-hosted compile
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 40-character SHA already on a branch or tag in this repository
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: fgdb-pr-build-${{ inputs.commit_sha }}
+  cancel-in-progress: false
+
+env:
+  EXPECT_GO: go1.21.12
+
+jobs:
+  build:
+    name: Build cockroach-oss
+    runs-on: [self-hosted, fgdb-pr-ephemeral]
+    timeout-minutes: 480
+    # Read the public repository. No other token scope, and no secrets.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout build tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          sparse-checkout: build/fgdb
+
+      - name: Require a commit already in this repository
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: python3 tooling/build/fgdb/require-repo-commit.py
+
+      - name: Checkout the default branch .gitmodules
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: base-meta
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.gitmodules
+
+      - name: Checkout CockroachDB source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.commit_sha }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+
+      - name: Confirm the checkout is the requested commit
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "commit_sha must be 40 hexadecimal characters" >&2
+            exit 1
+          fi
+          got=$(git -C src rev-parse HEAD)
+          if [[ "$got" != "${COMMIT_SHA,,}" && "$got" != "$COMMIT_SHA" ]]; then
+            echo "checked out ${got}, wanted ${COMMIT_SHA}" >&2
+            exit 1
+          fi
+
+      - name: Check submodule URLs
+        run: |
+          set -euo pipefail
+          pr_file=src/.gitmodules
+          base_file=base-meta/.gitmodules
+          if [[ ! -f "$pr_file" || ! -f "$base_file" ]]; then
+            echo "source .gitmodules or the default branch .gitmodules is missing." >&2
+            exit 1
+          fi
+          if ! cmp -s "$pr_file" "$base_file"; then
+            echo "source .gitmodules differs from the default branch." >&2
+            diff -u "$base_file" "$pr_file" >&2 || true
+            exit 1
+          fi
+          # Public submodule repos from main's .gitmodules. Any other URL,
+          # path, or key fails the job before a submodule is fetched.
+          allowlist=$(cat <<'EOF'
+          submodule.c-deps/geos.path=c-deps/geos
+          submodule.c-deps/geos.url=https://github.com/cockroachdb/geos.git
+          submodule.c-deps/jemalloc.path=c-deps/jemalloc
+          submodule.c-deps/jemalloc.url=https://github.com/cockroachdb/jemalloc.git
+          submodule.c-deps/krb5.path=c-deps/krb5
+          submodule.c-deps/krb5.url=https://github.com/cockroachdb/krb5.git
+          submodule.c-deps/proj.path=c-deps/proj
+          submodule.c-deps/proj.url=https://github.com/cockroachdb/PROJ.git
+          EOF
+          )
+          actual=$(git config --file "$pr_file" --list | sed 's/^[[:space:]]*//' | sort)
+          expected=$(printf '%s\n' "$allowlist" | sed 's/^[[:space:]]*//' | sed '/^$/d' | sort)
+          if [[ "$actual" != "$expected" ]]; then
+            echo "source .gitmodules does not match the public submodule allowlist." >&2
+            diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
+            exit 1
+          fi
+
+      - name: Fetch pinned submodules
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          export GIT_CONFIG_NOSYSTEM=1
+          export GIT_CONFIG_GLOBAL=/dev/null
+          cd src
+          git config --local --unset-all http.extraheader || true
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git config --local --unset-all credential.helper || true
+          while IFS= read -r key; do
+            if [[ -n "$key" ]]; then
+              git config --local --unset-all "$key" || true
+            fi
+          done < <(git config --local --name-only --get-regexp '^url\..*\.insteadof$' || true)
+          git config --local fetch.recurseSubmodules false
+          git config --local submodule.recurse false
+
+          url_for() {
+            case "$1" in
+              c-deps/jemalloc) printf '%s\n' 'https://github.com/cockroachdb/jemalloc.git' ;;
+              c-deps/krb5) printf '%s\n' 'https://github.com/cockroachdb/krb5.git' ;;
+              c-deps/geos) printf '%s\n' 'https://github.com/cockroachdb/geos.git' ;;
+              c-deps/proj) printf '%s\n' 'https://github.com/cockroachdb/PROJ.git' ;;
+              *)
+                echo "refusing unexpected submodule path ${1}" >&2
+                return 1
+                ;;
+            esac
+          }
+
+          seen=0
+          while read -r sha path; do
+            if [[ -z "$path" ]]; then
+              continue
+            fi
+            url_for "$path" >/dev/null
+            if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "refusing unpinned gitlink ${path}" >&2
+              exit 1
+            fi
+            seen=$((seen + 1))
+          done < <(git ls-tree -r HEAD | awk '$2 == "commit" { print $3, $4 }')
+          if [[ "$seen" -ne 4 ]]; then
+            echo "expected 4 gitlinks, found ${seen}" >&2
+            exit 1
+          fi
+
+          fetch_pinned() {
+            local path=$1
+            local sha=$2
+            local url=$3
+            case "$url" in
+              https://github.com/*) ;;
+              *)
+                echo "refusing submodule URL for ${path}" >&2
+                exit 1
+                ;;
+            esac
+            case "$url" in
+              *"@"*|*" "*|*"?"*|*"#"*)
+                echo "refusing submodule URL for ${path}" >&2
+                exit 1
+                ;;
+            esac
+            rm -rf "$path"
+            mkdir -p "$path"
+            git -C "$path" init -q
+            git -C "$path" remote add origin "$url"
+            git -C "$path" \
+              -c credential.helper= \
+              -c http.extraheader= \
+              -c fetch.recurseSubmodules=false \
+              -c submodule.recurse=false \
+              -c protocol.file.allow=never \
+              fetch --no-tags --depth=1 --recurse-submodules=no origin "$sha"
+            git -C "$path" checkout --detach --recurse-submodules=no FETCH_HEAD
+            if [[ "$(git -C "$path" rev-parse HEAD)" != "$sha" ]]; then
+              echo "fetched ${path} at the wrong revision" >&2
+              exit 1
+            fi
+            git config --local "submodule.${path}.url" "$url"
+            git config --local "submodule.${path}.active" true
+          }
+
+          for path in c-deps/jemalloc c-deps/krb5 c-deps/geos c-deps/proj; do
+            sha=$(git rev-parse "HEAD:${path}")
+            url=$(git config --file .gitmodules --get "submodule.${path}.url")
+            expect=$(url_for "$path")
+            if [[ "$url" != "$expect" ]]; then
+              echo "refusing submodule URL for ${path}" >&2
+              exit 1
+            fi
+            fetch_pinned "$path" "$sha" "$url"
+          done
+
+      - name: Require the runner cache paths
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          COMMIT_SHA=${COMMIT_SHA,,}
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "commit_sha must be 40 hexadecimal characters" >&2
+            exit 1
+          fi
+          if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
+            if [[ -f /etc/fgdb/runner.env ]]; then
+              set -a
+              # shellcheck disable=SC1091
+              . /etc/fgdb/runner.env
+              set +a
+            fi
+          fi
+          if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
+            echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
+            exit 1
+          fi
+          # Sibling directories, not inside the release cache. The suffix is
+          # this commit only, so cleanup cannot delete the release cache.
+          run_suffix="-sha-${COMMIT_SHA}"
+          pr_cache="${FGDB_BAZEL_DISK_CACHE%/}${run_suffix}"
+          pr_base="${FGDB_BAZEL_OUTPUT_BASE%/}${run_suffix}"
+          if [[ "$pr_cache" == "$FGDB_BAZEL_DISK_CACHE" || "$pr_base" == "$FGDB_BAZEL_OUTPUT_BASE" ]]; then
+            echo "refusing to reuse the release Bazel directories" >&2
+            exit 1
+          fi
+          case "$pr_cache" in
+            /*-sha-"${COMMIT_SHA}") ;;
+            *)
+              echo "refusing disk cache path" >&2
+              exit 1
+              ;;
+          esac
+          case "$pr_base" in
+            /*-sha-"${COMMIT_SHA}") ;;
+            *)
+              echo "refusing output base path" >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p "$pr_cache" "$pr_base"
+          {
+            echo "FGDB_BAZEL_DISK_CACHE=${pr_cache}"
+            echo "FGDB_BAZEL_OUTPUT_BASE=${pr_base}"
+            echo "FGDB_LOCAL_CPU=${FGDB_LOCAL_CPU:-24}"
+            echo "FGDB_LOCAL_RAM_MB=${FGDB_LOCAL_RAM_MB:-81920}"
+          } >> "$GITHUB_ENV"
+
+      - name: Write Bazel user config
+        env:
+          FGDB_BUILD_CHANNEL: fgl-oss
+        run: |
+          set -euo pipefail
+          bash tooling/build/fgdb/write-bazelrc-user.sh "${PWD}/src"
+
+      - name: Build oss and geos
+        # bazel, not ./dev. On a fresh checkout ./dev exits until
+        # `dev doctor` writes bin/.dev-status, and that command is
+        # interactive on Linux and would rewrite .bazelrc.user.
+        run: |
+          set -euo pipefail
+          bash tooling/build/fgdb/build-oss.sh "${PWD}/src"
+
+      - name: Verify the binary is CCL-free
+        env:
+          FGDB_EXPECT_GO: ${{ env.EXPECT_GO }}
+        run: |
+          set -euo pipefail
+          bash tooling/build/fgdb/verify-oss-binary.sh "${PWD}/src/cockroach-oss"
+
+      - name: Disallowed-imports test
+        run: |
+          set -euo pipefail
+          cd src
+          bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test \
+            --test_output=errors \
+            --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
+
+      - name: Remove the workspace and this commit's Bazel directories
+        if: always()
+        env:
+          CLEAN_WORKSPACE: ${{ github.workspace }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          COMMIT_SHA=${COMMIT_SHA,,}
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "commit_sha must be 40 hexadecimal characters" >&2
+            exit 1
+          fi
+          # Read the runner file again so cleanup does not follow a cache
+          # path rewritten by the build. If the file is absent, strip this
+          # commit's suffix off the variables this job already set.
+          # The suffix is the commit sha, so this step never removes the
+          # release cache or another commit's directories.
+          if [[ -f /etc/fgdb/runner.env ]]; then
+            set -a
+            # shellcheck disable=SC1091
+            . /etc/fgdb/runner.env
+            set +a
+          fi
+          root_cache=${FGDB_BAZEL_DISK_CACHE:-}
+          root_base=${FGDB_BAZEL_OUTPUT_BASE:-}
+          run_suffix="-sha-${COMMIT_SHA}"
+          case "$root_cache" in
+            *"$run_suffix") root_cache=${root_cache%"$run_suffix"} ;;
+          esac
+          case "$root_base" in
+            *"$run_suffix") root_base=${root_base%"$run_suffix"} ;;
+          esac
+
+          remove_pr_dir() {
+            local dir=$1
+            case "$dir" in
+              /*-sha-"${COMMIT_SHA}") ;;
+              *)
+                echo "refusing to remove ${dir}" >&2
+                exit 1
+                ;;
+            esac
+            case "$dir" in
+              /|/tmp|/var|/usr|/etc|/opt|/root|/home|/workspace) 
+                echo "refusing to remove ${dir}" >&2
+                exit 1
+                ;;
+            esac
+            rm -rf -- "$dir"
+          }
+
+          if [[ "$root_base" == /* && "$root_base" != "/" ]]; then
+            pr_base="${root_base%/}${run_suffix}"
+            if [[ -d "$pr_base" ]] && command -v bazel >/dev/null 2>&1; then
+              # Stop this commit's Bazel server before deleting its directory.
+              timeout 30 bazel --output_base="$pr_base" shutdown || true
+            fi
+            remove_pr_dir "$pr_base"
+          else
+            echo "Bazel output base root is unset; skipping that directory."
+          fi
+          if [[ "$root_cache" == /* && "$root_cache" != "/" ]]; then
+            pr_cache="${root_cache%/}${run_suffix}"
+            remove_pr_dir "$pr_cache"
+          else
+            echo "Bazel disk cache root is unset; skipping that directory."
+          fi
+
+          case "$CLEAN_WORKSPACE" in
+            /*/*/*) ;;
+            *)
+              echo "refusing to clean workspace ${CLEAN_WORKSPACE}" >&2
+              exit 1
+              ;;
+          esac
+          if [[ -d "$CLEAN_WORKSPACE" ]]; then
+            cd /tmp
+            find "$CLEAN_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          fi

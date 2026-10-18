@@ -1,0 +1,54 @@
+name: weekly
+steps:
+  - id: CHECK-CLAIMS
+    kind: check-claims
+  - id: CHECK-IMPORTS
+    kind: check-imports
+  - id: UNIT
+    kind: go-test
+    packages:
+      - ./pkg/fgdbtest/claims
+      - ./pkg/fgdbtest/cluster
+      - ./pkg/fgdbtest/faults
+      - ./pkg/fgdbtest/harness
+      - ./pkg/fgdbtest/invariants
+      - ./pkg/fgdbtest/prodimport
+      - ./pkg/fgdbtest/record
+      - ./pkg/fgdbtest/report
+      - ./pkg/fgdbtest/scenario
+      - ./pkg/fgdbtest/scenarios/claims
+      - ./pkg/fgdbtest/workdir
+      - ./pkg/cmd/fgdb-test
+  - id: SQL-LOCAL
+    kind: bazel
+    claim: SQL-001
+    target: //pkg/sql/logictest/tests/local:local_test
+    filter: '^TestLogic_(txn|select)$'
+  - id: SQL-FAKEDIST
+    kind: bazel
+    claim: SQL-001
+    target: //pkg/sql/logictest/tests/fakedist:fakedist_test
+    filter: '^TestLogic_(txn|select)$'
+  - id: SQL-5NODE
+    kind: bazel
+    claim: SQL-001
+    target: //pkg/sql/logictest/tests/5node:5node_test
+    filter: '^TestLogic_(ranges|distsql_stats)$'
+  - id: KVNEMESIS
+    kind: bazel
+    claim: KV-001
+    target: //pkg/kv/kvnemesis:kvnemesis_test
+  - id: CLUSTER
+    kind: cluster
+  - id: SQLLITELOGIC
+    kind: not-tested
+    detail: The sqllogictest corpus stays outside this repository. It is not wired in yet.
+  - id: ELLE
+    kind: not-tested
+    detail: The external history checker is not part of this repository.
+  - id: CLOCK
+    kind: not-tested
+    detail: Clock skew is not tested. The nodes on one machine share a clock.
+  - id: LAB-FAULTS
+    kind: not-tested
+    detail: Partition and disk faults need preconfigured root units on separate machines. Those units are not installed.

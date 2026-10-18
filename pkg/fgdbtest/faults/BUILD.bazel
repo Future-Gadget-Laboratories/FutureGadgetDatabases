@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "faults",
+    testonly = True,
+    srcs = ["faults.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/faults",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/fgdbtest/labels"],
+)
+
+go_test(
+    name = "faults_test",
+    srcs = ["faults_test.go"],
+    embed = [":faults"],
+    deps = ["//pkg/fgdbtest/labels"],
+)

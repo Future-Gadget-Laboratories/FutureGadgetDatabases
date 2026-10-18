@@ -6,8 +6,7 @@
 #   push of tags matching v*-oss
 # Ordinary pushes and pull requests do not build.
 #
-# The compile runs only on the self-hosted runner labeled fgdb-build
-# (labcluster3). It must not run on labcluster0-test / self-hosted-ci.
+# The compile runs only on the self-hosted runner labeled fgdb-build.
 # Release upload and the image push run on ubuntu-latest.
 #
 # Knobs (edit here):
@@ -29,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Git ref to build (tag, branch, or SHA)
+        description: Git ref to build. A v*-fgdb.N tag is published under that name.
         required: true
         default: v23.2.15
         type: string
@@ -38,9 +37,12 @@ on:
         required: true
         default: false
         type: boolean
+  # v*-oss keeps the existing publish. v*-fgdb.* publishes that git tag.
   push:
     tags:
       - "v*-oss"
+      # vX.Y.Z-fgdb.N, where N is an integer. The git tag is the release tag.
+      - "v*-fgdb.*"
 
 permissions:
   contents: read
@@ -51,7 +53,6 @@ concurrency:
 
 env:
   IMAGE_REPOSITORY: ghcr.io/future-gadget-laboratories/futuregadgetdatabases
-  GHCR_PACKAGE: futuregadgetdatabases
   BUILD_CHANNEL: fgl-oss
   PUSH_MINOR_ALIAS: "true"
   EXPECT_GO: go1.21.12
@@ -68,6 +69,7 @@ jobs:
       skip: ${{ steps.decide.outputs.skip }}
       publish: ${{ steps.decide.outputs.publish }}
       source_ref: ${{ steps.decide.outputs.source_ref }}
+      release_tag: ${{ steps.decide.outputs.release_tag }}
     steps:
       - name: Checkout helper scripts
         uses: actions/checkout@v4
@@ -111,6 +113,28 @@ jobs:
           if [[ "$skip" == "true" ]]; then
             echo "Skipping this tag push; a workflow_dispatch publish for ${GITHUB_SHA} already ran or is running."
           fi
+          # default means the release tag is still ${version}-oss from version.txt.
+          # A v*-fgdb.N ref is published as that tag and does not select the oss tag.
+          selected=$(bash build/fgdb/release-tag.sh select \
+            --event "$GITHUB_EVENT_NAME" \
+            --ref-name "${GITHUB_REF_NAME:-}" \
+            --dispatch-ref "${SOURCE_REF_INPUT:-}")
+          if [[ ! "$selected" =~ ^[a-z0-9.-]+$ ]]; then
+            echo "unexpected release tag selection: ${selected}" >&2
+            exit 1
+          fi
+          if [[ "$selected" != "default" ]]; then
+            again=$(bash build/fgdb/release-tag.sh select \
+              --event push \
+              --ref-name "$selected" \
+              --dispatch-ref "")
+            if [[ "$again" != "$selected" ]]; then
+              echo "refusing release tag selection: ${selected}" >&2
+              exit 1
+            fi
+          fi
+          printf 'release_tag=%s\n' "$selected" >> "$GITHUB_OUTPUT"
+          echo "Release tag selection: ${selected}"
 
   build:
     name: Build cockroach-oss
@@ -146,37 +170,31 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Check the release tag against the database version
+        env:
+          RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < src/pkg/build/version.txt)
+          bash tooling/build/fgdb/release-tag.sh check \
+            --version "$version" \
+            --tag "$RELEASE_TAG"
+
       - name: Refuse a new release tag on an unguarded commit
         env:
-          GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ needs.gate.outputs.publish }}
         run: |
           set -euo pipefail
           if [[ "$PUBLISH" != "true" ]]; then
             exit 0
           fi
-          if [[ -f src/.github/workflows/fgdb-oss-release.yml ]]; then
-            exit 0
+          if [[ ! -f src/.github/workflows/fgdb-oss-release.yml ]]; then
+            echo "Refusing to publish from a commit without the guarded release workflow." >&2
+            echo "A publish=false dispatch is still fine and will not create a tag." >&2
+            exit 1
           fi
-          version=$(tr -d '[:space:]' < src/pkg/build/version.txt)
-          tag="${version}-oss"
-          code=$(curl -sS -o /tmp/fgdb-release.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}")
-          if [[ "$code" == "200" ]]; then
-            echo "Release ${tag} already exists; this run will refresh its assets."
-            exit 0
-          fi
-          echo "Refusing to compile with publish=true from this ref." >&2
-          echo "The checkout has no .github/workflows/fgdb-oss-release.yml, and ${tag} does not exist yet." >&2
-          echo "Creating that tag on the raw upstream commit would run unguarded upstream workflows (bincheck on macos runners)." >&2
-          echo "Push ${tag} from main after this workflow is merged, or dispatch with ref set to that commit." >&2
-          echo "A publish=false dispatch is still fine and will not create a tag." >&2
-          exit 1
 
-      - name: Require the lab cache paths
+      - name: Require the runner cache paths
         run: |
           set -euo pipefail
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
@@ -189,7 +207,7 @@ jobs:
           fi
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
             echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
-            echo "Run build/fgdb/runner/setup-labcluster3.sh on labcluster3 first." >&2
+            echo "Run build/fgdb/runner/setup-runner.sh on the self-hosted build runner (label fgdb-build) first." >&2
             exit 1
           fi
           {
@@ -230,7 +248,15 @@ jobs:
             --test_output=errors \
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
 
+      - name: Install the pinned Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.12"
+
       - name: Package tarball and checksums
+        env:
+          FGDB_EXPECT_GO: ${{ env.EXPECT_GO }}
+          FGDB_RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
         run: |
           set -euo pipefail
           bash tooling/build/fgdb/package-oss-tarball.sh "${PWD}/src" "${PWD}/dist"
@@ -238,10 +264,18 @@ jobs:
 
       - name: Record build metadata
         id: meta
+        env:
+          FGDB_RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^VERSION=//p' dist/build-info.env)
           release_tag=$(sed -n 's/^RELEASE_TAG=//p' dist/build-info.env)
+          bash tooling/build/fgdb/release-tag.sh check --version "$version" --tag "$release_tag"
+          expected=$(FGDB_RELEASE_TAG="${FGDB_RELEASE_TAG}" bash tooling/build/fgdb/release-tag.sh package-tag --version "$version")
+          if [[ "$release_tag" != "$expected" ]]; then
+            echo "RELEASE_TAG ${release_tag} does not match ${expected}" >&2
+            exit 1
+          fi
           source_sha=$(git -C src rev-parse HEAD)
           if [[ -f src/.github/workflows/fgdb-oss-release.yml ]]; then
             has_workflow=true
@@ -277,6 +311,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release helper
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: build/fgdb
+
       - name: Download tarball
         uses: actions/download-artifact@v4
         with:
@@ -295,13 +335,7 @@ jobs:
           PUSH_MINOR_ALIAS: ${{ env.PUSH_MINOR_ALIAS }}
         run: |
           set -euo pipefail
-          case "$RELEASE_TAG" in
-            v*-oss) ;;
-            *)
-              echo "refusing unexpected release tag: ${RELEASE_TAG}" >&2
-              exit 1
-              ;;
-          esac
+          bash build/fgdb/release-tag.sh check --version "$VERSION" --tag "$RELEASE_TAG"
           case "$SOURCE_SHA" in
             [0-9a-f]*) ;;
             *)
@@ -309,68 +343,74 @@ jobs:
               exit 1
               ;;
           esac
-          minor=${VERSION%.*}
           notes=dist/release-notes.md
-          {
-            echo "# CockroachDB ${VERSION} OSS"
-            echo
-            echo "CCL-free build of \`//pkg/cmd/cockroach-oss:cockroach-oss\` plus libgeos."
-            echo "The tarball binary is named \`cockroach\` so it matches the upstream archive layout."
-            echo
-            echo "- Source SHA: \`${SOURCE_SHA}\`"
-            echo "- Workflow SHA: \`${GITHUB_SHA}\`"
-            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            echo "- Image: \`${IMAGE_REPOSITORY}:${VERSION}-oss\`"
-            echo "- Image: \`${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}\`"
-            if [[ "$PUSH_MINOR_ALIAS" == "true" ]]; then
-              echo "- Image: \`${IMAGE_REPOSITORY}:${minor}-oss\` (moving alias)"
-            fi
-            echo "- Image digest: pending"
-            echo
-            echo "\`\`\`"
-            cat dist/verify.log
-            echo "\`\`\`"
-            echo
-            echo "\`\`\`"
-            cat dist/SHA256SUMS
-            echo "\`\`\`"
-          } >"$notes"
+          bash build/fgdb/release-tag.sh notes \
+            --version "$VERSION" \
+            --release-tag "$RELEASE_TAG" \
+            --source-sha "$SOURCE_SHA" \
+            --workflow-sha "$GITHUB_SHA" \
+            --workflow-run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --repository "$IMAGE_REPOSITORY" \
+            --push-minor-alias "$PUSH_MINOR_ALIAS" \
+            --verify-log dist/verify.log \
+            --checksums dist/SHA256SUMS \
+            --out "$notes"
+          if [[ "$RELEASE_TAG" == *-oss ]]; then
+            title="CockroachDB ${VERSION} OSS"
+          else
+            title=$(bash build/fgdb/release-tag.sh title --version "$VERSION" --release-tag "$RELEASE_TAG")
+          fi
           asset_tgz=$(find dist -maxdepth 1 -name 'cockroach-oss-*.linux-amd64.tgz' -print -quit)
           if [[ -z "$asset_tgz" || ! -f dist/SHA256SUMS ]]; then
             echo "release assets are missing" >&2
             exit 1
           fi
-          # This job has no checkout. gh release looks up the repo with git
-          # unless --repo or GH_REPO is set, and then fails with
-          # "fatal: not a git repository".
+          # gh release looks up the repo with git unless --repo or GH_REPO is
+          # set, and then fails with "fatal: not a git repository".
+          # Keep --repo. The checkout above is only the release-tag helper.
           repo_args=(--repo "$GITHUB_REPOSITORY")
           # The commits API peels an annotated tag to the commit it points at.
-          # A missing tag is a 404; gh release create will create it from
-          # SOURCE_SHA. An existing tag must be that same commit, or the
-          # assets would not match v*-oss.
+          # An existing tag must be the commit that was built.
           tag_commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" --jq .sha 2>/dev/null) || tag_commit=
           if [[ -n "$tag_commit" && "$tag_commit" != "$SOURCE_SHA" ]]; then
             echo "Tag ${RELEASE_TAG} points at ${tag_commit}, but this build is ${SOURCE_SHA}." >&2
             echo "Refusing to publish this binary onto that tag. The tag is left where it is." >&2
             exit 1
           fi
-          if gh release view "$RELEASE_TAG" "${repo_args[@]}" >/dev/null 2>&1; then
-            echo "Release ${RELEASE_TAG} already exists; replacing its assets and notes."
-            gh release upload "$RELEASE_TAG" "${repo_args[@]}" "$asset_tgz" dist/SHA256SUMS --clobber
-            gh release edit "$RELEASE_TAG" "${repo_args[@]}" --notes-file "$notes"
-          else
-            if [[ "$SOURCE_HAS_WORKFLOW" != "true" && -z "$tag_commit" ]]; then
+          if [[ -z "$tag_commit" ]]; then
+            if [[ "$SOURCE_HAS_WORKFLOW" != "true" ]]; then
               echo "Refusing to create git tag ${RELEASE_TAG} at ${SOURCE_SHA}." >&2
               echo "That commit does not contain .github/workflows/fgdb-oss-release.yml." >&2
               echo "A tag on the raw v23.2.15 commit would run upstream bincheck from the unguarded tree." >&2
               echo "Push ${RELEASE_TAG} from main after this workflow is merged, or dispatch with ref set to that commit." >&2
               exit 1
             fi
+            # Create the tag with the Git refs API. Do not let the Releases
+            # API create it. GITHUB_TOKEN cannot be granted workflows:write.
+            # POST /releases with target_commitish returns 403 when that
+            # commit's .github/workflows tree differs from the default branch.
+            echo "Creating lightweight tag ${RELEASE_TAG} at ${SOURCE_SHA}."
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="${SOURCE_SHA}"
+          fi
+          if gh release view "$RELEASE_TAG" "${repo_args[@]}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; replacing its assets and notes."
+            gh release upload "$RELEASE_TAG" "${repo_args[@]}" "$asset_tgz" dist/SHA256SUMS --clobber
+            if [[ "$RELEASE_TAG" == *-oss ]]; then
+              gh release edit "$RELEASE_TAG" "${repo_args[@]}" --notes-file "$notes"
+            else
+              gh release edit "$RELEASE_TAG" "${repo_args[@]}" --notes-file "$notes" --title "$title"
+            fi
+          else
+            # --verify-tag attaches the release to the tag that already
+            # exists. Do not pass --target. That flag is what returned
+            # HTTP 403 for the job token on run 37722489051.
             echo "Creating release ${RELEASE_TAG}."
             gh release create "$RELEASE_TAG" \
               "${repo_args[@]}" \
-              --target "$SOURCE_SHA" \
-              --title "CockroachDB ${VERSION} OSS" \
+              --verify-tag \
+              --title "$title" \
               --notes-file "$notes" \
               "$asset_tgz" \
               dist/SHA256SUMS
@@ -378,8 +418,8 @@ jobs:
 
   image:
     name: Publish GHCR image
-    needs: build
-    if: needs.build.outputs.publish == 'true'
+    needs: [build, release]
+    if: needs.build.outputs.publish == 'true' && needs.release.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -407,8 +447,8 @@ jobs:
         id: push
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
         run: |
           set -euo pipefail
@@ -421,24 +461,54 @@ jobs:
             --tarball "$tarball" \
             --source "${PWD}" \
             --out "${PWD}/image-context"
-          primary="${IMAGE_REPOSITORY}:${VERSION}-oss"
-          sha_tag="${IMAGE_REPOSITORY}:sha-${SOURCE_SHA}"
-          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          docker build \
-            --build-arg "image_version=${VERSION}-oss" \
-            --build-arg "image_revision=${SOURCE_SHA}" \
-            --build-arg fips_enabled=0 \
-            -f build/deploy-oss/Dockerfile \
-            -t "$primary" \
-            -t "$sha_tag" \
-            image-context
-          tags=("$primary" "$sha_tag")
-          if [[ "$PUSH_MINOR_ALIAS" == "true" ]]; then
-            minor=${VERSION%.*}
-            alias="${IMAGE_REPOSITORY}:${minor}-oss"
-            docker tag "$primary" "$alias"
-            tags+=("$alias")
+          image_plan=$(bash build/fgdb/release-tag.sh image-tags \
+            --repository "$IMAGE_REPOSITORY" \
+            --version "$VERSION" \
+            --release-tag "$RELEASE_TAG" \
+            --sha "$SOURCE_SHA" \
+            --push-minor-alias "$PUSH_MINOR_ALIAS")
+          image_version=
+          tags=()
+          while IFS= read -r line; do
+            case "$line" in
+              IMAGE_VERSION=*) image_version=${line#IMAGE_VERSION=} ;;
+              TAG=*) tags+=("${line#TAG=}") ;;
+              "")
+                ;;
+              *)
+                echo "unexpected image plan line: ${line}" >&2
+                exit 1
+                ;;
+            esac
+          done <<<"$image_plan"
+          if [[ -z "$image_version" || ${#tags[@]} -lt 2 ]]; then
+            echo "image plan is incomplete" >&2
+            exit 1
           fi
+          # A v*-fgdb.N publish must not move the oss image tags.
+          if [[ "$RELEASE_TAG" == *-fgdb.* ]]; then
+            minor=${VERSION%.*}
+            for tag in "${tags[@]}"; do
+              case "$tag" in
+                "${IMAGE_REPOSITORY}:${VERSION}-oss"|"${IMAGE_REPOSITORY}:${minor}-oss")
+                  echo "refusing to push ${tag} for ${RELEASE_TAG}" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+          fi
+          primary=${tags[0]}
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          build_cmd=(docker build
+            --build-arg "image_version=${image_version}"
+            --build-arg "image_revision=${SOURCE_SHA}"
+            --build-arg fips_enabled=0
+            -f build/deploy-oss/Dockerfile)
+          for tag in "${tags[@]}"; do
+            build_cmd+=(-t "$tag")
+          done
+          build_cmd+=(image-context)
+          "${build_cmd[@]}"
           for tag in "${tags[@]}"; do
             # A second push of the same image is success. Current Docker
             # prints "<tag>: digest: sha256:..." which does not start with
@@ -453,14 +523,7 @@ jobs:
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "Pushed ${primary}@${digest}"
-          owner=${GITHUB_REPOSITORY%%/*}
-          if ! gh api --method PUT \
-            -H "Accept: application/vnd.github+json" \
-            "/orgs/${owner}/packages/container/${GHCR_PACKAGE}/visibility" \
-            -f visibility=public; then
-            echo "Could not mark ${GHCR_PACKAGE} public with this token."
-            echo "An org owner should set the package visibility to public once, in GitHub Packages."
-          fi
+          echo "Package visibility is not changed here. An organization owner sets the package to public once in its package settings."
 
   digest:
     name: Record image digest on the release
@@ -471,6 +534,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release helper
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: build/fgdb
+
       - name: Update release notes with the digest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -488,7 +557,7 @@ jobs:
           fi
           pin="${IMAGE_REPOSITORY}@${DIGEST}"
           notes=$(mktemp)
-          # No checkout in this job. --repo keeps gh from calling git.
+          # gh needs --repo. The checkout above is only the pin-sentence helper.
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body >"$notes"
           tmp=$(mktemp)
           if grep -q 'Image digest:' "$notes"; then
@@ -500,6 +569,9 @@ jobs:
           # One pin sentence. A second run must not append another.
           grep -v 'CipherBank should pin ' "$tmp" >"${tmp}.body" || true
           mv "${tmp}.body" "$tmp"
-          printf '\nCipherBank should pin %s (tag %s-oss is a moving name).\n' \
-            "$pin" "$VERSION" >>"$tmp"
+          pin_sentence=$(bash build/fgdb/release-tag.sh pin \
+            --version "$VERSION" \
+            --release-tag "$RELEASE_TAG" \
+            --pin "$pin")
+          printf '\n%s\n' "$pin_sentence" >>"$tmp"
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$tmp"

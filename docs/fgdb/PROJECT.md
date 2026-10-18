@@ -13,7 +13,7 @@ You talk to it with SQL. Clients use the PostgreSQL wire protocol on port 26257.
 
 Hobbyists and junior engineers can run a one-node lab, then a three-node lab, from [getting-started.md](getting-started.md).
 
-Operators who need a pinned open-source binary use the `v23.2.15-oss` release described in [releases.md](releases.md).
+Operators who need a pinned open-source binary use `v23.2.15-fgdb.1`, described in [releases.md](releases.md). That release adds `fgdb-backup`. The earlier `v23.2.15-oss` release is the database tarball from the first publish.
 
 CipherBank is a design partner and a supported consumer. FGDb's docs, license rules, and roadmap are written for the project itself. CipherBank's install pins are a downstream choice. This repository does not change those pins.
 
@@ -25,13 +25,14 @@ CipherBank is a design partner and a supported consumer. FGDb's docs, license ru
 | Upstream commit | `3497fb02dce0beb6fc2bbf76c1ed7ad69cc31344` |
 | Import commit | `a72022ff42bbceb6f0865b3b07e6fd6a9e94a6e1` |
 | Binary | `cockroach-oss`, Bazel target `//pkg/cmd/cockroach-oss:cockroach-oss` |
-| Release tag | `v23.2.15-oss` (published by the release workflow, not by a normal push) |
-| Image | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-oss` |
-| Consumer pin | The image **digest** from the release notes, after the image exists |
+| Current release | `v23.2.15-fgdb.1` (database plus `fgdb-backup`) |
+| Earlier release | `v23.2.15-oss` (database tarball from the first publish) |
+| Current image | `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-fgdb.1` |
+| Consumer pin | The image digest in [releases.md](releases.md). For `v23.2.15-fgdb.1` that is `sha256:c71351abe5885f08f1e356c3497e1121591aed2110043d7adbfed577438bb173`. |
 
 `cockroach version` on this pin still says CockroachDB. That string comes from the imported source. The project name is FutureGadgetDatabases.
 
-No image digest is written in this file. Copy the digest from the GitHub Release after the first successful publish. A tag such as `v23.2-oss` moves when a newer image is pushed. A digest does not move.
+A tag such as `v23.2-oss` moves when a newer `v23.2.15-oss` image is pushed. A digest stays on the bytes it names. Copy the digest from [releases.md](releases.md) into the deployment.
 
 ## License story
 
@@ -47,7 +48,7 @@ Full rules: [license.md](license.md).
 
 ## How a consumer should run it
 
-1. Prefer the published `cockroach-oss` tarball or the GHCR image once they exist. Build from source with `./dev build oss geos` when they do not.
+1. Prefer the published `v23.2.15-fgdb.1` tarball or its GHCR image. Build from source with `./dev build oss geos` when you are changing the database. The lab steps are in [getting-started.md](getting-started.md).
 2. Pin the image by digest.
 3. Start nodes with `COCKROACH_SKIP_ENABLING_DIAGNOSTIC_REPORTING=true`. Then set `diagnostics.reporting.enabled` and `diagnostics.reporting.send_crash_reports.enabled` to `false`. Steps and a sample env file are in [operations.md](operations.md).
 4. Leave the license enforcer off. In this tree it stays off unless `COCKROACH_ENABLE_LICENSE_ENFORCER=true`. This line has no license key and does not use that switch.

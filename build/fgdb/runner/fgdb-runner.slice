@@ -1,8 +1,6 @@
-# Installed by build/fgdb/runner/setup-labcluster3.sh.
-# Defaults match the variables at the top of that script.
-# labcluster3 is 18 cores / 36 threads and 123 GB RAM, and it also runs
-# slurmctld, slurmd, and Ollama. This slice is a hard cap so the Actions
-# runner cannot take the whole machine.
+# Reference unit. build/fgdb/runner/setup-runner.sh writes the live unit
+# on the runner from FGDB_CPU_QUOTA, FGDB_MEMORY_HIGH, and FGDB_MEMORY_MAX,
+# or from the defaults below. Lower the caps when the host runs other services.
 [Unit]
 Description=FutureGadgetDatabases GitHub Actions runner slice
 Documentation=https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/RUNNER.md
@@ -10,8 +8,6 @@ Documentation=https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabase
 [Slice]
 CPUAccounting=yes
 MemoryAccounting=yes
-# 24 of 36 hardware threads. Leaves 12 threads for Slurm, Ollama, and the OS.
 CPUQuota=2400%
-# Soft cap 80G, hard cap 96G. Leaves about 27 GB outside the runner cgroup.
 MemoryHigh=80G
 MemoryMax=96G

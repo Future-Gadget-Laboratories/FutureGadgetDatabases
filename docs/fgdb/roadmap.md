@@ -9,7 +9,9 @@ Three stages. The first one is the project you can build today.
 
 The source pin is CockroachDB v23.2.15, upstream commit `3497fb02dce0beb6fc2bbf76c1ed7ad69cc31344`. The BSL Change Date for that line was 2026-10-01, so the BSL core is Apache-2.0. The binary target is `//pkg/cmd/cockroach-oss:cockroach-oss`. CCL code stays out of the published binary.
 
-The release tag is `v23.2.15-oss`. The image name is `ghcr.io/future-gadget-laboratories/futuregadgetdatabases`. Consumers pin the digest from the release notes after the image exists. The procedure is [RELEASING.md](RELEASING.md). The names are listed in [releases.md](releases.md).
+Two releases are already public. The current one is `v23.2.15-fgdb.1`: the same `cockroach-oss` binary plus `fgdb-backup`, image `ghcr.io/future-gadget-laboratories/futuregadgetdatabases:v23.2.15-fgdb.1`. The earlier release is `v23.2.15-oss`. Digests and checksums are in [releases.md](releases.md). The procedure is [RELEASING.md](RELEASING.md).
+
+The first test slice is in the tree. `fgdb/test/run.sh pr` checks claims and Go tests on a laptop. The 3-node slice and the manual interim workflow are described in [testing.md](testing.md).
 
 This stage does not add v23.2.16 or any CSL patch. **CSL** is the CockroachDB Software License.
 
@@ -30,7 +32,8 @@ After the behavior is in place, user-facing names can move toward FutureGadgetDa
 These are real gaps. They are not in this docs pass:
 
 - A public website
-- Deeper operations runbooks (backup, restore, upgrades, multi-region)
+- Incremental backup and point-in-time restore. Logical backup of user databases is [backup.md](backup.md). It is not enterprise `BACKUP`.
+- Deeper operations runbooks (upgrades, multi-region)
 - More cleanroom feature notes, as each feature gets a behavior spec
 - arm64 release artifacts
-- Consumer install pins, after a published image digest exists. This repository does not edit those pins.
+- Consumer install pins. The public digest for `v23.2.15-fgdb.1` is in [releases.md](releases.md). This repository does not edit pins that live in another project.

@@ -55,6 +55,18 @@ rm -rf "$out"
 mkdir -p "$out"
 install -m 0755 "${prefix}/cockroach" "${out}/cockroach"
 install -m 0755 "$entrypoint" "${out}/cockroach.sh"
+if [[ -f "${prefix}/fgdb-backup" ]]; then
+  install -m 0755 "${prefix}/fgdb-backup" "${out}/fgdb-backup"
+else
+  # Older tarballs do not contain the client. The image Dockerfile still
+  # copies this path, so leave a script that fails with a clear message.
+  cat >"${out}/fgdb-backup" <<'EOF'
+#!/bin/sh
+echo "fgdb-backup is not in this release tarball" >&2
+exit 1
+EOF
+  chmod 0755 "${out}/fgdb-backup"
+fi
 install -m 0644 "${prefix}/lib/libgeos.so" "${out}/libgeos.so"
 install -m 0644 "${prefix}/lib/libgeos_c.so" "${out}/libgeos_c.so"
 mkdir -p "${out}/licenses"
