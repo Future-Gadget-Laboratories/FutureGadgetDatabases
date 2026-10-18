@@ -9,6 +9,12 @@
 # so a fork pull request cannot be checked out. build/fgdb/require-repo-commit.py
 # refuses the job before the source checkout if that check fails.
 #
+# allow_missing_hook_test defaults to false. The hook step fails when the
+# selected commit has no pkg/repstream/api_test.go. Set it true only to
+# compile an older commit that predates that test. The step then prints
+# "repstream regression NOT tested" and writes that to the job summary.
+# A green run in that mode is not a hook pass.
+#
 # The workflow file and the build tooling come from the branch or tag
 # selected in the Actions UI (github.sha). That ref is already in this
 # repository. The source tree is commit_sha, with credentials persistence
@@ -40,6 +46,11 @@ on:
         description: 40-character SHA already on a branch or tag in this repository
         required: true
         type: string
+      allow_missing_hook_test:
+        description: Allow a commit with no pkg/repstream/api_test.go. The step prints NOT tested and records that in the job summary. This is not a hook pass. Default fails the step.
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -325,16 +336,28 @@ jobs:
             --test_tmpdir="${RUNNER_TEMP}/fgdb-imports"
 
       - name: Replication manager hook regression
+        env:
+          ALLOW_MISSING_HOOK_TEST: ${{ inputs.allow_missing_hook_test }}
         run: |
           set -euo pipefail
           cd src
-          if [[ ! -f pkg/repstream/api_test.go ]]; then
-            echo "repstream regression NOT tested: selected commit has no api_test.go"
-          else
+          if [[ -f pkg/repstream/api_test.go ]]; then
             bazel test //pkg/repstream:repstream_test \
               --test_output=errors \
               --test_tmpdir="${RUNNER_TEMP}/fgdb-repstream"
+            exit 0
           fi
+          echo "repstream regression NOT tested: selected commit has no pkg/repstream/api_test.go"
+          if [[ "${ALLOW_MISSING_HOOK_TEST}" == "true" ]]; then
+            {
+              echo "## Hook regression"
+              echo
+              echo "repstream regression NOT tested. allow_missing_hook_test is true, so this green compile is not a hook pass. The selected commit has no pkg/repstream/api_test.go."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "The hook regression is required. Set allow_missing_hook_test to compile an older commit that predates pkg/repstream/api_test.go. A green job is not a hook pass." >&2
+          exit 1
 
       - name: Remove the workspace and this commit's Bazel directories
         if: always()

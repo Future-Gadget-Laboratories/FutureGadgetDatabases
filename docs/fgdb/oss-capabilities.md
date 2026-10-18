@@ -17,7 +17,7 @@ This package depends on generated SQL types. Run it through Bazel rather than as
 bazel test //pkg/repstream:repstream_test --test_output=errors
 ```
 
-The manual self-hosted compile workflow runs this target after its existing OSS build and disallowed-imports check when the selected commit contains the regression source. Older commits without that source remain compilable and print `repstream regression NOT tested`; such a compile does not demonstrate the new regression. The interim, nightly, and weekly tiers also require it. A `pkg/repstream/**` change now triggers the GitHub-hosted fast checks, but those fast checks do not execute this Bazel target. A green fast-check job alone is not evidence that the hook regression ran.
+The manual self-hosted compile runs this target after its existing OSS build and disallowed-imports check. If `pkg/repstream/api_test.go` is missing, that step fails unless the dispatch input `allow_missing_hook_test` is true. That input defaults to false. Set it only for an older commit that predates the test. The step then prints `repstream regression NOT tested` and writes a job summary line that the green compile is not a hook pass. The interim, nightly, and weekly tiers also require the target. A `pkg/repstream/**` change triggers the GitHub-hosted fast checks. Those jobs do not format, vet, or Bazel-test `pkg/repstream`. A green fast-check job is not evidence that the hook regression ran.
 
 ## Stage 4: the first observable capability matrix
 

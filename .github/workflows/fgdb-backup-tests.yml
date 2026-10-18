@@ -32,7 +32,6 @@ jobs:
       FGDB_EXPECT_GO: go1.21.12
       FGDB_SOURCE_SHA: ${{ github.sha }}
       FGDB_CANDIDATE_SHA256: 5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379
-      FGDB_OUTPUT: ${{ runner.temp }}/fgdb-oss-capabilities
       LD_LIBRARY_PATH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/lib
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -58,6 +57,8 @@ jobs:
         working-directory: pkg/cmd/fgdb-backup
         run: go test -count=1 -v ./...
       - name: Check OSS runtime capabilities
+        env:
+          FGDB_OUTPUT: ${{ runner.temp }}/fgdb-oss-capabilities
         run: go test -count=1 -v -timeout 15m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
       - name: Upload OSS capability report
         if: always()
@@ -67,5 +68,5 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: |
-            ${{ env.FGDB_OUTPUT }}/result.json
-            ${{ env.FGDB_OUTPUT }}/summary.md
+            ${{ runner.temp }}/fgdb-oss-capabilities/result.json
+            ${{ runner.temp }}/fgdb-oss-capabilities/summary.md
