@@ -143,7 +143,7 @@ func restoreIntoEmpty(ctx context.Context, db *database, bundle restoreBundle, s
 	if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
 		return err
 	}
-	warnings, err := loadSelected(ctx, db, bundle, selected, opt)
+	warnings, err := loadSelected(ctx, db, bundle, selected, opt, nil)
 	if err != nil {
 		return err
 	}

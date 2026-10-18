@@ -283,10 +283,14 @@ the port the server actually got. A bind that listens on every interface is
 refused unless you pass `--serve-advertise`. That includes an empty host
 (`:8080`), `0:8080`, `0.0.0.0`, `[::]`, `[::0]`, and any other spelling of an
 unspecified address. A hostname on `--serve-addr` or `--import-listen` that
-resolves to one of those addresses is refused the same way. After the socket
-is open, the tool checks the address it actually got and closes it before
-building a URL. A URL that contains one of those addresses points each node
-at itself.
+resolves to one of those addresses is refused the same way. The tool listens
+first, checks the address it actually got, and closes that socket when it is
+unspecified and `--serve-advertise` is empty. That check runs before any
+object is dropped. An accepted listener stays open and is the socket used for
+the load. `--plan` reports the same check, does not start the file server,
+and does not change the cluster. `--load=copy` and `s3-import-auth: implicit`
+do not open this listener. A URL that contains one of those addresses points
+each node at itself.
 
 ```bash
 fgdb-backup restore --url "$URL" --src /backups/app/latest \
@@ -299,8 +303,8 @@ already includes a port, that port is used as written.
 
 Set both `--serve-tls-cert` and `--serve-tls-key`, or neither. One without
 the other is refused before the restore starts. With both set, the URL is
-`https://`. A bad certificate file is reported as a file-server error, not
-ignored. There is no flag that installs a CA on the database nodes. The
+`https://`. A bad certificate file is reported before any object is dropped,
+not ignored. There is no flag that installs a CA on the database nodes. The
 nodes must already trust the certificate. If they cannot reach the server,
 rerun with `--load=copy`.
 
@@ -314,7 +318,7 @@ If `IMPORT` fails, the error names the flag that chose the bind address:
 | 0 | The command finished. |
 | 1 | The command started, then failed. This includes a bad config file, a bad YAML value, a bad path or S3 location, a refused unlock, a failed prune, a TLS flag mismatch, and a refused wildcard bind. A real restore that the preflight refuses also exits 1. |
 | 2 | The command line is wrong: unknown command, bad flag syntax, missing required flags, or extra arguments. |
-| 4 | Only `restore --plan`, when the preflight refuses. `--plan` does not change the cluster. |
+| 4 | Only `restore --plan`, when the preflight refuses. That includes a served-import listener or wildcard the plan rejects. `--plan` does not change the cluster. |
 
 ```bash
 fgdb-backup restore --config backup.yaml --plan --url "$URL" --src ./backups/daily/latest
