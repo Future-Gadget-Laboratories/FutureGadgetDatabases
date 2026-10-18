@@ -5,7 +5,7 @@
 
 This queues the numbered questions in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md). It does not close them or claim runtime coverage. The map was reconciled against `main` at `2d2befea10288726b8da5654031a503acfb2b512` on 2026-10-17. Recheck the source and PR heads when work starts.
 
-The existing [Phase 0 suite](../testing.md) lives under `fgdb/test/` and `pkg/fgdbtest/`. Extend those paths and their claim registry rather than creating another harness. The current release is `v23.2.15-fgdb.1`; see [releases.md](../releases.md) for pins. Architecture documentation can land with open verification questions, provided the evidence limits remain explicit.
+The Phase 0 suite is documented in [testing.md on main](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/testing.md). On main it lives under `fgdb/test/` and `pkg/fgdbtest/`. Those paths are not in this branch. Extend that suite and its claim registry rather than creating another harness. The `v23.2.15-fgdb.1` pin is recorded in [releases.md on main](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/releases.md). [releases.md](../releases.md) in this branch documents `v23.2.15-oss`. Architecture documentation can land with open verification questions, provided the evidence limits remain explicit.
 
 ## Order and completion evidence
 

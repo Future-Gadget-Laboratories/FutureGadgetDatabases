@@ -3,7 +3,7 @@
 
 # How the OSS binary is built
 
-The current `v23.2.15-fgdb.1` archive contains the `cockroach-oss` binary (named `cockroach` in the archive), the separate `fgdb-backup` SQL client, and `libgeos.so` / `libgeos_c.so`. The earlier `v23.2.15-oss` archive has no `fgdb-backup`. The current image includes these components plus `build/deploy/cockroach.sh` on a Red Hat UBI 9 minimal base. `fgdb-backup` uses ordinary SQL; it is not the CCL `BACKUP` statement. This page is the path in this repository. It does not describe the machine that runs the compile.
+The `v23.2.15-fgdb.1` archive contains the `cockroach-oss` binary (named `cockroach` in the archive), the separate `fgdb-backup` SQL client, and `libgeos.so` / `libgeos_c.so`. Its pin is recorded in [releases.md on main](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/releases.md). The earlier `v23.2.15-oss` archive has no `fgdb-backup`. [releases.md](../releases.md) in this branch documents that earlier archive. The `v23.2.15-fgdb.1` image includes the archive components plus `build/deploy/cockroach.sh` on a Red Hat UBI 9 minimal base. `fgdb-backup` uses ordinary SQL; it is not the CCL `BACKUP` statement. This page is the path in this repository. It does not describe the machine that runs the compile.
 
 Scripts:
 
@@ -103,7 +103,7 @@ For older tarballs without the client, `stage-image-context.sh` creates a `fgdb-
 
 `build/deploy-oss/Dockerfile` copies `cockroach`, `fgdb-backup`, and `cockroach.sh` to `/cockroach/`, the libraries to `/usr/local/lib/cockroach/`, and the licenses to `/licenses/`. It sets `COCKROACH_CHANNEL=fgl-oss`, exposes `26257` and `8080`, and uses `ENTRYPOINT ["/cockroach/cockroach.sh"]`. The base image is pinned by digest (UBI 9 minimal). The comment in the Dockerfile says the process runs as root, matching the upstream image layout, because charts expect `/cockroach/cockroach-data` to be root-owned. `fips_enabled` defaults to 0.
 
-For an OSS release, the publish path tags the image as `<version>-oss`, `sha-<commit>`, and, unless turned off, the moving `<major>.<minor>-oss` alias. For a `vX.Y.Z-fgdb.N` release, it uses that FGDb tag and `sha-<commit>` without moving the OSS aliases. See [../RELEASING.md](../RELEASING.md) and [../releases.md](../releases.md). `docker push` does not have to print a `digest:` line. `build/fgdb/resolve-image-digest.sh` asks the registry (`docker buildx imagetools inspect`) and checks that every tag resolves to the same `sha256`. A later job writes that digest into the GitHub release notes. Pin the digest. The minor alias moves.
+For an OSS release, the publish path tags the image as `<version>-oss`, `sha-<commit>`, and, unless turned off, the moving `<major>.<minor>-oss` alias. For a `vX.Y.Z-fgdb.N` release, it uses that FGDb tag and `sha-<commit>` without moving the OSS aliases. See [../RELEASING.md](../RELEASING.md). [releases.md](../releases.md) in this branch records the `v23.2.15-oss` publish. The `v23.2.15-fgdb.1` pin is in [releases.md on main](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/releases.md). `docker push` does not have to print a `digest:` line. `build/fgdb/resolve-image-digest.sh` asks the registry (`docker buildx imagetools inspect`) and checks that every tag resolves to the same `sha256`. A later job writes that digest into the GitHub release notes. Pin the digest. The minor alias moves.
 
 ```mermaid
 flowchart TD
@@ -111,7 +111,7 @@ flowchart TD
   rc["write-bazelrc-user.sh<br/>.bazelrc.user"]
   bazel["bazel build<br/>cockroach-oss and //c-deps:libgeos"]
   stage["stage cockroach-oss and lib/*.so"]
-  imports["disallowed_imports_test<br/>no pkg/ccl, no distccl"]
+  imports["disallowed_imports_test<br/>no pkg/ccl, no distccl, no pkg/fgdbtest"]
   verify["verify-oss-binary.sh<br/>ELF, nm, strings, version OSS"]
   tar["package-oss-tarball.sh and fgdb-backup build"]
   ctx["stage-image-context.sh"]
