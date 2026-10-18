@@ -121,3 +121,37 @@
     - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
   tier: interim
   status: partial
+- id: REP-001
+  claim: Each replication manager getter checks its own hook and preserves the hook result or error.
+  source: docs/fgdb/oss-capabilities.md
+  category: correctness
+  tests:
+    - pkg/repstream:TestManagerHooksAreIndependent
+    - pkg/repstream:TestManagerHookErrorsPropagate
+  tier: interim
+  status: partial
+- id: OSS-001
+  claim: The runtime capability slice requires the candidate binary to report Distribution OSS.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-002
+  claim: The runtime capability slice checks CSV IMPORT from a local HTTP fixture and compares both imported rows.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-003
+  claim: The runtime capability slice requires BACKUP to return the OSS statement gate and SQLSTATE XXC01.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestRequireCCLError
+  tier: interim
+  status: partial
