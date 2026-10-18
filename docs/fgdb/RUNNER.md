@@ -220,4 +220,6 @@ those do not match the download, the script stops and leaves
 
 Cut the release as described in [RELEASING.md](RELEASING.md). The first
 compile is a `workflow_dispatch` with `publish` left false, or a push of
-tag `v23.2.15-oss` on a commit that already contains this workflow.
+tag `v23.2.15-oss` or `v23.2.15-fgdb.N` on a commit that already contains
+`.github/workflows/fgdb-oss-release.yml`. Both of those tags are already
+published. The current release is `v23.2.15-fgdb.1`.

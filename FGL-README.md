@@ -8,7 +8,7 @@ The guide list is [docs/fgdb/README.md](docs/fgdb/README.md).
 
 These pages belong with that front door:
 
-- [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) — publish the `v23.2.15-oss` binary and image
+- [docs/fgdb/RELEASING.md](docs/fgdb/RELEASING.md) — publish the current `v23.2.15-fgdb.1` release (`cockroach` and `fgdb-backup`) and the earlier `v23.2.15-oss` release (`cockroach` and GEOS, no `fgdb-backup`)
 - [docs/fgdb/RUNNER.md](docs/fgdb/RUNNER.md) — set up the machine that builds that release
 - [docs/fgdb/CLEANROOM.md](docs/fgdb/CLEANROOM.md) — rewrite newer behavior without copying proprietary code
 - [docs/fgdb/SOURCES.md](docs/fgdb/SOURCES.md) — public sources for that process

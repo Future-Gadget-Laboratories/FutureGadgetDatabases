@@ -1,0 +1,12 @@
+# gazelle:ignore
+
+filegroup(
+    name = "suite_files",
+    srcs = glob([
+        "*.yaml",
+        "*.txt",
+        "*.md",
+        "tiers/*.yaml",
+    ]),
+    visibility = ["//visibility:public"],
+)

@@ -1,43 +1,22 @@
+# Cluster-backed fgdb-backup tests.
+#
+# Unit tests, go vet, and the build/fgdb script tests run in fgdb-checks.yml.
+# This workflow downloads the published v23.2.15-fgdb.1 tarball and runs the
+# tests that start cockroach-oss. It stays path-filtered so a docs-only pull
+# request does not download the binary.
+
 name: FGDB patch tests
 
 on:
   pull_request:
     paths:
       - ".github/workflows/fgdb-backup-tests.yml"
-      - "build/fgdb/**"
       - "pkg/cmd/fgdb-backup/**"
 
 permissions:
   contents: read
 
 jobs:
-  unit-and-script-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.21.12"
-          cache-dependency-path: pkg/cmd/fgdb-backup/go.sum
-      - name: Run backup unit tests
-        working-directory: pkg/cmd/fgdb-backup
-        run: go test ./...
-      - name: Run Go vet
-        working-directory: pkg/cmd/fgdb-backup
-        run: go vet ./...
-      - name: Run build script tests
-        run: |
-          bash build/fgdb/release-tag_test.sh
-          bash build/fgdb/skip-duplicate-tag-build_test.sh
-          bash build/fgdb/verify-oss-binary_test.sh
-          bash build/fgdb/runner/check-cache-dir_test.sh
-          bash build/fgdb/runner/checksums_test.sh
-          bash build/fgdb/runner/token-input_test.sh
-          bash build/fgdb/runner/read-config_test.sh
-          bash build/fgdb/runner/update-checksums_test.sh
-          bash build/fgdb/runner/runner-unit_test.sh
-
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -45,8 +24,10 @@ jobs:
       FGDB_COCKROACH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/cockroach
       LD_LIBRARY_PATH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/lib
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.21.12"
           cache-dependency-path: pkg/cmd/fgdb-backup/go.sum

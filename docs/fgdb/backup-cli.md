@@ -3,7 +3,9 @@
 
 # fgdb-backup command
 
-This page is the command as `pkg/cmd/fgdb-backup` behaves in this tree. The file layout is [backup.md](backup.md). Where that page disagrees about exit codes or `--force`, use this page. The config keys are [backup-config.md](backup-config.md).
+This page is the command as `pkg/cmd/fgdb-backup` behaves in this tree. The file layout is [backup.md](backup.md). Where that page disagrees about exit codes or `--force`, use this page. It was checked against the source. The config keys are [backup-config.md](backup-config.md).
+
+The binary is in the `v23.2.15-fgdb.1` tarball and image. The earlier `v23.2.15-oss` tarball has `cockroach` and the GEOS libraries, and it has no `fgdb-backup`. Checksums are in [releases.md](releases.md).
 
 ## Commands
 
@@ -67,11 +69,11 @@ fgdb-backup restore --url "$URL" --src /backups/name/latest \
   --serve-advertise 192.0.2.10
 ```
 
-Use a host the database nodes can dial. Set `--serve-tls-cert` and `--serve-tls-key` together, or set neither. One without the other exits 1 before the restore starts.
+Use a host the database nodes can dial. A cluster on another machine needs an address that is not a loopback. Set `--serve-tls-cert` and `--serve-tls-key` together, or set neither. One without the other exits 1 before the restore starts.
 
 ## `--testing-mode`
 
-`--testing-mode` is not an S3 switch. During an `IMPORT` restore it creates a scratch table, copies one row, and drops the table. The YAML key is `testing_mode`.
+`--testing-mode` is not an S3 switch. During an `IMPORT` restore, before the real import, it creates a scratch table, copies one row with `COPY FROM STDIN`, and drops the table. It does not send an S3 request. The YAML key is `testing_mode`.
 
 ## Prune old swapped copies
 

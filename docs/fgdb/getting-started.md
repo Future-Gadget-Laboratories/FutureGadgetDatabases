@@ -11,36 +11,27 @@ A production install needs certificates, disk planning, and monitoring. Those to
 
 ## 1. Get a binary
 
-The published file, once the GitHub Release exists, is Linux amd64:
+Use the current Linux amd64 release, `v23.2.15-fgdb.1`. The archive contains `cockroach`, `fgdb-backup`, and the GEOS libraries. Checksums and the container image are on [releases.md](releases.md). The earlier release `v23.2.15-oss` is the same database binary without `fgdb-backup`.
 
 ```text
-https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-oss/cockroach-oss-v23.2.15.linux-amd64.tgz
+https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-fgdb.1/cockroach-oss-v23.2.15.linux-amd64.tgz
 ```
-
-Check whether the release is there:
-
-```bash
-gh release view v23.2.15-oss \
-  --repo Future-Gadget-Laboratories/FutureGadgetDatabases
-```
-
-If that command fails, the release is not published yet. Build from source in the next section. The URL above is the name the release workflow will use. It is not a claim that the file is already uploaded.
 
 ### From the release tarball
 
 ```bash
 mkdir -p "$HOME/fgdb-lab" && cd "$HOME/fgdb-lab"
-curl -fL -O https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-oss/cockroach-oss-v23.2.15.linux-amd64.tgz
-curl -fL -O https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-oss/SHA256SUMS
+curl -fL -O https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-fgdb.1/cockroach-oss-v23.2.15.linux-amd64.tgz
+curl -fL -O https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-fgdb.1/SHA256SUMS
 sha256sum -c SHA256SUMS
 tar -xzf cockroach-oss-v23.2.15.linux-amd64.tgz
 export BIN="$PWD/cockroach-oss-v23.2.15.linux-amd64/cockroach"
 "$BIN" version
 ```
 
-`sha256sum -c` checks the file against `SHA256SUMS`. The sums file uses the two-space format that `sha256sum` expects. The file inside the tarball is named `cockroach`. It is the `cockroach-oss` binary. `lib/libgeos.so` and `lib/libgeos_c.so` sit next to it. GEOS is the library used for spatial SQL. The binary looks for those files under a `lib/` directory beside itself.
+`sha256sum -c` checks the file against `SHA256SUMS`. The sums file uses the two-space format that `sha256sum` expects. The file inside the tarball is named `cockroach`. It is the `cockroach-oss` binary. `fgdb-backup` is the logical backup program. Flags and exit codes are in [backup-cli.md](backup-cli.md). The file layout is in [backup.md](backup.md). `lib/libgeos.so` and `lib/libgeos_c.so` sit next to `cockroach`. GEOS is the library used for spatial SQL. The binary looks for those files under a `lib/` directory beside itself.
 
-The `Distribution` line of `version` should say `OSS`.
+The `Distribution` line of `version` should say `OSS`. The build tag should say `v23.2.15`.
 
 ### From source
 

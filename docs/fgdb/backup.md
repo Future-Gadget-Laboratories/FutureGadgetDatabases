@@ -5,7 +5,7 @@
 
 `fgdb-backup` copies user databases with ordinary SQL. The open-source binary rejects `BACKUP` and `RESTORE` because those statements need a CCL binary. This program does not implement those statements. It reads schema and rows with `SHOW`, `COPY`, and `AS OF SYSTEM TIME`, writes files, and loads them back with `IMPORT INTO` or `COPY FROM STDIN`.
 
-The program is a separate binary, `fgdb-backup`. It is built into the release tarball and the container image, next to `cockroach`. A Kubernetes Job or a shell script can call it. Two stable shapes are:
+The program is a separate binary, `fgdb-backup`. The current release, `v23.2.15-fgdb.1`, puts it in the tarball and on `PATH` in the image, next to `cockroach`. The earlier `v23.2.15-oss` tarball has no `fgdb-backup`. Checksums are in [releases.md](releases.md). A Kubernetes Job or a shell script can call it. Two stable shapes are:
 
 ```bash
 fgdb-backup backup  --url "$URL" --dest s3://bucket/prefix [--database name]
@@ -177,7 +177,7 @@ fgdb-backup restore --json --url "$FGDB_URL" --src s3://backups/fgdb/moved/lates
 
 `--load=copy` skips the file server. The tool reads the files and streams them with `COPY FROM STDIN`. Use that when the pods cannot reach the Job.
 
-The container image installs the program at `/cockroach/fgdb-backup` and runs as user id 1000. A backup written to a local disk needs a volume that user can write. Put client certificates in a Secret, mount it, and pass those paths in `--url`.
+The container image installs the program at `/cockroach/fgdb-backup`. The image does not set a user, so the process runs as root, the same as `cockroach`. [releases.md](releases.md) and [RELEASING.md](RELEASING.md) record that. A pod that should run as another user sets `securityContext.runAsUser` (the release example uses 1000) on a volume that user can already write. A backup written to a local disk needs a volume that user can write. Put client certificates in a Secret, mount it, and pass those paths in `--url`.
 
 A bad command line exits 2. A failure after the command has started exits 1. A Job can use that difference when it decides whether to retry. Exit 4 is only `restore --plan` refusing the restore. Retrying that plan will refuse again until the database or the flags change.
 

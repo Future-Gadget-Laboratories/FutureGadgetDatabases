@@ -1,0 +1,4 @@
+# Every skipped upstream test needs a reason and an issue link.
+# An empty list means this slice does not waive any upstream test.
+# Partition and disk faults are not skips. The report says they were not tested.
+skips: []
