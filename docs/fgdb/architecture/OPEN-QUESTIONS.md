@@ -3,7 +3,7 @@
 
 # Open questions
 
-Follow-ups for a test-coverage pass. Nothing here was treated as a fact in the other pages unless the page says the code was read. The binary was not built or started for this map.
+Follow-ups for a test-coverage pass. Nothing here was treated as a fact in the other pages unless the page says the code was read. The binary was not built or started for this map. [FOLLOW-UPS.md](FOLLOW-UPS.md) maps these numbered questions to proposed work, skills, and completion evidence. Items remain open until that evidence is recorded; merged documentation is not a test result.
 
 ## Run on a real `cockroach-oss`
 

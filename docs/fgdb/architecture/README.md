@@ -7,7 +7,7 @@
 
 This directory is a map of the open-source tree so later fixes have somewhere to start. The short crash picture for a three-node lab is still [../architecture.md](../architecture.md). This directory is the longer one: how a SQL statement becomes bytes on disk, which package owns which step, and what the CCL-free binary leaves out.
 
-The binary this project ships is `cockroach-oss` (`//pkg/cmd/cockroach-oss:cockroach-oss`), plus `libgeos`. `pkg/ccl` is present in the git tree and is not linked into that binary. See [BOUNDARIES.md](BOUNDARIES.md).
+The database binary this project ships is `cockroach-oss` (`//pkg/cmd/cockroach-oss:cockroach-oss`), plus `libgeos`. The current `v23.2.15-fgdb.1` release also includes the separate `fgdb-backup` SQL client; the earlier `v23.2.15-oss` archive does not. Packaging and release tags are described in [build.md](build.md). `pkg/ccl` is present in the git tree and is not linked into that binary. See [BOUNDARIES.md](BOUNDARIES.md).
 
 Upstream write-ups that are still worth reading, without copying them here:
 
@@ -16,7 +16,7 @@ Upstream write-ups that are still worth reading, without copying them here:
 - [docs/tech-notes/](../../tech-notes/README.md) and [docs/RFCS/](../../RFCS/README.md)
 - Package comments: `pkg/sql/opt/doc.go`, `pkg/keys/doc.go`, `pkg/kv/kvserver/doc.go`
 
-Things this pass could not confirm are in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md).
+Things this pass could not confirm are in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md). The existing Phase 0 harness is documented in [../testing.md](../testing.md); the queued work and evidence requirements for these questions are in [FOLLOW-UPS.md](FOLLOW-UPS.md). Reading the code or building the binary does not close a runtime question.
 
 ## Index
 
@@ -36,6 +36,7 @@ Things this pass could not confirm are in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)
 | [build.md](build.md) | How Bazel, the CCL-free check, and the image fit together |
 | [BOUNDARIES.md](BOUNDARIES.md) | What the CCL exclusion removes, and hard limits the code states |
 | [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) | Follow-ups for the test-coverage phase |
+| [FOLLOW-UPS.md](FOLLOW-UPS.md) | Work queue, skill selection, and evidence needed to close those questions |
 
 ## The pieces
 

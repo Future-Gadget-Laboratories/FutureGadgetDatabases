@@ -3,7 +3,7 @@
 
 # How the OSS binary is built
 
-The released artifact is two things: the `cockroach-oss` binary, and `libgeos.so` / `libgeos_c.so`. The image is those files plus `build/deploy/cockroach.sh` on a Red Hat UBI 9 minimal base. This page is the path in this repository. It does not describe the machine that runs the compile.
+The current `v23.2.15-fgdb.1` archive contains the `cockroach-oss` binary (named `cockroach` in the archive), the separate `fgdb-backup` SQL client, and `libgeos.so` / `libgeos_c.so`. The earlier `v23.2.15-oss` archive has no `fgdb-backup`. The current image includes these components plus `build/deploy/cockroach.sh` on a Red Hat UBI 9 minimal base. `fgdb-backup` uses ordinary SQL; it is not the CCL `BACKUP` statement. This page is the path in this repository. It does not describe the machine that runs the compile.
 
 Scripts:
 
@@ -12,11 +12,11 @@ Scripts:
 | `build/fgdb/write-bazelrc-user.sh` | Writes a gitignored `.bazelrc.user`. |
 | `build/fgdb/build-oss.sh` | `bazel build` of the two targets, then stages the outputs. |
 | `build/fgdb/verify-oss-binary.sh` | Refuses a binary that looks like CCL. |
-| `build/fgdb/package-oss-tarball.sh` | Tarball plus `SHA256SUMS`. |
+| `build/fgdb/package-oss-tarball.sh` | Builds `fgdb-backup` when its module is present, then writes the tarball and `SHA256SUMS`. |
 | `build/fgdb/stage-image-context.sh` | Unpacks the tarball into a Docker context. |
 | `build/fgdb/resolve-image-digest.sh` | Reads the image digest from the registry after `docker push`. |
 | `build/deploy-oss/Dockerfile` | The image. |
-| `.github/workflows/fgdb-oss-release.yml` | Runs the scripts above. A tag push `v*-oss`, or a manual run with publish enabled, also uploads the release and the image. |
+| `.github/workflows/fgdb-oss-release.yml` | Runs the scripts above. Tag pushes matching `v*-oss` or `v*-fgdb.*`, or a manual run with publish enabled, also upload the release and the image. |
 
 `./dev build oss` is the workstation wrapper documented in [../getting-started.md](../getting-started.md). The release script does not call `./dev`. The comment in `build-oss.sh` says `./dev` on a clean tree wants `dev doctor`, and that command rewrites `.bazelrc.user`.
 
@@ -45,7 +45,7 @@ It does not build `//pkg/cmd/cockroach`. `.bazelrc` sets `--symlink_prefix=_baze
 
 - `go_binary` name `cockroach-oss`
 - library deps: `//pkg/cli`, `//pkg/ui/distoss`
-- `disallowed_imports_test` with prefixes `pkg/ccl` and `pkg/ui/distccl`
+- `disallowed_imports_test` with prefixes `pkg/ccl`, `pkg/ui/distccl`, and `pkg/fgdbtest`
 
 `//pkg/ui/distoss` embeds a tar of the OSS DB Console (`pkg/ui/distoss/distoss.go`, `//go:embed assets.tar.gz`). Building the binary builds the UI. There is no separate webpack step in this script.
 
@@ -64,7 +64,7 @@ The release `.bazelrc.user` does not enable `force_build_cdeps`. `build-oss.sh` 
 
 Two checks, and they look at different things.
 
-**1. Import graph.** `bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test` fails if the `cockroach-oss` target's transitive imports include `pkg/ccl` or `pkg/ui/distccl`. This is the rule in `pkg/cmd/cockroach-oss/BUILD.bazel`. It does not open the finished binary.
+**1. Import graph.** `bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test` fails if the `cockroach-oss` target's transitive imports include `pkg/ccl`, `pkg/ui/distccl`, or `pkg/fgdbtest`. This is the rule in `pkg/cmd/cockroach-oss/BUILD.bazel`. It does not open the finished binary.
 
 **2. The file that will be packaged.** `verify-oss-binary.sh` requires:
 
@@ -82,24 +82,28 @@ Two checks, and they look at different things.
 `package-oss-tarball.sh` reads `pkg/build/version.txt` (must look like `vX.Y.Z`). It builds a directory named `cockroach-oss-<version>.linux-amd64/` containing:
 
 - `cockroach` — the `cockroach-oss` binary, renamed so the archive matches the usual CockroachDB layout
+- `fgdb-backup` — a separate SQL client, built when `pkg/cmd/fgdb-backup/go.mod` is present
 - `lib/libgeos.so`, `lib/libgeos_c.so`
 - `LICENSE`, `licenses/`, and `OSS-BUILD.txt`
 
-`OSS-BUILD.txt` says `licenses/CCL.txt` is license text from the source tree, not a grant of CCL code, and that no CCL object code is in the binary. The script writes `SHA256SUMS` and `build-info.env` (`VERSION`, `TARBALL`, `RELEASE_TAG=<version>-oss`).
+`OSS-BUILD.txt` says `licenses/CCL.txt` is license text from the source tree, not a grant of CCL code, and that no CCL object code is in the binary. When the backup module is present, packaging requires the exact Go version `FGDB_EXPECT_GO` (default `go1.21.12`) and builds the client with `CGO_ENABLED=0`, `GOWORK=off`, `GOTOOLCHAIN=local`, and `-trimpath`. The default `GOFLAGS` is `-mod=readonly`. The script writes `SHA256SUMS` and `build-info.env` (`VERSION`, `TARBALL`, `RELEASE_TAG`). The version and tarball name remain based on `version.txt`; `release-tag.sh` selects the release tag from `FGDB_RELEASE_TAG`, defaulting to `<version>-oss`.
 
 `stage-image-context.sh` unpacks that tarball and adds `build/deploy/cockroach.sh` as the entrypoint. The context is:
 
 ```text
 cockroach.sh
 cockroach
+fgdb-backup
 libgeos.so
 libgeos_c.so
 licenses/
 ```
 
-`build/deploy-oss/Dockerfile` copies `cockroach` and `cockroach.sh` to `/cockroach/`, the libraries to `/usr/local/lib/cockroach/`, and the licenses to `/licenses/`. It sets `COCKROACH_CHANNEL=fgl-oss`, exposes `26257` and `8080`, and uses `ENTRYPOINT ["/cockroach/cockroach.sh"]`. The base image is pinned by digest (UBI 9 minimal). The comment in the Dockerfile says the process runs as root, matching the upstream image layout, because charts expect `/cockroach/cockroach-data` to be root-owned. `fips_enabled` defaults to 0.
+For older tarballs without the client, `stage-image-context.sh` creates a `fgdb-backup` placeholder that exits 1 with a missing-client message. It does not make those older tarballs support backup.
 
-The workflow's publish path tags the image as `<version>-oss`, `sha-<commit>`, and, unless turned off, the moving `<major>.<minor>-oss` alias. `docker push` does not have to print a `digest:` line. `build/fgdb/resolve-image-digest.sh` asks the registry (`docker buildx imagetools inspect`) and checks that every tag resolves to the same `sha256`. A later job writes that digest into the GitHub release notes. Pin the digest. The minor alias moves.
+`build/deploy-oss/Dockerfile` copies `cockroach`, `fgdb-backup`, and `cockroach.sh` to `/cockroach/`, the libraries to `/usr/local/lib/cockroach/`, and the licenses to `/licenses/`. It sets `COCKROACH_CHANNEL=fgl-oss`, exposes `26257` and `8080`, and uses `ENTRYPOINT ["/cockroach/cockroach.sh"]`. The base image is pinned by digest (UBI 9 minimal). The comment in the Dockerfile says the process runs as root, matching the upstream image layout, because charts expect `/cockroach/cockroach-data` to be root-owned. `fips_enabled` defaults to 0.
+
+For an OSS release, the publish path tags the image as `<version>-oss`, `sha-<commit>`, and, unless turned off, the moving `<major>.<minor>-oss` alias. For a `vX.Y.Z-fgdb.N` release, it uses that FGDb tag and `sha-<commit>` without moving the OSS aliases. See [../RELEASING.md](../RELEASING.md) and [../releases.md](../releases.md). `docker push` does not have to print a `digest:` line. `build/fgdb/resolve-image-digest.sh` asks the registry (`docker buildx imagetools inspect`) and checks that every tag resolves to the same `sha256`. A later job writes that digest into the GitHub release notes. Pin the digest. The minor alias moves.
 
 ```mermaid
 flowchart TD
@@ -109,7 +113,7 @@ flowchart TD
   stage["stage cockroach-oss and lib/*.so"]
   imports["disallowed_imports_test<br/>no pkg/ccl, no distccl"]
   verify["verify-oss-binary.sh<br/>ELF, nm, strings, version OSS"]
-  tar["package-oss-tarball.sh"]
+  tar["package-oss-tarball.sh and fgdb-backup build"]
   ctx["stage-image-context.sh"]
   img["build/deploy-oss/Dockerfile"]
 
