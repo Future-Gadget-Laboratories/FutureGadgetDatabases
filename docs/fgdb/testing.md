@@ -5,7 +5,7 @@
 
 This page is for someone running the suite on a laptop or on a self-hosted runner. It covers the first slice: a 3-node cluster on one Linux machine, a few upstream tests, and a written list of claims.
 
-Fast `fgdb-backup` tests and the `build/fgdb` shell tests are in the Fast checks section. That section is the layout from draft pull request #19. `fgdb-checks.yml` is not on `main` until that pull request merges.
+Fast `fgdb-backup` tests and the `build/fgdb` shell tests are in the Fast checks section. They run in `.github/workflows/fgdb-checks.yml`, added by merged pull request #19. Cluster-backed backup tests remain in `.github/workflows/fgdb-backup-tests.yml`.
 
 The product claims live in `fgdb/test/claims.yaml`. Each claim names at least one test. The checker fails if a claim has no test, if that test is not in the tree, or if the status is `untested`. A waived claim needs an owner, a reason, and an expiry date.
 
@@ -128,7 +128,7 @@ A doc line under `docs/fgdb/` that says "always", "guarantees", "survives", or "
 
 ## Fast checks
 
-This section depends on [draft pull request #19](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/19). That pull request adds `.github/workflows/fgdb-checks.yml` and leaves `.github/workflows/fgdb-backup-tests.yml` as the job that starts `cockroach-oss`. Until #19 merges, `fgdb-checks.yml` is not in this tree. On `main`, `fgdb-backup-tests.yml` still runs the unit tests, `go vet`, and the shell scripts in the same workflow as the cluster tests, and only on a pull request.
+[Pull request #19](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/19) added `.github/workflows/fgdb-checks.yml` for fast checks and left `.github/workflows/fgdb-backup-tests.yml` for the tests that start `cockroach-oss`. Both workflows are on `main`. The sections below describe that layout.
 
 ### On a laptop
 
@@ -150,7 +150,7 @@ go vet ./pkg/fgdbtest/... ./pkg/cmd/fgdb-test/...
 bash fgdb/test/run.sh pr
 ```
 
-`fgdb/test/run.sh pr` is the pr tier described above. #19 adds `fgdb/test/scripts/check-boundary.sh`. After that file is in the tree:
+`fgdb/test/run.sh pr` is the pr tier described above. The separate boundary check added by #19 is also in the tree:
 
 ```bash
 bash fgdb/test/scripts/check-boundary.sh
@@ -158,7 +158,7 @@ bash fgdb/test/scripts/check-boundary.sh
 
 The script exits 1 if a file under `pkg/fgdbtest`, `pkg/cmd/fgdb-test`, `pkg/cmd/fgdb-backup`, `fgdb`, or `build/fgdb` imports `pkg/ccl`, lists `//pkg/ccl` in a Bazel file, or starts with a CockroachDB Software License header.
 
-The shell tests use fixtures. They do not build Cockroach, and they do not need a GitHub token. From the repository root, each one exits 0 when its checks pass:
+Most shell tests use fixtures. They do not build Cockroach, and they do not need a GitHub token. `require-repo-commit_test.sh` queries the public GitHub API and needs network access; it is not an offline fixture test. From the repository root, each one exits 0 when its checks pass:
 
 ```bash
 bash build/fgdb/release-tag_test.sh
@@ -170,6 +170,7 @@ bash build/fgdb/runner/token-input_test.sh
 bash build/fgdb/runner/read-config_test.sh
 bash build/fgdb/runner/update-checksums_test.sh
 bash build/fgdb/runner/runner-unit_test.sh
+bash build/fgdb/require-repo-commit_test.sh
 ```
 
 - `release-tag_test.sh` checks `build/fgdb/release-tag.sh`: which git tag is published, and which image tags that publish pushes.
@@ -181,21 +182,22 @@ bash build/fgdb/runner/runner-unit_test.sh
 - `read-config_test.sh` checks `build/fgdb/runner/read-config.sh`, the parser for the runner setup file.
 - `update-checksums_test.sh` checks `build/fgdb/runner/update-checksums.sh` and `checksum-notes.sh`. A downloaded file is refused when the publisher hash does not match.
 - `runner-unit_test.sh` checks `build/fgdb/runner/runner-unit.sh`, including the cache-check command line and the refusal of a missing or broken check script.
+- `require-repo-commit_test.sh` checks `build/fgdb/require-repo-commit.py`: a requested commit must belong to a branch or tag of this repository before the manual compile checks out its source.
 
 ### `.github/workflows/fgdb-checks.yml`
 
-The workflow is named FGDB checks. It runs on GitHub-hosted `ubuntu-latest`. A pull request runs it, and a push to `main` runs it, when the change touches `.github/workflows/**`, `fgdb/**`, `build/fgdb/**`, `pkg/fgdbtest/**`, `pkg/cmd/fgdb-test/**`, `pkg/cmd/fgdb-backup/**`, `go.mod`, or `go.sum`. It has no secrets. The workflow permission set is empty, and each job sets `contents: read`. Checkouts set `persist-credentials: false`.
+The workflow is named FGDB checks. It runs on GitHub-hosted `ubuntu-latest`. A pull request runs it when the change touches `.github/workflows/**`, `fgdb/**`, `build/fgdb/**`, `pkg/fgdbtest/**`, `pkg/cmd/fgdb-test/**`, `pkg/cmd/fgdb-backup/**`, `go.mod`, or `go.sum`. Every push to `main` runs it, without a path filter, including docs-only pushes. It has no secrets. The workflow permission set is empty, and each job sets `contents: read`. Checkouts set `persist-credentials: false`.
 
 - `actionlint` (10 minutes) installs actionlint 1.7.7 and runs `actionlint -color`.
 - `shellcheck` (10 minutes) installs ShellCheck 0.10.0 and runs it at warning severity on every `*.sh` file under `fgdb/` and `build/fgdb/`.
 - `gofmt-vet` (15 minutes) installs Go 1.21.12, fails if `gofmt -l` prints a file under `pkg/fgdbtest`, `pkg/cmd/fgdb-test`, or `pkg/cmd/fgdb-backup`, and runs `go vet` on those trees. `go vet` for `fgdb-backup` uses that module's directory.
 - `pr-tier` (15 minutes) runs `bash fgdb/test/run.sh pr`. No Bazel and no cluster.
-- `backup-unit` (15 minutes) runs `go test -count=1 ./...` in `pkg/cmd/fgdb-backup`, then the nine shell scripts above.
+- `backup-unit` (15 minutes) runs `go test -count=1 ./...` in `pkg/cmd/fgdb-backup`, then the ten shell scripts above.
 - `boundary` (10 minutes) runs `bash fgdb/test/scripts/check-boundary.sh`.
 
 ### Cluster-backed patch tests
 
-After #19, `.github/workflows/fgdb-backup-tests.yml` is still named FGDB patch tests, and it has one job, `integration`. A pull request runs it when the change touches that workflow or `pkg/cmd/fgdb-backup/**`. It does not run on a push. It does not run `go vet` or the shell scripts. Those moved to `fgdb-checks.yml`.
+`.github/workflows/fgdb-backup-tests.yml` is named FGDB patch tests, and it has one job, `integration`. A pull request runs it when the change touches that workflow or `pkg/cmd/fgdb-backup/**`. It does not run on a push. It does not run `go vet` or the shell scripts. Those moved to `fgdb-checks.yml`.
 
 The job limit is 30 minutes. It downloads the public `v23.2.15-fgdb.1` linux-amd64 tarball, checks the sha256 written in the workflow, and unpacks it. It sets `FGDB_COCKROACH` to `cockroach` in that tree and `LD_LIBRARY_PATH` to the `lib` directory beside it. In `pkg/cmd/fgdb-backup` it runs:
 
@@ -218,7 +220,7 @@ The laptop command, the GitHub-hosted checks, and the heavy compile are separate
 
 `fgdb/test/run.sh pr` is the check you can run on a laptop. It needs Go 1.21. It does not need Bazel, and it does not start a cluster. The claims check, the production-import baseline, and the Go tests in `fgdb/test/tiers/pr.yaml` are the whole tier.
 
-`.github/workflows/fgdb-checks.yml` runs that tier, plus actionlint, ShellCheck, `gofmt`, `go vet`, the `fgdb-backup` unit tests, and a scan that FGDb paths do not import `pkg/ccl`. Every job uses GitHub-hosted `ubuntu-latest`. A pull request runs the workflow when it changes those paths. Every push to `main` runs it, including a push that only changes docs. The workflow has no secrets and does not use a self-hosted runner. This file arrives with the CI hygiene change.
+`.github/workflows/fgdb-checks.yml` runs that tier, plus actionlint, ShellCheck, `gofmt`, `go vet`, the `fgdb-backup` unit tests, and a scan that FGDb paths do not import `pkg/ccl`. Every job uses GitHub-hosted `ubuntu-latest`. A pull request runs the workflow when it changes those paths. Every push to `main` runs it, including a push that only changes docs. The workflow has no secrets and does not use a self-hosted runner. This file was added by the merged CI hygiene change (#19).
 
 `.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` when a maintainer starts it from the Actions tab (`workflow_dispatch`). The input is the 40-character SHA of a commit that is already on a branch or tag in this repository. The workflow has no repository-name input, so a commit that exists only on a fork is refused before checkout. Opening, updating, or marking a pull request ready leaves this workflow idle. The job asks for a self-hosted runner labeled `fgdb-pr-ephemeral`. It does not use the persistent runner labeled `fgdb-build`. The checkout has no credentials and the job has no secrets. Each commit gets its own Bazel output directory, named with that SHA. Registering the ephemeral runner is a separate step. The workflow file does not do it. How to send a change is [contributing.md](contributing.md).
 
