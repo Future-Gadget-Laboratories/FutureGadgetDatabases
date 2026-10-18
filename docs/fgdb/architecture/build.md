@@ -3,7 +3,7 @@
 
 # How the OSS binary is built
 
-The released artifact is two things: the `cockroach-oss` binary, and `libgeos.so` / `libgeos_c.so`. The image is those files plus `build/deploy/cockroach.sh` on a Red Hat UBI 9 minimal base. This page is the path in this repository. It does not describe the machine that runs the compile.
+The database binary in a release is `cockroach-oss`, plus `libgeos.so` / `libgeos_c.so`. The current published release, `v23.2.15-fgdb.1`, also ships `fgdb-backup`, a separate SQL client for logical backup and restore ([../backup.md](../backup.md)). The earlier `v23.2.15-oss` tarball has the database and the GEOS libraries, and it has no `fgdb-backup` binary. Checksums and image digests are in [../releases.md](../releases.md). The image is those files plus `build/deploy/cockroach.sh` on a Red Hat UBI 9 minimal base. This page is the path in this repository. It does not describe the machine that runs the compile.
 
 Scripts:
 
@@ -12,11 +12,12 @@ Scripts:
 | `build/fgdb/write-bazelrc-user.sh` | Writes a gitignored `.bazelrc.user`. |
 | `build/fgdb/build-oss.sh` | `bazel build` of the two targets, then stages the outputs. |
 | `build/fgdb/verify-oss-binary.sh` | Refuses a binary that looks like CCL. |
-| `build/fgdb/package-oss-tarball.sh` | Tarball plus `SHA256SUMS`. |
+| `build/fgdb/package-oss-tarball.sh` | Tarball plus `SHA256SUMS`. Also builds `fgdb-backup` when that module is in the tree. |
+| `build/fgdb/release-tag.sh` | Turns the git ref into the GitHub Release name and the image tags. |
 | `build/fgdb/stage-image-context.sh` | Unpacks the tarball into a Docker context. |
 | `build/fgdb/resolve-image-digest.sh` | Reads the image digest from the registry after `docker push`. |
 | `build/deploy-oss/Dockerfile` | The image. |
-| `.github/workflows/fgdb-oss-release.yml` | Runs the scripts above. A tag push `v*-oss`, or a manual run with publish enabled, also uploads the release and the image. |
+| `.github/workflows/fgdb-oss-release.yml` | Runs the scripts above. A tag push matching `v*-oss` or `v*-fgdb.*` publishes. A manual `workflow_dispatch` publishes only when its publish input is enabled. For a `v*-fgdb.*` tag, the git tag is the release name. Ordinary pushes and pull requests do not build. |
 
 `./dev build oss` is the workstation wrapper documented in [../getting-started.md](../getting-started.md). The release script does not call `./dev`. The comment in `build-oss.sh` says `./dev` on a clean tree wants `dev doctor`, and that command rewrites `.bazelrc.user`.
 
@@ -82,24 +83,28 @@ Two checks, and they look at different things.
 `package-oss-tarball.sh` reads `pkg/build/version.txt` (must look like `vX.Y.Z`). It builds a directory named `cockroach-oss-<version>.linux-amd64/` containing:
 
 - `cockroach` — the `cockroach-oss` binary, renamed so the archive matches the usual CockroachDB layout
+- `fgdb-backup` — compiled with `go build` when `pkg/cmd/fgdb-backup/go.mod` is in the tree (`CGO_ENABLED=0`, Go from `FGDB_EXPECT_GO`, default `go1.21.12`). `OSS-BUILD.txt` calls it a separate SQL client for logical backup and restore. The database binary in the same archive is still `cockroach-oss`.
 - `lib/libgeos.so`, `lib/libgeos_c.so`
 - `LICENSE`, `licenses/`, and `OSS-BUILD.txt`
 
-`OSS-BUILD.txt` says `licenses/CCL.txt` is license text from the source tree, not a grant of CCL code, and that no CCL object code is in the binary. The script writes `SHA256SUMS` and `build-info.env` (`VERSION`, `TARBALL`, `RELEASE_TAG=<version>-oss`).
+The published `v23.2.15-fgdb.1` archive includes `fgdb-backup`. The earlier `v23.2.15-oss` archive does not. Both facts are in [../releases.md](../releases.md).
 
-`stage-image-context.sh` unpacks that tarball and adds `build/deploy/cockroach.sh` as the entrypoint. The context is:
+`OSS-BUILD.txt` says `licenses/CCL.txt` is license text from the source tree, not a grant of CCL code, and that no CCL object code is in the binary. The script writes `SHA256SUMS` and `build-info.env` (`VERSION`, `TARBALL`, `RELEASE_TAG`). `VERSION` and the tarball filename stay on `version.txt`. `RELEASE_TAG` comes from `release-tag.sh package-tag`, which reads `FGDB_RELEASE_TAG`. Unset or `default` becomes `<version>-oss`. A publish of `v<version>-fgdb.<N>` (`N` an integer) writes that git tag as `RELEASE_TAG`. The workflow sets `FGDB_RELEASE_TAG` from `release-tag.sh select`: a `v*-fgdb.*` ref selects itself, and any other ref selects `default`, which resolves to `<version>-oss`.
+
+`stage-image-context.sh` unpacks that tarball and adds `build/deploy/cockroach.sh` as the entrypoint. When the archive contains `fgdb-backup`, the context copies that binary. When it does not, the script writes a small `fgdb-backup` that prints `fgdb-backup is not in this release tarball` and exits 1, because the Dockerfile still copies that path. The context is:
 
 ```text
 cockroach.sh
 cockroach
+fgdb-backup
 libgeos.so
 libgeos_c.so
 licenses/
 ```
 
-`build/deploy-oss/Dockerfile` copies `cockroach` and `cockroach.sh` to `/cockroach/`, the libraries to `/usr/local/lib/cockroach/`, and the licenses to `/licenses/`. It sets `COCKROACH_CHANNEL=fgl-oss`, exposes `26257` and `8080`, and uses `ENTRYPOINT ["/cockroach/cockroach.sh"]`. The base image is pinned by digest (UBI 9 minimal). The comment in the Dockerfile says the process runs as root, matching the upstream image layout, because charts expect `/cockroach/cockroach-data` to be root-owned. `fips_enabled` defaults to 0.
+`build/deploy-oss/Dockerfile` copies `cockroach`, `cockroach.sh`, and `fgdb-backup` to `/cockroach/` (that directory is on `PATH`), the libraries to `/usr/local/lib/cockroach/`, and the licenses to `/licenses/`. It sets `COCKROACH_CHANNEL=fgl-oss`, exposes `26257` and `8080`, and uses `ENTRYPOINT ["/cockroach/cockroach.sh"]`. The base image is pinned by digest (UBI 9 minimal). The comment in the Dockerfile says the process runs as root, matching the upstream image layout, because charts expect `/cockroach/cockroach-data` to be root-owned. `fips_enabled` defaults to 0.
 
-The workflow's publish path tags the image as `<version>-oss`, `sha-<commit>`, and, unless turned off, the moving `<major>.<minor>-oss` alias. `docker push` does not have to print a `digest:` line. `build/fgdb/resolve-image-digest.sh` asks the registry (`docker buildx imagetools inspect`) and checks that every tag resolves to the same `sha256`. A later job writes that digest into the GitHub release notes. Pin the digest. The minor alias moves.
+The workflow asks `release-tag.sh image-tags` for the tags. A `v*-oss` publish tags the image `<version>-oss`, `sha-<commit>`, and, unless `PUSH_MINOR_ALIAS` is turned off, the moving `<major>.<minor>-oss` alias. A `v*-fgdb.*` publish tags the image with that git tag and `sha-<commit>` only. The workflow refuses to push the `*-oss` image tags from an fgdb release, so a `v23.2.15-fgdb.1` publish leaves `:v23.2.15-oss` and `:v23.2-oss` where they were. `docker push` does not have to print a `digest:` line. `build/fgdb/resolve-image-digest.sh` asks the registry (`docker buildx imagetools inspect`) and checks that every tag resolves to the same `sha256`. A later job writes that digest into the GitHub release notes. Pin the digest. The minor alias moves, and only an oss publish moves it.
 
 ```mermaid
 flowchart TD
@@ -109,7 +114,7 @@ flowchart TD
   stage["stage cockroach-oss and lib/*.so"]
   imports["disallowed_imports_test<br/>no pkg/ccl, no distccl"]
   verify["verify-oss-binary.sh<br/>ELF, nm, strings, version OSS"]
-  tar["package-oss-tarball.sh"]
+  tar["package-oss-tarball.sh<br/>cockroach, libgeos, fgdb-backup"]
   ctx["stage-image-context.sh"]
   img["build/deploy-oss/Dockerfile"]
 
