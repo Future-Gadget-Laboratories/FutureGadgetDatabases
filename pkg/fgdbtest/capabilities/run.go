@@ -22,6 +22,7 @@ const (
 	ClaimVersion = "OSS-001"
 	ClaimImport  = "OSS-002"
 	ClaimBackup  = "OSS-003"
+	stepSetup    = "OSS-SETUP"
 	suiteTimeout = 10 * time.Minute
 )
 
@@ -42,7 +43,7 @@ func Run(ctx context.Context, cfg Config) (*report.Report, error) {
 	rep := newReport(cfg.Meta)
 	if cfg.Binary == "" || cfg.WorkDir == "" {
 		err := errors.New("OSS capabilities require a binary and work directory")
-		note(rep, "OSS-SETUP", "", err)
+		note(rep, stepSetup, "", err)
 		return rep, err
 	}
 	err := cluster.Version(ctx, cfg.Binary, cfg.ExpectGo)
@@ -63,12 +64,12 @@ func newReport(meta report.Meta) *report.Report {
 
 func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.Report, result error) {
 	if err := os.MkdirAll(cfg.WorkDir, 0o700); err != nil {
-		note(rep, "OSS-SETUP", "", err)
+		note(rep, stepSetup, "", err)
 		return rep, err
 	}
 	dir, err := os.MkdirTemp(cfg.WorkDir, "oss-capabilities-")
 	if err != nil {
-		note(rep, "OSS-SETUP", "", err)
+		note(rep, stepSetup, "", err)
 		return rep, err
 	}
 	var c *cluster.Cluster
@@ -77,7 +78,7 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	if err == nil {
 		err = c.Init(ctx)
 	}
-	note(rep, "OSS-SETUP", "", err)
+	note(rep, stepSetup, "", err)
 	if err != nil {
 		return rep, err
 	}

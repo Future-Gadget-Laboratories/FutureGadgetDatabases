@@ -93,10 +93,10 @@ func TestCSVFixture(t *testing.T) {
 		status int
 		body   string
 	}{
-		{http.MethodGet, "/rows.csv", http.StatusOK, fixtureCSV},
-		{http.MethodHead, "/rows.csv", http.StatusOK, ""},
+		{http.MethodGet, fixturePath, http.StatusOK, fixtureCSV},
+		{http.MethodHead, fixturePath, http.StatusOK, ""},
 		{http.MethodGet, "/missing", http.StatusNotFound, "404 page not found\n"},
-		{http.MethodPost, "/rows.csv", http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, fixturePath, http.StatusMethodNotAllowed, ""},
 	} {
 		w := httptest.NewRecorder()
 		serveCSV(w, httptest.NewRequest(tc.method, tc.path, nil))
@@ -107,7 +107,7 @@ func TestCSVFixture(t *testing.T) {
 }
 
 func TestCSVFixtureRange(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/rows.csv", nil)
+	request := httptest.NewRequest(http.MethodGet, fixturePath, nil)
 	request.Header.Set("Range", "bytes=0-2")
 	w := httptest.NewRecorder()
 	serveCSV(w, request)
