@@ -426,6 +426,8 @@ func TestArrayCastKeepsModifier(t *testing.T) {
 		{"_varchar", "character varying[]", "character varying[]", "VARCHAR[]"},
 		{"_text", "text[]", "text[]", "text[]"},
 		{"_bpchar", "character[]", "character(5;x)[]", "CHAR[]"},
+		{"_bpchar", "character[]", "character(5[]", "CHAR[]"},
+		{"_bpchar", "character[]", "character(1,2,3)[]", "CHAR[]"},
 	} {
 		got, err := arrayCastSQL(tc.typname, tc.formatted, tc.withMod)
 		if err != nil || got != tc.want {
