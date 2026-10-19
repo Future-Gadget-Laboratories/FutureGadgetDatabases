@@ -1,7 +1,7 @@
 # Interim slice of the FGDb suite.
 #
 # Trigger: workflow_dispatch only. Pull requests and ordinary pushes do not run it.
-# The job runs on a self-hosted runner labeled fgdb-build. It reads
+# The job runs on the persistent self-hosted build runner. It reads
 # /etc/fgdb/runner.env for the Bazel cache and resource caps, the same way
 # fgdb-oss-release.yml does. It has no secrets.
 #
@@ -65,7 +65,7 @@ jobs:
           fi
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
             echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
-            echo "The self-hosted runner labeled fgdb-build needs /etc/fgdb/runner.env." >&2
+            echo "The self-hosted build runner needs /etc/fgdb/runner.env." >&2
             exit 1
           fi
           {

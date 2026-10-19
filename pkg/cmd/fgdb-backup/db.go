@@ -177,11 +177,14 @@ type columnInfo struct {
 	Generated  string // "", s, v
 	TypeName   string
 	FormatType string
+	// TypeMod is format_type with the column's modifier, such as
+	// character(5)[]. Only its "(n)" or "(p,s)" suffix is used.
+	TypeMod string
 }
 
 func (d *database) columns(ctx context.Context, schema, table string) ([]columnInfo, error) {
 	rows, err := d.query(ctx, `
-SELECT a.attname, a.attgenerated::STRING, t.typname, format_type(t.oid, NULL)
+SELECT a.attname, a.attgenerated::STRING, t.typname, format_type(t.oid, NULL), format_type(a.atttypid, a.atttypmod)
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -195,7 +198,7 @@ ORDER BY a.attnum`, schema, table)
 	var out []columnInfo
 	for rows.Next() {
 		var c columnInfo
-		if err := rows.Scan(&c.Name, &c.Generated, &c.TypeName, &c.FormatType); err != nil {
+		if err := rows.Scan(&c.Name, &c.Generated, &c.TypeName, &c.FormatType, &c.TypeMod); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -265,7 +268,7 @@ func arraySQLColumns(cols []columnInfo) ([]string, error) {
 		if !strings.HasPrefix(c.TypeName, "_") {
 			continue
 		}
-		cast, err := arrayCastSQL(c.TypeName, c.FormatType)
+		cast, err := arrayCastSQL(c.TypeName, c.FormatType, c.TypeMod)
 		if err != nil {
 			return nil, fmt.Errorf("column %s: %w", c.Name, err)
 		}
@@ -282,7 +285,7 @@ func selectList(cols []columnInfo) (string, error) {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
 		if strings.HasPrefix(c.TypeName, "_") {
-			cast, err := arrayCastSQL(c.TypeName, c.FormatType)
+			cast, err := arrayCastSQL(c.TypeName, c.FormatType, c.TypeMod)
 			if err != nil {
 				return "", fmt.Errorf("column %s: %w", c.Name, err)
 			}
@@ -301,33 +304,57 @@ func arrayLiteralExpr(col, cast string) string {
 	return fmt.Sprintf(`CASE WHEN %[1]s IS NULL THEN NULL ELSE (SELECT 'ARRAY[' || IFNULL(string_agg(CASE WHEN x IS NULL THEN 'NULL' ELSE quote_literal(x::STRING) END, ',' ORDER BY ord), '') || ']::%[2]s' FROM unnest(%[1]s) WITH ORDINALITY AS u(x, ord)) END`, col, cast)
 }
 
-func arrayCastSQL(typname, formatted string) (string, error) {
-	switch typname {
-	case "_float8":
-		return "FLOAT8[]", nil
-	case "_bpchar":
-		return "CHAR[]", nil
-	case "_bytea":
-		return "BYTES[]", nil
-	case "_time":
-		return "TIME[]", nil
-	case "_timestamp":
-		return "TIMESTAMP[]", nil
-	case "_timestamptz":
-		return "TIMESTAMPTZ[]", nil
-	case "_timetz":
-		return "TIMETZ[]", nil
-	case "_varchar":
-		return "VARCHAR[]", nil
-	case "_varbit":
-		return "VARBIT[]", nil
-	case "_numeric":
-		return "DECIMAL[]", nil
+// arrayCastSQL is the cast written after an ARRAY[...] literal. It keeps the
+// column's type modifier: a bare CHAR[] is CHAR(1)[], so IMPORT truncated
+// every CHAR(n) element to one character, and a bare BIT[] rejected BIT(n).
+func arrayCastSQL(typname, formatted, withMod string) (string, error) {
+	mod := typeModifier(withMod)
+	if base, ok := builtinArrayBase[typname]; ok {
+		return base + mod + "[]", nil
 	}
 	if simpleArrayCast(formatted) {
-		return formatted, nil
+		return strings.TrimSuffix(formatted, "[]") + mod + "[]", nil
 	}
 	return "", fmt.Errorf("cannot write array type %s in a form IMPORT PGCOPY accepts", formatted)
+}
+
+// builtinArrayBase names element types whose format_type has spaces or a
+// name IMPORT does not parse.
+var builtinArrayBase = map[string]string{
+	"_float8":      "FLOAT8",
+	"_bpchar":      "CHAR",
+	"_bytea":       "BYTES",
+	"_time":        "TIME",
+	"_timestamp":   "TIMESTAMP",
+	"_timestamptz": "TIMESTAMPTZ",
+	"_timetz":      "TIMETZ",
+	"_varchar":     "VARCHAR",
+	"_varbit":      "VARBIT",
+	"_numeric":     "DECIMAL",
+}
+
+// typeModifier returns the first "(n)" or "(p,s)" in a format_type string,
+// or "" when there is none or it holds anything but digits and one comma.
+func typeModifier(formatted string) string {
+	open := strings.IndexByte(formatted, '(')
+	if open < 0 {
+		return ""
+	}
+	close := strings.IndexByte(formatted[open:], ')')
+	if close < 0 {
+		return ""
+	}
+	inner := formatted[open+1 : open+close]
+	parts := strings.Split(inner, ",")
+	if len(parts) > 2 {
+		return ""
+	}
+	for _, p := range parts {
+		if p == "" || strings.Trim(p, "0123456789") != "" {
+			return ""
+		}
+	}
+	return "(" + inner + ")"
 }
 
 func simpleArrayCast(formatted string) bool {

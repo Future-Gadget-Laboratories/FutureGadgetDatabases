@@ -211,6 +211,7 @@ func TestS3ConditionalWriteProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc.ProbeConditionalWrites = true
 	if _, err := openStore(context.Background(), loc); err != nil {
 		t.Fatalf("conditional-write endpoint was rejected: %v", err)
 	}
