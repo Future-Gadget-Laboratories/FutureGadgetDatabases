@@ -95,6 +95,8 @@ These pages were written by Future Gadget Laboratories. They are marked in the p
 | [Release procedure](docs/fgdb/RELEASING.md) | See how `v23.2.15-oss` and `v23.2.15-fgdb.1` were published (maintainers) |
 | [Build machine](docs/fgdb/RUNNER.md) | Set up the machine that builds the release (maintainers) |
 
+> **Warning: restore load mode.** `--load=import` (`IMPORT INTO`) is the default and the supported loader. `--load=copy` has known bugs and is not safe for restores: `BYTES` values are stored as their literal escaped text, `STRING COLLATE` columns are not restored correctly, and `--force=in-place` with `--load=copy` fails with SQLSTATE 25P02. There is also a known `IMPORT` corruption bug that is being fixed: array columns whose element type has a width are written with a cast that drops the width. `CHAR(n)[]` values are silently cut to their first character, and `BIT(n)[]` with n > 1 fails to load. Check restored tables that have those column types. Details are in [Logical backup command](docs/fgdb/backup-cli.md).
+
 Imported Cockroach Labs writing is still in the tree. The old root README is [docs/upstream/cockroach-v23.2.15-readme.md](docs/upstream/cockroach-v23.2.15-readme.md). The design note is [docs/design.md](docs/design.md). It still says RocksDB in places. This tree stores data with Pebble. Prefer [docs/fgdb/architecture.md](docs/fgdb/architecture.md) for a current sketch, and the [CockroachDB v23.2 architecture overview](https://www.cockroachlabs.com/docs/v23.2/architecture/overview.html) for the long upstream version. The "stable" docs on that site describe newer CockroachDB releases. Those releases are outside this pin.
 
 ## Roadmap

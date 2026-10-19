@@ -31,6 +31,8 @@ fgdb-backup prune   --url "$URL" --name name --keep 1
 
 `restore` returns these statuses from `restoreStatus`. Other commands return 1 from `fail()` and 2 from flag parsing. The usage text printed by the binary lists 0, 1, 2, and 4.
 
+> **Warning: restore load mode.** `--load=import` (`IMPORT INTO`) is the default and the supported loader. `--load=copy` has known bugs and is not safe for restores: `BYTES` values are stored as their literal escaped text, `STRING COLLATE` columns are not restored correctly, and `--force=in-place` with `--load=copy` fails with SQLSTATE 25P02. There is also a known `IMPORT` corruption bug that is being fixed: array columns whose element type has a width are written with a cast that drops the width. `CHAR(n)[]` values are silently cut to their first character, and `BIT(n)[]` with n > 1 fails to load. Check restored tables that have those column types.
+
 ## Restore when the database already exists
 
 `--swap-restore` defaults to true. `--retention` defaults to 1. That number is how many old swapped database copies to keep.

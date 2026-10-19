@@ -67,6 +67,12 @@ Exit status:
   4  restore --plan refused the restore. A real restore that is refused exits 1.
 
 Use --json to print one JSON object on stdout. Progress lines go to stderr.
+
+Restore load mode: --load=import (IMPORT INTO) is the default. --load=copy has
+known bugs and is not safe: BYTES is stored as literal escaped text, STRING
+COLLATE columns are wrong, and --force=in-place with copy fails with 25P02.
+A known IMPORT bug is being fixed: CHAR(n)[] array values are cut to one
+character and BIT(n)[] arrays (n > 1) fail to load.
 `)
 }
 
@@ -319,7 +325,7 @@ func cmdRestore(args []string) int {
 	fs.Var(&dbs, "database", "database to restore; repeat the flag or use commas. Default: every database in the backup")
 	var force forceModeFlag
 	fs.Var(&force, "force", "force a non-empty restore; swap by default, or use --force=in-place as a last resort")
-	load := fs.String("load", "import", "import (IMPORT INTO) or copy (COPY FROM STDIN)")
+	load := fs.String("load", "import", "import (IMPORT INTO, the default) or copy (COPY FROM STDIN; known BYTES, collation and --force=in-place bugs, not safe)")
 	listen := fs.String(flagImportListen, defaultImportListen, "address the database dials when importing a local backup")
 	serveAddr := fs.String(flagServeAddr, "", "address the local import file server binds; used instead of --"+flagImportListen+" when set")
 	serveAdvertise := fs.String(flagServeAdvertise, "", "host or host:port the database nodes dial; required for an unspecified bind such as :8080, 0:8080, 0.0.0.0, or [::], including a hostname that resolves to one")
