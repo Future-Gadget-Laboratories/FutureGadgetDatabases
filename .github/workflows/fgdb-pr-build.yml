@@ -14,8 +14,8 @@
 # repository. The source tree is commit_sha, with credentials persistence
 # turned off. The job has no secrets.
 #
-# The build job asks for a runner labeled self-hosted and fgdb-pr-ephemeral.
-# It does not run on the persistent fgdb-build runner. The job stays queued
+# The build job asks for an ephemeral self-hosted build runner.
+# It does not run on the persistent self-hosted build runner. The job stays queued
 # until a runner with that label exists. Registering that runner is a
 # separate prerequisite; this workflow does not do it.
 #
