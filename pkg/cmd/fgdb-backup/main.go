@@ -71,8 +71,8 @@ Use --json to print one JSON object on stdout. Progress lines go to stderr.
 Restore load mode: --load=import (IMPORT INTO) is the default. --load=copy has
 known bugs and is not safe: BYTES is stored as literal escaped text, STRING
 COLLATE columns are wrong, and --force=in-place with copy fails with 25P02.
-A known IMPORT bug is being fixed: CHAR(n)[] array values are cut to one
-character and BIT(n)[] arrays (n > 1) fail to load.
+Backups taken before the CHAR(n)[] / BIT(n)[] IMPORT fix still carry a cast
+that cuts CHAR(n)[] values to one character; take a new backup.
 `)
 }
 

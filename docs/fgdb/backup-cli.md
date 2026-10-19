@@ -31,7 +31,7 @@ fgdb-backup prune   --url "$URL" --name name --keep 1
 
 `restore` returns these statuses from `restoreStatus`. Other commands return 1 from `fail()` and 2 from flag parsing. The usage text printed by the binary lists 0, 1, 2, and 4.
 
-> **Warning: restore load mode.** `--load=import` (`IMPORT INTO`) is the default and the supported loader. `--load=copy` has known bugs and is not safe for restores: `BYTES` values are stored as their literal escaped text, `STRING COLLATE` columns are not restored correctly, and `--force=in-place` with `--load=copy` fails with SQLSTATE 25P02. There is also a known `IMPORT` corruption bug that is being fixed: array columns whose element type has a width are written with a cast that drops the width. `CHAR(n)[]` values are silently cut to their first character, and `BIT(n)[]` with n > 1 fails to load. Check restored tables that have those column types.
+> **Warning: restore load mode.** `--load=import` (`IMPORT INTO`) is the default and the supported loader. `--load=copy` has known bugs and is not safe for restores: `BYTES` values are stored as their literal escaped text, `STRING COLLATE` columns are not restored correctly, and `--force=in-place` with `--load=copy` fails with SQLSTATE 25P02. A known `IMPORT` corruption bug is fixed: backup wrote array columns whose element type has a width with a cast that dropped the width, so `IMPORT` cut `CHAR(n)[]` values to their first character and rejected `BIT(n)[]` with n > 1. The cast is in the backup files, so a backup taken before the fix still restores those columns wrong. Take a new backup of tables with `CHAR(n)[]` or `BIT(n)[]` columns, and check tables restored from older backups.
 
 ## Restore when the database already exists
 

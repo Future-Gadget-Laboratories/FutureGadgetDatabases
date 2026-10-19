@@ -415,6 +415,25 @@ func TestArraySelectList(t *testing.T) {
 	}
 }
 
+// TestArrayCastKeepsModifier guards the IMPORT truncation of CHAR(n)[]:
+// the cast must carry the column's width or precision.
+func TestArrayCastKeepsModifier(t *testing.T) {
+	for _, tc := range []struct{ typname, formatted, withMod, want string }{
+		{"_bpchar", "character[]", "character(5)[]", "CHAR(5)[]"},
+		{"_bit", "bit[]", "bit(3)[]", "bit(3)[]"},
+		{"_numeric", "numeric[]", "numeric(6,2)[]", "DECIMAL(6,2)[]"},
+		{"_timestamp", "timestamp without time zone[]", "timestamp(3) without time zone[]", "TIMESTAMP(3)[]"},
+		{"_varchar", "character varying[]", "character varying[]", "VARCHAR[]"},
+		{"_text", "text[]", "text[]", "text[]"},
+		{"_bpchar", "character[]", "character(5;x)[]", "CHAR[]"},
+	} {
+		got, err := arrayCastSQL(tc.typname, tc.formatted, tc.withMod)
+		if err != nil || got != tc.want {
+			t.Errorf("arrayCastSQL(%q, %q, %q) = %q, %v; want %q", tc.typname, tc.formatted, tc.withMod, got, err, tc.want)
+		}
+	}
+}
+
 func TestScrubSecrets(t *testing.T) {
 	in := "s3://bucket/key?AWS_ACCESS_KEY_ID=AKIASECRET&AWS_SECRET_ACCESS_KEY=supersecret&AWS_SESSION_TOKEN=sessiontoken"
 	out := scrubSecrets(in)
