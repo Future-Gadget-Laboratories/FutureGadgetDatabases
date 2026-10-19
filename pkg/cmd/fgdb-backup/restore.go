@@ -1267,7 +1267,7 @@ func importTable(ctx context.Context, req importRequest, httpBase string, table 
 
 func importReachError(table TableEntry, opt RestoreOptions, cause error) error {
 	name, addr := importReachFlag(opt)
-	return fmt.Errorf("IMPORT INTO %s failed. The database node must be able to read the backup URL. For a backup that lives only on this machine, the node must reach %s (%s), or rerun with --load=copy. Error: %s",
+	return fmt.Errorf("IMPORT INTO %s failed. The database node must be able to read the backup URL. For a backup that lives only on this machine, the node must reach %s (%s). Do not switch to --load=copy as a workaround: it has known BYTES, collation and --force=in-place bugs and is not safe. Error: %s",
 		table.qualified(), name, addr, scrubSecrets(cause.Error()))
 }
 

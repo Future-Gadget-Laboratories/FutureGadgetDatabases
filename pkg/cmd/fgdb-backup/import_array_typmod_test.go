@@ -5,6 +5,7 @@
 package main
 
 import (
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,9 +19,10 @@ func TestImportKeepsArrayTypeModifiers(t *testing.T) {
 	bin := cockroachBin(t)
 	tool := buildTool(t)
 	base := t.TempDir()
-	srcAddr, dstAddr := "127.0.0.1:26341", "127.0.0.1:26343"
-	startNode(t, bin, filepath.Join(base, "src"), srcAddr, "127.0.0.1:18341", true)
-	startNode(t, bin, filepath.Join(base, "dst"), dstAddr, "127.0.0.1:18343", true)
+	addrs := freeLoopbackAddrs(t, 4)
+	srcAddr, dstAddr := addrs[0], addrs[1]
+	startNode(t, bin, filepath.Join(base, "src"), srcAddr, addrs[2], true)
+	startNode(t, bin, filepath.Join(base, "dst"), dstAddr, addrs[3], true)
 	srcURL := "postgresql://root@" + srcAddr + "/defaultdb?sslmode=disable"
 	dstURL := "postgresql://root@" + dstAddr + "/defaultdb?sslmode=disable"
 	sql(t, bin, srcAddr, true, `
@@ -57,4 +59,27 @@ INSERT INTO arr.public.t VALUES
 	if !strings.Contains(got, "abcde") {
 		t.Fatalf("restored output lacks the CHAR(5) value:\n%s", got)
 	}
+}
+
+// freeLoopbackAddrs returns n distinct loopback addresses whose ports were
+// free a moment ago. All listeners stay open until every port is picked,
+// so the kernel cannot hand out the same port twice.
+func freeLoopbackAddrs(t *testing.T, n int) []string {
+	t.Helper()
+	lns := make([]net.Listener, 0, n)
+	addrs := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lns = append(lns, ln)
+		addrs = append(addrs, ln.Addr().String())
+	}
+	for _, ln := range lns {
+		if err := ln.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return addrs
 }
