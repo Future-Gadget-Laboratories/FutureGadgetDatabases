@@ -29,7 +29,7 @@ spaces, not tabs. The colon sits right after the key.
 ```yaml
 # A comment line.
 cache_path: /var/cache/fgdb
-local_cpu: 8
+local_cpu: 4
 auto_update: false
 allowed_filesystems:
   - ext4
@@ -61,8 +61,8 @@ block, a YAML tag, or a list item that is not under `allowed_filesystems`.
 | `allowed_filesystems` | A list of names such as `ext4`. Default `ext4`, `xfs`, `btrfs`, `zfs`. | none |
 | `local_cpu` | A whole number from 1 to 1024. | `--local-cpu` (`FGDB_LOCAL_CPU`) |
 | `local_ram_mb` | A whole number from 1 to 4194304. | `--local-ram-mb` (`FGDB_LOCAL_RAM_MB`) |
-| `cpu_quota` | A whole number and a percent sign, such as `2400%`. | `--cpu-quota` (`FGDB_CPU_QUOTA`) |
-| `memory_high` | A size such as `80G`, `512M`, `80Gi`, or a plain byte count. | `--memory-high` (`FGDB_MEMORY_HIGH`) |
+| `cpu_quota` | A whole number and a percent sign, such as `400%`. | `--cpu-quota` (`FGDB_CPU_QUOTA`) |
+| `memory_high` | A size such as `16G`, `512M`, `16Gi`, or a plain byte count. | `--memory-high` (`FGDB_MEMORY_HIGH`) |
 | `memory_max` | Same kind of size as `memory_high`. | `--memory-max` (`FGDB_MEMORY_MAX`) |
 | `runner_version` | Three numbers, such as `2.338.0`. The version must also be listed in `checksums.txt`. | `--runner-version` |
 | `bazelisk_version` | Three numbers, such as `1.29.0`. It must be listed in `checksums.txt`. | none |
