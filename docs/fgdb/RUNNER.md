@@ -1,7 +1,7 @@
 # Self-hosted Actions runner
 
-The `cockroach-oss` compile runs on a self-hosted GitHub Actions runner with
-the labels `self-hosted` and `fgdb-build`.
+The `cockroach-oss` compile runs on a self-hosted GitHub Actions build runner.
+The workflow's `runs-on` line names the labels that runner must carry.
 
 The script is `build/fgdb/runner/setup-runner.sh`. It is idempotent.
 It prints a plan, then applies it. `--dry-run` stops after the plan.
@@ -12,7 +12,7 @@ update itself. That stays on unless the config file sets `auto_update: false`.
 Register that runner on a machine with at least 30 GiB of RAM and 150 GiB
 free on a local disk. The script refuses a smaller machine unless you pass
 `--allow-small-host` to test the script itself. Do not point the compile at
-`ubuntu-latest`. The workflow asks for both `self-hosted` and `fgdb-build`,
+`ubuntu-latest`. The workflow asks for `self-hosted` plus a build label,
 so a runner that only has `self-hosted` will not pick up the job.
 
 ## What it sets up
@@ -55,7 +55,7 @@ Environment variables, read before the flags:
 | Variable | Flag |
 | --- | --- |
 | `FGDB_RUNNER_NAME` | `--name` (default is `<short hostname>-fgdb`) |
-| `FGDB_RUNNER_LABELS` | `--labels` (default `fgdb-build`) |
+| `FGDB_RUNNER_LABELS` | `--labels` (default: the build label the release workflow asks for) |
 | `FGDB_CPU_QUOTA` | `--cpu-quota` |
 | `FGDB_MEMORY_HIGH` | `--memory-high` |
 | `FGDB_MEMORY_MAX` | `--memory-max` |
@@ -185,7 +185,7 @@ sudo ./build/fgdb/runner/setup-runner.sh \
 A different runner name:
 
 ```bash
-sudo FGDB_RUNNER_NAME=fgdb-build ./build/fgdb/runner/setup-runner.sh \
+sudo FGDB_RUNNER_NAME=my-build-runner ./build/fgdb/runner/setup-runner.sh \
   --token-file /root/runner.token
 ```
 
@@ -193,8 +193,8 @@ A later run without a token is safe once
 `/opt/fgdb-actions-runner/.runner` exists. Pass `--replace` to register
 again; that needs a new token. `--dry-run` prints the plan only.
 
-Confirm in GitHub that the runner is Idle and has labels `self-hosted` and
-`fgdb-build`. The workflow asks for both labels, so a runner that only has
+Confirm in GitHub that the runner is Idle and has `self-hosted` and the
+build label from the workflow's `runs-on` line. The workflow asks for both labels, so a runner that only has
 `self-hosted` will not pick up the job.
 
 The runner needs outbound HTTPS to `github.com` (source, Actions, Bazelisk,
