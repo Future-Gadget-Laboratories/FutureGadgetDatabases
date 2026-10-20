@@ -117,7 +117,7 @@
         "pkg/cmd/cockroach-oss/BUILD.bazel"
       ],
       "acceptance_summary": "Authorized SQL contract, durable progress, retries, cancel/resume and backup/restore conformance.",
-      "planned_slice": "N01",
+      "planned_slice": "N04",
       "verification": "not_verified_for_parity",
       "spec_status": "requires_scoped_review",
       "notes": "Native job integration is an intermediate milestone; final native SQL semantics need separate acceptance."
