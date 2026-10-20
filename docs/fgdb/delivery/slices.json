@@ -1,0 +1,423 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-10-20",
+  "execution_policy": "Docs are drafted; only D00 local prerequisites are validated. No feature implementation is approved by this file.",
+  "slices": [
+    {
+      "id": "D00",
+      "title": "Install pinned local Go and establish baseline tests",
+      "depends_on": [],
+      "architecture_area": "tooling",
+      "acceptance": "Verified Go archive and OSS release; helper/unit/integration/vet evidence with explicit skips.",
+      "implementation_status": "validated-local-prerequisite",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "D01",
+      "title": "Reconcile runtime contracts with architecture PRs",
+      "depends_on": [
+        "D00"
+      ],
+      "architecture_area": "documentation",
+      "acceptance": "Correct #8 contracts; refresh #25 without reverting parent fixes; pinned source references.",
+      "implementation_status": "draft-documentation",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "D02",
+      "title": "Complete and approve the v23.2 capability inventory",
+      "depends_on": [
+        "D01"
+      ],
+      "architecture_area": "comparison register",
+      "acceptance": "Audit public feature index, classify existing support and uncertainty, pin target semantics and record maintainer-accepted scope.",
+      "implementation_status": "seed-register-only",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "D03",
+      "title": "Route a named feature through ordinary-core or cleanroom review",
+      "depends_on": [
+        "D01"
+      ],
+      "architecture_area": "specification handoff",
+      "acceptance": "For each feature separately: permitted-core classification or named spec author, behavior-only spec, maintainer approval and separate implementer; no blanket approval.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "B01",
+      "title": "Repair the external backup's destructive and type-safety boundaries",
+      "depends_on": [
+        "D01"
+      ],
+      "architecture_area": "fgdb-backup",
+      "acceptance": "Reject invalid/wildcard advertised hosts before drops; fix or refuse unsafe COPY; preserve rows on refusal; address known #17 review items.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "B02",
+      "title": "Prove external backup value and schema fidelity",
+      "depends_on": [
+        "B01"
+      ],
+      "architecture_area": "fgdb-backup / fgdbtest",
+      "acceptance": "Exact values/types/privileges scope, corruption and interruption, GC expiry, sequences, old artifacts, local/S3 and failed-restore preservation.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "B03",
+      "title": "Deliver an external scheduled-backup feature",
+      "depends_on": [
+        "B02",
+        "D03"
+      ],
+      "architecture_area": "external scheduler / storage",
+      "acceptance": "Versioned schedule plan, overlap/lease fencing, retry, bounded cancellation, timezone, secret handling and safe retention; backup chains not pruned unsafely.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "B04",
+      "title": "Deliver independently versioned artifact encryption",
+      "depends_on": [
+        "B02",
+        "D03"
+      ],
+      "architecture_area": "backup artifact / key adapter",
+      "acceptance": "Approved protection contract; authenticated integrity, key recovery/rotation, truncation and wrong-key tests; S3 SSE scope remains separately labeled.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P00",
+      "title": "Characterize inherited SQL/driver/transaction semantics",
+      "depends_on": [
+        "D01"
+      ],
+      "architecture_area": "pgwire / SQL / kvcoord",
+      "acceptance": "Driver protocol matrix, error codes, serializable retries, ambiguity handling, exact type behavior and explicit unsupported cases.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P01",
+      "title": "Establish distributed durability and availability evidence",
+      "depends_on": [
+        "D01"
+      ],
+      "architecture_area": "kvserver / storage / harness",
+      "acceptance": "Majority/minority, crashes, node replacement, split/merge, partitions and disk fault campaigns; consistency invariants beyond a single-key register.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "N01",
+      "title": "Integrate a native logical-backup job/control plane",
+      "depends_on": [
+        "B03",
+        "D03",
+        "P00"
+      ],
+      "architecture_area": "jobs / privileges / scheduling",
+      "acceptance": "Refactor reusable behavior behind a reviewed interface; no exec of CLI from node; durable progress, repeat-safe effects, ownership transfer, cancellation and auth.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "N02",
+      "title": "Build the candidate OSS server with the external backup retained",
+      "depends_on": [
+        "N01"
+      ],
+      "architecture_area": "Bazel / packaging",
+      "acceptance": "Actual candidate build; disallowed-import test; binary identity; artifact checksums; ship compatible independent CLI fallback with a support matrix.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "N03",
+      "title": "Test the candidate and fallback together",
+      "depends_on": [
+        "N02",
+        "B02"
+      ],
+      "architecture_area": "integration / faults / upgrade",
+      "acceptance": "Same logical backup corpus through native and external paths; native crash/adoption/cancel tests; mixed-version/rollback; reject format mismatches and verify restore after release packaging.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "N04",
+      "title": "Complete the scoped native SQL backup/restore contract",
+      "depends_on": [
+        "N03",
+        "D03"
+      ],
+      "architecture_area": "parser / planning hooks / privileges / jobs",
+      "acceptance": "Approved SQL syntax, scope, result and SQLSTATE contracts, privilege and transaction behavior, job control, old/new artifact handling and independent conformance tests. Explicitly decide Enterprise backup-file interchange; internal job integration alone is not parity.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P02",
+      "title": "Add incremental export and chain recovery",
+      "depends_on": [
+        "N04",
+        "P01",
+        "D03"
+      ],
+      "architecture_area": "MVCC export / progress / artifact versions",
+      "acceptance": "Capture inserts/updates/deletes/DDL over an explicit interval, atomic progress, chain manifests and interrupted-layer recovery; no updated_at polling substitute.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P03",
+      "title": "Add revision history and point-in-time restore",
+      "depends_on": [
+        "P02"
+      ],
+      "architecture_area": "GC protection / MVCC history / restore",
+      "acceptance": "Protect required history, restore chosen times across DDL/deletes/transactions, reject gaps and expired intervals; prove chain retention safety.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P04",
+      "title": "Add locality-aware and cluster-operational recovery coverage",
+      "depends_on": [
+        "P03",
+        "P08"
+      ],
+      "architecture_area": "placement / execution / catalog / restore",
+      "acceptance": "Approved locality rules and complete declared catalog/security/schedule recovery; explicit unsupported operational state; cross-region restore drills.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P05",
+      "title": "Add durable changefeed delivery",
+      "depends_on": [
+        "N03",
+        "P01",
+        "D03"
+      ],
+      "architecture_area": "SQL hooks / rangefeed / jobs",
+      "acceptance": "Consistent initial scan and changes/deletes; declared at-least-once or stronger contract; deterministic event identity, backpressure and sink faults.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P06",
+      "title": "Add checkpoint/frontier and topology conformance",
+      "depends_on": [
+        "P05"
+      ],
+      "architecture_area": "rangefeed / jobs / progress",
+      "acceptance": "Resume without omissions across split/merge/restart; define resolved progress, schema transitions, duplicate delivery and slow consumers.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P07",
+      "title": "Add physical cross-cluster recovery",
+      "depends_on": [
+        "N03",
+        "P01",
+        "D03"
+      ],
+      "architecture_area": "repstream / MVCC / jobs",
+      "acceptance": "Approved v23.2 target: consistent bootstrap/catchup/cutover, transactionally valid destination, bounded measured loss and recovery; failback only if separately scoped.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P08",
+      "title": "Add multi-region policy and follower-read coverage",
+      "depends_on": [
+        "N03",
+        "P01",
+        "D03"
+      ],
+      "architecture_area": "catalog / spanconfig / allocator / closed timestamps",
+      "acceptance": "Document supported placement policies, test region-loss survival/residency, and identify actual serving replicas and staleness bounds.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P09",
+      "title": "Add native store-key lifecycle",
+      "depends_on": [
+        "N03",
+        "B04",
+        "P01",
+        "D03"
+      ],
+      "architecture_area": "engine / WAL / temp files / keys",
+      "acceptance": "Approved encryption boundary, crash-safe key rotation and restore/restart recovery, no key leakage; filesystem encryption not silently counted.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P10",
+      "title": "Add missing identity and audit behaviors",
+      "depends_on": [
+        "N03",
+        "P00",
+        "D03"
+      ],
+      "architecture_area": "pgwire / auth / auditlogging",
+      "acceptance": "Fine-grained scope inventory; JWT/identity expiry and rotation, role mapping, policy audit delivery/redaction, and denied-access tests.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P11",
+      "title": "Fill documented SQL language and isolation gaps",
+      "depends_on": [
+        "N03",
+        "P00",
+        "D03"
+      ],
+      "architecture_area": "parser / catalog / planner / execution",
+      "acceptance": "Inventory procedures/UDF/isolation cases first; implement only gaps with exact SQL/error/transaction semantics and upgrade tests.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P12",
+      "title": "Close scoped observability gaps",
+      "depends_on": [
+        "N03",
+        "P00"
+      ],
+      "architecture_area": "metrics / tracing / SQL stats / console",
+      "acceptance": "Named metrics and result contracts, privileged visibility, retention and measured overhead; avoid rebuilding already present diagnostics.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "P13",
+      "title": "Accept the declared v23.2 parity profile",
+      "depends_on": [
+        "D02",
+        "B04",
+        "P00",
+        "P01",
+        "P02",
+        "P03",
+        "P04",
+        "P05",
+        "P06",
+        "P07",
+        "P08",
+        "P09",
+        "P10",
+        "P11",
+        "P12",
+        "N04"
+      ],
+      "architecture_area": "release acceptance",
+      "acceptance": "Every scoped behavior/dimension has passing candidate evidence; no unknowns hidden; independent fault/upgrade/restore review; any exclusions named as profile limits, not full parity.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "L00",
+      "title": "Pin the newer Enterprise target and inventory",
+      "depends_on": [
+        "P13"
+      ],
+      "architecture_area": "comparison",
+      "acceptance": "Freeze an exact newer release/edition and public behavior snapshot; expand beyond the three discovery examples.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "L01",
+      "title": "Evaluate logical cross-cluster replication",
+      "depends_on": [
+        "L00",
+        "P06",
+        "D03"
+      ],
+      "architecture_area": "stream / apply / conflicts",
+      "acceptance": "Specify loop prevention, conflict policy, deletion/schema handling, transactions and convergence; do not equate this with physical replication.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "L02",
+      "title": "Evaluate native row-level security",
+      "depends_on": [
+        "L00",
+        "P10",
+        "P11",
+        "D03"
+      ],
+      "architecture_area": "auth / optimizer / catalog",
+      "acceptance": "Default-deny and role combinations, write checks, prepared plans, views/joins, backup and CDC data-exposure tests; no proxy-only equivalence.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "L03",
+      "title": "Evaluate vector and index compatibility",
+      "depends_on": [
+        "L00",
+        "P00",
+        "P01",
+        "D03"
+      ],
+      "architecture_area": "types / index / optimizer / KV",
+      "acceptance": "Pin APIs and exact/approximate contracts; recall/latency/memory evidence under concurrent writes, faults and upgrades.",
+      "implementation_status": "proposed",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    },
+    {
+      "id": "C00",
+      "title": "Research courtesy features from other database ecosystems",
+      "depends_on": [
+        "D01"
+      ],
+      "architecture_area": "discovery",
+      "acceptance": "Source-backed ideas, existing-support inventory, user value, relative cost/risk and dependencies; no implementation implied.",
+      "implementation_status": "initial-discovery-documented",
+      "owner": "unassigned",
+      "estimate": "Scope first; no calendar commitment"
+    }
+  ]
+}
