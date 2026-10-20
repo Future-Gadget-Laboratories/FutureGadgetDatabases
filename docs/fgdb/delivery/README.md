@@ -7,9 +7,9 @@ Planning baseline agreed on 2026-10-20: establish **v23.2-era Enterprise behavio
 
 The documentation is being reviewed in three layers:
 
-1. **Foundation:** [local Go setup](../development/local-go.md) and [runtime contracts](../architecture/runtime-contracts.md). Base: current main, independently mergeable. Follow architecture PRs [#8](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/8) and [#25](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/25) as related work; do not inherit #25's conflict.
-2. **Comparison:** [capability register and evidence rules](enterprise-parity.md), [comparison log](comparison-log.json), and [public sources](comparison-sources.md). Base: foundation branch.
-3. **Delivery:** [stages and gates](stages.md), [31 dependency-linked slices](slices.json), [feature handoff checklist](feature-handoff.md), [courtesy discovery](courtesy-features.md), and [actual local validation](local-validation-2026-10-20.md). Base: comparison branch.
+1. **Foundation, [draft #27](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/27):** [local Go setup](../development/local-go.md) and [runtime contracts](../architecture/runtime-contracts.md). Base: current main, independently mergeable. Follow architecture PRs [#8](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/8) and [#25](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/25) as related work; do not inherit #25's conflict.
+2. **Comparison, [draft #28](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/28):** [capability register and evidence rules](enterprise-parity.md), [comparison log](comparison-log.json), and [public sources](comparison-sources.md). Base: foundation branch.
+3. **Delivery, [draft #29](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/29):** [stages and gates](stages.md), [31 dependency-linked slices](slices.json), [feature handoff checklist](feature-handoff.md), [courtesy discovery](courtesy-features.md), and [actual local validation](local-validation-2026-10-20.md). Base: comparison branch.
 
 Each later layer must be reviewed as its incremental diff. Merge foundation first; retarget comparison to main once foundation lands, then retarget delivery after comparison lands. Refresh later branches when an earlier layer changes. No existing PR branch is force-updated by this stack.
 
