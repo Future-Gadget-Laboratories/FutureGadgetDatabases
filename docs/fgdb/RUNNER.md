@@ -9,8 +9,8 @@ Optional settings live in a small config file. See
 [runner-config.md](runner-config.md). The installed runner is allowed to
 update itself. That stays on unless the config file sets `auto_update: false`.
 
-Register that runner on a machine with at least 30 GiB of RAM and 150 GiB
-free on a local disk. The script refuses a smaller machine unless you pass
+Register that runner on a machine with enough RAM and free local disk for a
+full Bazel build; `setup-runner.sh` enforces its own minimums. The script refuses a smaller machine unless you pass
 `--allow-small-host` to test the script itself. Do not point the compile at
 `ubuntu-latest`. The workflow asks for `self-hosted` plus a build label,
 so a runner that only has `self-hosted` will not pick up the job.
@@ -46,7 +46,7 @@ other local services still have CPU and RAM. Defaults:
 | `MemoryHigh` | `80G` | soft pressure above this |
 | `MemoryMax` | `96G` | hard cap |
 
-The same budget is written to `/etc/fgdb/runner.env` as `FGDB_LOCAL_CPU`
+The same budget is written to the runner environment file as `FGDB_LOCAL_CPU`
 (default `24`) and `FGDB_LOCAL_RAM_MB` (default `81920`) so Bazel does not
 schedule more work than the slice allows. Change them together.
 
@@ -189,8 +189,8 @@ sudo FGDB_RUNNER_NAME=my-build-runner ./build/fgdb/runner/setup-runner.sh \
   --token-file /root/runner.token
 ```
 
-A later run without a token is safe once
-`/opt/fgdb-actions-runner/.runner` exists. Pass `--replace` to register
+A later run without a token is safe once the runner's `.runner`
+registration file exists in its install directory. Pass `--replace` to register
 again; that needs a new token. `--dry-run` prints the plan only.
 
 Confirm in GitHub that the runner is Idle and has `self-hosted` and the
