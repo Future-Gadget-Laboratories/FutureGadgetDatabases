@@ -20,6 +20,7 @@
 # Build context (see build/fgdb/stage-image-context.sh):
 #   cockroach.sh
 #   cockroach          (the cockroach-oss binary, installed under this name)
+#   fgdb-backup        (logical backup client; a stub if the tarball has none)
 #   libgeos.so
 #   libgeos_c.so
 #   licenses/
@@ -68,7 +69,7 @@ RUN microdnf update -y \
        fi \
     && rm -rf /var/cache/yum \
     && mkdir -p /usr/local/lib/cockroach /cockroach /licenses /docker-entrypoint-initdb.d
-COPY cockroach.sh cockroach /cockroach/
+COPY cockroach.sh cockroach fgdb-backup /cockroach/
 COPY licenses/ /licenses/
 COPY libgeos.so libgeos_c.so /usr/local/lib/cockroach/
 

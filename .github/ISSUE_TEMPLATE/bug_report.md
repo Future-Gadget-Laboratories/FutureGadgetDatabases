@@ -29,7 +29,7 @@ CREATE TABLE lab.sensors (
 
 Paste `cockroach-oss version` (or `cockroach version` from the release tarball). The `Distribution` line should say `OSS`. If it does not, say so.
 
-- Binary: local `./dev build oss`, or release `v23.2.15-oss`
+- Binary: local `./dev build oss`, current release `v23.2.15-fgdb.1`, or earlier release `v23.2.15-oss`
 - OS:
 - Nodes:
 

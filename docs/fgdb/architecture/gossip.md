@@ -3,7 +3,7 @@
 
 # pkg/gossip
 
-Gossip is how a node learns who else is alive and where the first range is, without a separate metadata service. It is an epidemic protocol: each node talks to a few peers and exchanges deltas until a sentinel says "you are in the cluster."
+Gossip is how a node learns who else is alive and where the first range is, without a separate metadata service. It is an epidemic protocol: each node talks to a few peers and exchanges deltas. Two signals are easy to mix up. `Gossip.Connected` closes once, the first time this node stores `KeyClusterID`. The sentinel (`KeySentinel`) is a different key. A missing or expired sentinel means the node treats itself as partitioned and bootstraps again. That stall can happen while `Connected` is still open, on the way in, and it can happen again later. The later stall leaves the already-closed channel closed.
 
 The algorithm comment at the top of `pkg/gossip/gossip.go` is the one to read. This page is the keys and the call sites.
 
@@ -11,7 +11,7 @@ The algorithm comment at the top of `pkg/gossip/gossip.go` is the one to read. T
 
 - Spread node descriptors, store descriptors, and liveness info.
 - Spread the first range descriptor, so a new node can find meta1 and then the rest of the keyspace.
-- Notice a partition: if the sentinel is missing or expired, the node treats itself as disconnected and bootstraps again.
+- Notice a partition: if the sentinel is missing or expired, `bootstrap` dials the join list again. That stall is separate from the one-time close of `Gossip.Connected`.
 
 Gossip is not the Raft log and it is not a source of truth for user data. A value you needed to be durable belongs in a range. Gossip is a hint that can expire.
 
@@ -21,7 +21,7 @@ Gossip is not the Raft log and it is not a source of truth for user data. A valu
 | --- | --- | --- |
 | `Gossip` | `pkg/gossip/gossip.go` | Clients, server, `infoStore`, bootstrap addresses, cached node and store descriptors. |
 | `Gossip.Start` | `pkg/gossip/gossip.go` | Starts the RPC server, the bootstrap client, and the connection manager. Called from `Server.PreStart`. |
-| `AddInfo` / `AddInfoProto` | `pkg/gossip/gossip.go` | Local publish. `Connected` closes when the cluster id / sentinel has been seen. |
+| `AddInfo` / `AddInfoProto` | `pkg/gossip/gossip.go` | Local publish. A successful `addInfoLocked` calls `signalConnectedLocked`. |
 | `server.Gossip` | `pkg/gossip/server.go` | The stream: merge the remote delta, reply with the local delta and high-water stamps. |
 | Keys | `pkg/gossip/keys.go` | What the info keys mean. |
 | First range | `pkg/kv/kvserver/replica_gossip.go` | Leaseholder of the first range gossips the sentinel and the descriptor. |
@@ -32,11 +32,11 @@ Gossip is not the Raft log and it is not a source of truth for user data. A valu
 
 | Constant | Payload |
 | --- | --- |
-| `KeyClusterID` | Cluster UUID. `Gossip.Connected` waits on this. |
+| `KeyClusterID` | Cluster UUID, TTL 0 (`AddClusterID`). `signalConnectedLocked` closes `Gossip.Connected` the first time this key is in the infostore. |
 | `KeyNodeDescPrefix` | `roachpb.NodeDescriptor` (address, locality, attributes). |
 | `KeyStoreDescPrefix` | `roachpb.StoreDescriptor` (capacity, range count). The allocator reads these. |
 | `KeyNodeLivenessPrefix` | Liveness info for each node. |
-| `KeySentinel` | Gossiped by the first range leaseholder. Used to detect a partition. |
+| `KeySentinel` | Gossiped by the first range leaseholder (`SentinelGossipTTL`). A missing or expired value marks the node stalled and wakes bootstrap. It does not close `Gossip.Connected`, and the channel is not opened again when the sentinel later returns. |
 | `KeyFirstRangeDescriptor` | Descriptor for the first range, so a node can route meta lookups before its range cache is warm. |
 | `KeyDeprecatedSystemConfig` | The old full system-config blob. The comment says it is unused from 22.1 on. This pin is 23.2. Do not build new code on it. |
 
@@ -54,7 +54,9 @@ TTLs for node and store info are constants in `gossip.go` (`NodeDescriptorTTL`, 
 - DistSender's first contact uses the gossiped first range, then the range cache.
 - `Node` watches liveness.
 
-When the sentinel is absent, `Gossip.Connected` is not closed, or it is considered expired and the node goes back to bootstrapping (step 1 in the `gossip.go` comment). That looks, from SQL, like the node is up but not taking work.
+**Initial connection.** `Gossip.Connected` is a `chan struct{}` created with the `Gossip` value. The field comment says it is closed upon initial connection. `signalConnectedLocked` (`pkg/gossip/gossip.go`) closes it only when `hasConnected` is still false and `KeyClusterID` is already stored, then sets `hasConnected`. Call sites are `addInfoLocked`, the gossip client after a response (`pkg/gossip/client.go`), and `maybeSignalStatusChangeLocked` on the way out of a stall. A later call finds `hasConnected` set and leaves the channel alone. The channel is never recreated.
+
+**Stalled or lost-sentinel bootstrap.** `maybeSignalStatusChangeLocked` sets `stalled` when `KeySentinel` is missing, or when a multi-node cluster (`len(bootstrapInfo.Addresses) > 0`) has no incoming and no outgoing connections. `signalStalledLocked` sends on `stalledCh`. `bootstrap` dials a join address when there are no clients or no sentinel, sleeps `bootstrapInterval`, then blocks on `stalledCh` until the next stall (step c in the `gossip.go` comment: a missing or expired sentinel means the node considers itself partitioned and returns to step 1). Leaving the stall calls `signalConnectedLocked` again, which is a no-op once `KeyClusterID` has already closed `Connected`. From SQL, the process can be up and already "connected" while gossip is stalled and the node is not taking work.
 
 ```mermaid
 flowchart LR
@@ -83,7 +85,7 @@ It does not depend on SQL. Gossip starts before `sqlServer.preStart`.
 
 ## Invariants
 
-- The sentinel is gossiped by the leaseholder of the first range, not by every node. If that range has no quorum, sentinel gossip stops, and other nodes will decide they are partitioned even if their disks are fine.
+- The sentinel is gossiped by the leaseholder of the first range, not by every node. If that range has no quorum, sentinel gossip stops, and other nodes will decide they are partitioned even if their disks are fine. After `KeyClusterID` has closed `Gossip.Connected`, that channel stays closed through the stall. `AddClusterID` publishes `KeyClusterID` with TTL 0.
 - Info has a TTL. Gossip is a cache of "what did someone claim recently."
 - `maxHops` is 5. A node does not keep a peer that only offers distant info when it can dial something closer.
 - Node descriptors and store descriptors are separate. The allocator places replicas on stores, not on "nodes" in the abstract.

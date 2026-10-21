@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "cluster_test",
+    size = "large",
+    srcs = ["cluster_test.go"],
+    tags = [
+        "fgdb_tier_interim",
+        "integration",
+    ],
+    deps = [
+        "//pkg/fgdbtest/harness",
+        "//pkg/fgdbtest/report",
+        "//pkg/fgdbtest/scenario",
+    ],
+)

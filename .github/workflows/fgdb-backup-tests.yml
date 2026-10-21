@@ -1,0 +1,46 @@
+# Cluster-backed fgdb-backup tests.
+#
+# Unit tests, go vet, and the build/fgdb script tests run in fgdb-checks.yml.
+# This workflow downloads the published v23.2.15-fgdb.1 tarball and runs the
+# tests that start cockroach-oss. It stays path-filtered so a docs-only pull
+# request does not download the binary.
+
+name: FGDB patch tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fgdb-backup-tests.yml"
+      - "pkg/cmd/fgdb-backup/**"
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FGDB_COCKROACH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/cockroach
+      LD_LIBRARY_PATH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/lib
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.21.12"
+          cache-dependency-path: pkg/cmd/fgdb-backup/go.sum
+      - name: Download and verify the pinned OSS binary
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/releases/download/v23.2.15-fgdb.1/cockroach-oss-v23.2.15.linux-amd64.tgz"
+          curl -fsSL "$url" -o cockroach-oss.tgz
+          printf '%s  %s\n' \
+            5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379 \
+            cockroach-oss.tgz | sha256sum -c -
+          tar -xzf cockroach-oss.tgz
+      - name: Run cluster-backed integration tests
+        working-directory: pkg/cmd/fgdb-backup
+        run: go test -count=1 -v ./...

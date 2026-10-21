@@ -35,15 +35,23 @@ if ! command -v nm >/dev/null 2>&1 || ! command -v strings >/dev/null 2>&1; then
 fi
 
 echo "Scanning symbols and strings for CCL import paths"
-if nm -a "$bin" | grep -E 'cockroach/pkg/ccl/|cockroach/pkg/ui/distccl'; then
+if ! nm_output=$(nm -a "$bin"); then
+  echo "verify-oss-binary: nm failed for ${bin}" >&2
+  exit 1
+fi
+if grep -E 'cockroach/pkg/ccl/|cockroach/pkg/ui/distccl' <<<"$nm_output"; then
   echo "verify-oss-binary: CCL symbols are present in ${bin}" >&2
   exit 1
 fi
-if strings -a "$bin" | grep -F 'github.com/cockroachdb/cockroach/pkg/ccl/'; then
+if ! strings_output=$(strings -a "$bin"); then
+  echo "verify-oss-binary: strings failed for ${bin}" >&2
+  exit 1
+fi
+if grep -F 'github.com/cockroachdb/cockroach/pkg/ccl/' <<<"$strings_output"; then
   echo "verify-oss-binary: pkg/ccl import path is present in ${bin}" >&2
   exit 1
 fi
-if strings -a "$bin" | grep -F 'github.com/cockroachdb/cockroach/pkg/ui/distccl'; then
+if grep -F 'github.com/cockroachdb/cockroach/pkg/ui/distccl' <<<"$strings_output"; then
   echo "verify-oss-binary: pkg/ui/distccl import path is present in ${bin}" >&2
   exit 1
 fi
