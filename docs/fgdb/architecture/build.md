@@ -46,7 +46,7 @@ It does not build `//pkg/cmd/cockroach`. `.bazelrc` sets `--symlink_prefix=_baze
 
 - `go_binary` name `cockroach-oss`
 - library deps: `//pkg/cli`, `//pkg/ui/distoss`
-- `disallowed_imports_test` with prefixes `pkg/ccl` and `pkg/ui/distccl`
+- `disallowed_imports_test` with prefixes `pkg/ccl`, `pkg/ui/distccl`, and `pkg/fgdbtest`
 
 `//pkg/ui/distoss` embeds a tar of the OSS DB Console (`pkg/ui/distoss/distoss.go`, `//go:embed assets.tar.gz`). Building the binary builds the UI. There is no separate webpack step in this script.
 
@@ -65,7 +65,7 @@ The release `.bazelrc.user` does not enable `force_build_cdeps`. `build-oss.sh` 
 
 Two checks, and they look at different things.
 
-**1. Import graph.** `bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test` fails if the `cockroach-oss` target's transitive imports include `pkg/ccl` or `pkg/ui/distccl`. This is the rule in `pkg/cmd/cockroach-oss/BUILD.bazel`. It does not open the finished binary.
+**1. Import graph.** `bazel test //pkg/cmd/cockroach-oss:cockroach-oss_disallowed_imports_test` fails if the `cockroach-oss` target's transitive imports include `pkg/ccl`, `pkg/ui/distccl`, or `pkg/fgdbtest`. This is the rule in `pkg/cmd/cockroach-oss/BUILD.bazel`. It does not open the finished binary.
 
 **2. The file that will be packaged.** `verify-oss-binary.sh` requires:
 
@@ -112,7 +112,7 @@ flowchart TD
   rc["write-bazelrc-user.sh<br/>.bazelrc.user"]
   bazel["bazel build<br/>cockroach-oss and //c-deps:libgeos"]
   stage["stage cockroach-oss and lib/*.so"]
-  imports["disallowed_imports_test<br/>no pkg/ccl, no distccl"]
+  imports["disallowed_imports_test<br/>no pkg/ccl, no distccl, no pkg/fgdbtest"]
   verify["verify-oss-binary.sh<br/>ELF, nm, strings, version OSS"]
   tar["package-oss-tarball.sh<br/>cockroach, libgeos, fgdb-backup"]
   ctx["stage-image-context.sh"]
