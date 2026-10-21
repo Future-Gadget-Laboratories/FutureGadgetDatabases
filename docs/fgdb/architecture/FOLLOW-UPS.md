@@ -5,7 +5,7 @@
 
 This queues the numbered questions in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md). It does not close them or claim runtime coverage. The map was reconciled against `main` at `2d2befea10288726b8da5654031a503acfb2b512` on 2026-10-17. Recheck the source and PR heads when work starts.
 
-The Phase 0 suite is documented in [testing.md on main](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/testing.md). On main it lives under `fgdb/test/` and `pkg/fgdbtest/`. Those paths are not in this branch. Extend that suite and its claim registry rather than creating another harness. The `v23.2.15-fgdb.1` pin is recorded in [releases.md on main](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/blob/main/docs/fgdb/releases.md). [releases.md](../releases.md) in this branch documents `v23.2.15-oss`. Architecture documentation can land with open verification questions, provided the evidence limits remain explicit.
+The Phase 0 suite is documented in [testing.md](../testing.md) and lives under `fgdb/test/` and `pkg/fgdbtest/`. Extend that suite and its claim registry rather than creating another harness. The `v23.2.15-fgdb.1` release (source commit `56ce139286c504cd61ccc1da1d8e03b644afa131`, tarball sha256 `5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379`) and the earlier `v23.2.15-oss` release are recorded in [releases.md](../releases.md). Architecture documentation can land with open verification questions, provided the evidence limits remain explicit.
 
 ## Order and completion evidence
 
@@ -29,20 +29,20 @@ The original question numbers remain stable. Record each result with its test id
 3. Add the smallest observable assertion. Keep test-only code out of the release binary and preserve the `cockroach-oss` disallowed-imports gate.
 4. Run the scoped tests and the relevant existing checks. Report unavailable tools and omitted cluster checks explicitly.
 
-## Skills and native tooling
+## Tooling
 
-For agents with the supplied collection installed, start with `cb-project-engineering`. For everyone else, the repository's own build/test instructions remain the executable workflow; these skills are guidance, not new dependencies.
+Use the repository's own build and test instructions. They are the executable workflow; nothing here adds a new dependency.
 
-| Work | Applicable skill guidance | Native implementation/checks |
-| --- | --- | --- |
-| All architecture follow-ups | `code-review-checklist`, relevant stack add-ons, `code-review-static-tools` | Existing Go tests, Bazel targets, claims checker, `go vet`; compatible staticcheck if installed. |
-| Review an existing or new PR | `code-review-composer-index` plus its checklist and static tools | Exact base/head, prior findings, concrete test results; independent final review when required. |
-| CI/build wiring | Review add-ons and static tools | actionlint, ShellCheck, existing fixture tests; preserve manual self-hosted execution and checkout restrictions. |
-| Push or ready code | `local-sonar-scan` | Record the actual local Sonar quality gate, or leave scan status pending. |
-| Later performance investigation | `benchmarking-advisor`, only for the methodology/tool in use | Go benchmarks/profiling and representative SQL workloads. No unmeasured speedup claims. |
+| Work | Checks |
+| --- | --- |
+| All architecture follow-ups | Existing Go tests, Bazel targets, the claims checker, `go vet`; a compatible staticcheck if installed. |
+| Review an existing or new PR | Exact base/head, prior findings, concrete test results; an independent final review when required. |
+| CI/build wiring | actionlint, ShellCheck, existing fixture tests; preserve manual self-hosted execution and checkout restrictions. |
+| Push or mark ready | Record the actual static-analysis quality gate result, or leave its status pending. |
+| Later performance investigation | Go benchmarks/profiling and representative SQL workloads. No unmeasured speedup claims. |
 
-FGDb is primarily Go. The supplied C++23 and .NET overlays do not authorize a toolchain migration, and CipherBank's `make-module` generator is not FGDb's Go/Bazel module workflow. Use Python or C/C++ specialists only when changing those actual components.
+FGDb is primarily Go. Do not migrate toolchains or adopt another project's module generator; Go/Bazel is the module workflow here. Change Python or C/C++ only where those actual components need it.
 
 ## Separate feature tracks
 
-These architecture tests establish existing OSS behavior. They do not implement Nexus compatibility, PL/pgSQL, incremental backup, or point-in-time restore. Those features need separately scoped work and, where required, maintainer-approved behavior specifications under the repository's cleanroom process.
+These architecture tests establish existing OSS behavior. They do not implement third-party product compatibility layers, PL/pgSQL, incremental backup, or point-in-time restore. Those features need separately scoped work and, where required, maintainer-approved behavior specifications under the repository's cleanroom process.
