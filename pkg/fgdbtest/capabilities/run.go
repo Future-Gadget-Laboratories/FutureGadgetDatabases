@@ -23,7 +23,7 @@ const (
 	ClaimImport  = "OSS-002"
 	ClaimBackup  = "OSS-003"
 	stepSetup    = "OSS-SETUP"
-	suiteTimeout = 14 * time.Minute // below the 15m go test budget; covers 24 gates at 30s plus node start (matches PAR-002)
+	suiteTimeout = 14 * time.Minute // below the 15m go test budget; covers 24 gates at 30s plus node start (same budget as the OSS guard suite)
 )
 
 // Config supplies the binary and a parent for disposable stores.

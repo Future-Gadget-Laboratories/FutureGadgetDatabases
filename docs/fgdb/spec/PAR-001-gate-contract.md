@@ -24,7 +24,7 @@ The common statement-gate output is SQLSTATE `XXC01` and message substring `a CC
 - v1.3: the GATE-005/007/008/009/011 forms corrected in v1.2, and every other active row, returned the expected `XXC01` result with the specified concrete type when run against the released OSS v23.2.15 binary (one disposable local node, no job, file or network side effect observed). Those rows are now marked `runtime-observed`. The claims stay `partial` until a stock-binary validation run confirms them.
 - The concrete `*tree.<Type>` suffixes are kept on purpose. They are part of the error text the server returns over the wire, so they are the observable contract, not an implementation detail of this test.
 
-- Gate ids renumbered to a contiguous GATE-001..GATE-026 sequence (v1 had duplicates).
+- Gate ids renumbered to a GATE-001..GATE-026 sequence without duplicates (v1 had duplicates). GATE-006 (retired) and GATE-014 (unreachable) are excluded, leaving 24 active ids.
 - GATE-006 (`IMPORT TABLE ... CREATE USING`) is retired: that form is not in the v23.2 OSS grammar. Its id is not reused; `IMPORT TABLE ... FROM <format> ...` remains an OSS import path, not a CCL gate.
 - GATE-011 (virtual-cluster replication syntax) awaited black-box confirmation in v1.1; v1.2 uses the OSS grammar's required `ON <location>` clause and is `runtime-observed` as of v1.3.
 - Exact message text for every row must be confirmed by a black-box validation run of the stock binary or by the pinned `cockroach-oss` run in CI before the claims leave `partial`.
