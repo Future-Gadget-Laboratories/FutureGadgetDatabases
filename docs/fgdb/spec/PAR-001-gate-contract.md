@@ -8,7 +8,7 @@
 | Spec id | PAR-001 |
 | Version | v1.2 |
 | Date | 2026-10-22 |
-| Role | spec writer (Codex, cleanroom spec role) |
+| Role | spec writer (cleanroom spec role; see docs/fgdb/CLEANROOM.md) |
 | Sources consulted | `docs/fgdb/*.md`; `pkg/fgdbtest/capabilities`; OSS v23.2.15 SQL tree, parser, statement planner, builtin registrations, license checks, and OSS logic-test expectations |
 
 ## Contract
@@ -24,7 +24,7 @@ The common statement-gate output is SQLSTATE `XXC01` and message substring `a CC
 - Gate ids renumbered to a contiguous GATE-001..GATE-026 sequence (v1 had duplicates).
 - GATE-006 (`IMPORT TABLE ... CREATE USING`) is retired: that form is not in the v23.2 OSS grammar. Its id is not reused; `IMPORT TABLE ... FROM <format> ...` remains an OSS import path, not a CCL gate.
 - GATE-011 (virtual-cluster replication syntax) was oracle-pending in v1.1; v1.2 uses the OSS grammar's required `ON <location>` clause and remains `oracle-pending` for the black-box CCL result.
-- Exact message text for every row must be confirmed by a Decode oracle run (stock binary as a black box) or by the pinned `cockroach-oss` run in CI before the claims leave `partial`.
+- Exact message text for every row must be confirmed by a black-box validation run of the stock binary or by the pinned `cockroach-oss` run in CI before the claims leave `partial`.
 
 ## v1.2 changes
 
@@ -102,12 +102,12 @@ Each GATE claim must be a distinct table entry and report row; PARITY rows are n
 
 ## Open questions / oracle-pending
 
-- Confirm every trigger's parser acceptance and the exact concrete statement type in a black-box Decode run of the stock OSS binary.
+- Confirm every trigger's parser acceptance and the exact concrete statement type in a black-box validation run of the stock OSS binary.
 - Confirm the exact SQLSTATE for LIC-001 and LIC-002; the OSS source establishes the message but not the wire wrapping at the call site.
 - Confirm whether any future FGDb PAR-0xx feature flag intentionally flips a row; none is defined in the consulted context.
 - Confirm the corrected scheduled-backup and replication forms in the stock-binary oracle run without permitting a job, file, or network side effect.
 
-Acceptance claim ids: GATE-001, GATE-002, GATE-003, GATE-004, GATE-005, GATE-007, GATE-008, GATE-009, GATE-010, GATE-011, GATE-012, GATE-013, GATE-015, GATE-016, GATE-017, GATE-018, GATE-019, GATE-020, GATE-021A, GATE-022A, GATE-021, GATE-022, GATE-023, GATE-024, GATE-025, GATE-026.
+Acceptance claim ids: GATE-001, GATE-002, GATE-003, GATE-004, GATE-005, GATE-007, GATE-008, GATE-009, GATE-010, GATE-011, GATE-012, GATE-013, GATE-015, GATE-016, GATE-017, GATE-018, GATE-019, GATE-020, GATE-021, GATE-022, GATE-023, GATE-024, GATE-025, GATE-026.
 
 Summary line 1: PAR-001 defines table-driven OSS CCL-gate contract cases.
 Summary line 2: It preserves the existing per-claim capability report format.

@@ -6,6 +6,11 @@ package capabilities
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -46,5 +51,48 @@ func TestGateContractCaseInvariants(t *testing.T) {
 	}
 	if len(gateCases) != 24 {
 		t.Fatalf("gate case count = %d, want 24 active non-contiguous gates", len(gateCases))
+	}
+}
+
+// wantGateIDs is the PAR-001 v1.2 active claim set (GATE-006 retired,
+// GATE-014 unreachable on cockroach-oss).
+var wantGateIDs = []string{
+	"GATE-001", "GATE-002", "GATE-003", "GATE-004", "GATE-005", "GATE-007",
+	"GATE-008", "GATE-009", "GATE-010", "GATE-011", "GATE-012", "GATE-013",
+	"GATE-015", "GATE-016", "GATE-017", "GATE-018", "GATE-019", "GATE-020",
+	"GATE-021", "GATE-022", "GATE-023", "GATE-024", "GATE-025", "GATE-026",
+}
+
+func TestGateContractExactIDs(t *testing.T) {
+	got := gateClaimIDs()
+	if len(got) != len(wantGateIDs) {
+		t.Fatalf("gate ids = %v, want %v", got, wantGateIDs)
+	}
+	for i := range wantGateIDs {
+		if got[i] != wantGateIDs[i] {
+			t.Errorf("gate id %d = %q, want %q", i, got[i], wantGateIDs[i])
+		}
+	}
+}
+
+func TestGateContractRegistry(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "fgdb", "test", "claims.yaml"))
+	if errors.Is(err, os.ErrNotExist) {
+		// Bazel sandboxes do not stage the registry; the go test tier checks it.
+		t.Skip("claims registry not present in this sandbox; registry sync not tested")
+	}
+	if err != nil {
+		t.Fatalf("read claims registry: %v", err)
+	}
+	re := regexp.MustCompile(`(?m)^\s*-?\s*id:\s*(GATE-\d{3})\s*$`)
+	var registered []string
+	for _, m := range re.FindAllStringSubmatch(string(data), -1) {
+		registered = append(registered, m[1])
+	}
+	sort.Strings(registered)
+	want := append([]string(nil), wantGateIDs...)
+	sort.Strings(want)
+	if strings.Join(registered, ",") != strings.Join(want, ",") {
+		t.Fatalf("claims.yaml GATE ids = %v, want %v", registered, want)
 	}
 }

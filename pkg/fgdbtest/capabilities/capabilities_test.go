@@ -50,6 +50,12 @@ func TestOSSCapabilities(t *testing.T) {
 	if runErr != nil || rep.Rejected() {
 		t.Fatalf("OSS capabilities failed: %v", runErr)
 	}
+	// A green run must have executed every gate; not_tested is never a pass.
+	for _, id := range gateClaimIDs() {
+		if got := rep.Outcome(id); got != labels.Pass {
+			t.Errorf("claim %s = %s after a successful run, want pass", id, got)
+		}
+	}
 }
 
 func TestMissingBinaryDoesNotPass(t *testing.T) {
