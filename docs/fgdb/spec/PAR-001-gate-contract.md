@@ -15,20 +15,23 @@
 
 Run each case against one disposable, initialized OSS node as a table-driven case. Each case is reported separately in the existing capability report format. A case passes only when the statement reaches SQL execution and returns the stated SQLSTATE and message substring. Success, syntax/parser errors, permission errors, feature-flag errors, unrelated SQL errors, connection errors, and inability to run setup are failures, never skips or passes.
 
-The common statement-gate output is SQLSTATE `XXC01` and message substring `a CCL binary is required to use this statement type:` **[oss-src]**. The concrete statement type may follow the colon; matching must require the common prefix and the case-specific type where the table specifies one. Exact message text remains an acceptance assertion for the runtime run; no oracle run was available in this job.
+The common statement-gate output is SQLSTATE `XXC01` and message substring `a CCL binary is required to use this statement type:` **[oss-src]**. The concrete statement type may follow the colon; matching must require the common prefix and the case-specific type where the table specifies one. Exact message text is a runtime acceptance assertion. As of v1.3, all 24 active rows have been observed with the exact SQLSTATE, prefix and concrete type in a black-box run of the released Apache-2.0 OSS v23.2.15 binary. Confirmation by a stock-binary validation run is still outstanding.
 
 `PAR-001` has no assigned PAR-0xx flag-off parity item in the consulted FGDb context. Therefore every row below is `stable / no known PAR-0xx flip`; if a later PAR-0xx changes a row, it must update that row and add a paired on/off claim.
 
-## Maintainer notes (v1.2, 2026-10-22)
+## Maintainer notes (v1.3, 2026-10-22)
+
+- v1.3: the GATE-005/007/008/009/011 forms corrected in v1.2, and every other active row, returned the expected `XXC01` result with the specified concrete type when run against the released OSS v23.2.15 binary (one disposable local node, no job, file or network side effect observed). Rows previously marked `oracle-pending` are now `runtime-observed`. The claims stay `partial` until a stock-binary validation run confirms them.
+- The concrete `*tree.<Type>` suffixes are kept on purpose. They are part of the error text the server returns over the wire, so they are the observable contract, not an implementation detail of this test.
 
 - Gate ids renumbered to a contiguous GATE-001..GATE-026 sequence (v1 had duplicates).
 - GATE-006 (`IMPORT TABLE ... CREATE USING`) is retired: that form is not in the v23.2 OSS grammar. Its id is not reused; `IMPORT TABLE ... FROM <format> ...` remains an OSS import path, not a CCL gate.
-- GATE-011 (virtual-cluster replication syntax) was oracle-pending in v1.1; v1.2 uses the OSS grammar's required `ON <location>` clause and remains `oracle-pending` for the black-box CCL result.
+- GATE-011 (virtual-cluster replication syntax) was oracle-pending in v1.1; v1.2 uses the OSS grammar's required `ON <location>` clause and is `runtime-observed` as of v1.3.
 - Exact message text for every row must be confirmed by a black-box validation run of the stock binary or by the pinned `cockroach-oss` run in CI before the claims leave `partial`.
 
 ## v1.2 changes
 
-- Corrected GATE-005, GATE-007, GATE-008, GATE-009, and GATE-011 to forms accepted by the checked-out v23.2 OSS grammar; corrected rows are marked `oss-src (grammar), oracle-pending`.
+- Corrected GATE-005, GATE-007, GATE-008, GATE-009, and GATE-011 to forms accepted by the checked-out v23.2 OSS grammar; corrected rows were marked `oss-src (grammar), oracle-pending` (now `runtime-observed`, see v1.3).
 - Retired GATE-006 as `retired: not in v23.2 grammar`; its id is not reused.
 - Moved GATE-014 out of the claim set as `unreachable on cockroach-oss` because `defaultdb` is not multi-region and the required setup is itself gated.
 - Added the observed v23.2.15 black-box failures as parser/setup evidence while retaining `XXC01` as the pending statement-gate assertion for corrected forms.
@@ -100,7 +103,7 @@ These are OSS-source checks that call the enterprise-enable hook. They are not G
 
 Each GATE claim must be a distinct table entry and report row; PARITY rows are not GATE claims. The runtime helper must retain the existing `pgx` structured-error checks: require a PostgreSQL error, exact SQLSTATE `XXC01` for gate rows, and the required message substring. The helper must fail closed on nil error, syntax error, permission error, transport/connection error, or any other SQLSTATE. Setup and cleanup failures fail the suite and leave later claims `not_tested`; they do not become passing claims.
 
-## Open questions / oracle-pending
+## Open questions / pending stock-binary validation
 
 - Confirm every trigger's parser acceptance and the exact concrete statement type in a black-box validation run of the stock OSS binary.
 - Confirm the exact SQLSTATE for LIC-001 and LIC-002; the OSS source establishes the message but not the wire wrapping at the call site.
@@ -124,10 +127,10 @@ Summary line 10: License checks are separated and marked oracle-pending.
 
 | Gate | Corrected minimal trigger | Status / provenance |
 | --- | --- | --- |
-| GATE-005 | `ALTER CHANGEFEED 1 SET min_checkpoint_frequency = '1s'` | corrected; `oss-src (grammar), oracle-pending` |
+| GATE-005 | `ALTER CHANGEFEED 1 SET min_checkpoint_frequency = '1s'` | corrected; `oss-src (grammar), runtime-observed` |
 | GATE-006 | `IMPORT TABLE t CREATE USING 'nodelocal://1/par001/schema.sql'` | `retired: not in v23.2 grammar`; id not reused |
-| GATE-007 | `ALTER BACKUP 'nodelocal://1/par001' ADD NEW_KMS = 'kms://local/new' WITH OLD_KMS = 'kms://local/old'` | corrected; `oss-src (grammar), oracle-pending` |
-| GATE-008 | `CREATE SCHEDULE FOR CHANGEFEED TABLE defaultdb.public.par001 INTO 'nodelocal://1/par001' RECURRING '@hourly'` | corrected; `oss-src (grammar), oracle-pending` |
-| GATE-009 | `CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'` | corrected; `oss-src (grammar), oracle-pending` |
-| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'` | corrected; `oss-src (grammar), oracle-pending` |
+| GATE-007 | `ALTER BACKUP 'nodelocal://1/par001' ADD NEW_KMS = 'kms://local/new' WITH OLD_KMS = 'kms://local/old'` | corrected; `oss-src (grammar), runtime-observed` |
+| GATE-008 | `CREATE SCHEDULE FOR CHANGEFEED TABLE defaultdb.public.par001 INTO 'nodelocal://1/par001' RECURRING '@hourly'` | corrected; `oss-src (grammar), runtime-observed` |
+| GATE-009 | `CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'` | corrected; `oss-src (grammar), runtime-observed` |
+| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'` | corrected; `oss-src (grammar), runtime-observed` |
 | GATE-014 | `ALTER DATABASE defaultdb ADD REGION 'us-east1'` | `unreachable on cockroach-oss`; non-claim note, id not reused |
