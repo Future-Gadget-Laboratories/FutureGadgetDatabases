@@ -6,7 +6,7 @@
 | Field | Value |
 | --- | --- |
 | Spec id | PAR-001 |
-| Version | v1.2 |
+| Version | v1.3 |
 | Date | 2026-10-22 |
 | Role | spec writer (cleanroom spec role; see docs/fgdb/CLEANROOM.md) |
 | Sources consulted | `docs/fgdb/*.md`; `pkg/fgdbtest/capabilities`; OSS v23.2.15 SQL tree, parser, statement planner, builtin registrations, license checks, and OSS logic-test expectations |
@@ -21,17 +21,17 @@ The common statement-gate output is SQLSTATE `XXC01` and message substring `a CC
 
 ## Maintainer notes (v1.3, 2026-10-22)
 
-- v1.3: the GATE-005/007/008/009/011 forms corrected in v1.2, and every other active row, returned the expected `XXC01` result with the specified concrete type when run against the released OSS v23.2.15 binary (one disposable local node, no job, file or network side effect observed). Rows previously marked `oracle-pending` are now `runtime-observed`. The claims stay `partial` until a stock-binary validation run confirms them.
+- v1.3: the GATE-005/007/008/009/011 forms corrected in v1.2, and every other active row, returned the expected `XXC01` result with the specified concrete type when run against the released OSS v23.2.15 binary (one disposable local node, no job, file or network side effect observed). Those rows are now marked `runtime-observed`. The claims stay `partial` until a stock-binary validation run confirms them.
 - The concrete `*tree.<Type>` suffixes are kept on purpose. They are part of the error text the server returns over the wire, so they are the observable contract, not an implementation detail of this test.
 
 - Gate ids renumbered to a contiguous GATE-001..GATE-026 sequence (v1 had duplicates).
 - GATE-006 (`IMPORT TABLE ... CREATE USING`) is retired: that form is not in the v23.2 OSS grammar. Its id is not reused; `IMPORT TABLE ... FROM <format> ...` remains an OSS import path, not a CCL gate.
-- GATE-011 (virtual-cluster replication syntax) was oracle-pending in v1.1; v1.2 uses the OSS grammar's required `ON <location>` clause and is `runtime-observed` as of v1.3.
+- GATE-011 (virtual-cluster replication syntax) awaited black-box confirmation in v1.1; v1.2 uses the OSS grammar's required `ON <location>` clause and is `runtime-observed` as of v1.3.
 - Exact message text for every row must be confirmed by a black-box validation run of the stock binary or by the pinned `cockroach-oss` run in CI before the claims leave `partial`.
 
 ## v1.2 changes
 
-- Corrected GATE-005, GATE-007, GATE-008, GATE-009, and GATE-011 to forms accepted by the checked-out v23.2 OSS grammar; corrected rows were marked `oss-src (grammar), oracle-pending` (now `runtime-observed`, see v1.3).
+- Corrected GATE-005, GATE-007, GATE-008, GATE-009, and GATE-011 to forms accepted by the checked-out v23.2 OSS grammar; corrected rows are `runtime-observed` as of v1.3.
 - Retired GATE-006 as `retired: not in v23.2 grammar`; its id is not reused.
 - Moved GATE-014 out of the claim set as `unreachable on cockroach-oss` because `defaultdb` is not multi-region and the required setup is itself gated.
 - Added the observed v23.2.15 black-box failures as parser/setup evidence while retaining `XXC01` as the pending statement-gate assertion for corrected forms.
@@ -46,14 +46,14 @@ The following are parsed CCL-only statement families. The SQL is intentionally m
 | GATE-002 | `RESTORE DATABASE defaultdb FROM 'nodelocal://1/par001'` | none | `XXC01` **[oss-src]** | `a CCL binary is required to use this statement type: *tree.Restore` **[oss-src]** | none known |
 | GATE-003 | `SHOW BACKUP FROM LATEST IN 'nodelocal://1/par001'` | none | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.ShowBackup` **[oss-src]** | none known |
 | GATE-004 | `CREATE CHANGEFEED FOR TABLE defaultdb.public.par001` | `CREATE TABLE par001 (id INT PRIMARY KEY)` | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.CreateChangefeed` **[oss-src]** | none known |
-| GATE-005 | `ALTER CHANGEFEED 1 SET min_checkpoint_frequency = '1s'` | none; job lookup must not be required for the gate | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.AlterChangefeed` **[oss-src]**; provenance: `oss-src (grammar), oracle-pending` | none known |
-| GATE-007 | `ALTER BACKUP 'nodelocal://1/par001' ADD NEW_KMS = 'kms://local/new' WITH OLD_KMS = 'kms://local/old'` | none; no file or KMS access should be required | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.AlterBackup` **[oss-src]**; provenance: `oss-src (grammar), oracle-pending` | none known |
-| GATE-008 | `CREATE SCHEDULE FOR CHANGEFEED TABLE defaultdb.public.par001 INTO 'nodelocal://1/par001' RECURRING '@hourly'` | `CREATE TABLE par001 (id INT PRIMARY KEY)` | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.ScheduledChangefeed` **[oss-src]**; provenance: `oss-src (grammar), oracle-pending` | none known |
+| GATE-005 | `ALTER CHANGEFEED 1 SET min_checkpoint_frequency = '1s'` | none; job lookup must not be required for the gate | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.AlterChangefeed` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
+| GATE-007 | `ALTER BACKUP 'nodelocal://1/par001' ADD NEW_KMS = 'kms://local/new' WITH OLD_KMS = 'kms://local/old'` | none; no file or KMS access should be required | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.AlterBackup` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
+| GATE-008 | `CREATE SCHEDULE FOR CHANGEFEED TABLE defaultdb.public.par001 INTO 'nodelocal://1/par001' RECURRING '@hourly'` | `CREATE TABLE par001 (id INT PRIMARY KEY)` | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.ScheduledChangefeed` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
 | PARITY-001 | `EXPORT INTO CSV 'nodelocal://1/par001/out' FROM SELECT 1` | none | success is **not** a gate: OSS CSV EXPORT is implemented **[oss-src]** | not applicable; a successful CSV export is required parity evidence **[oss-src]** | none known |
 | PARITY-002 | `EXPORT INTO PARQUET 'nodelocal://1/par001/out' FROM SELECT 1` | none | success is **not** a gate: OSS Parquet export processor is registered **[oss-src]** | not applicable; a successful Parquet export or a non-CCL data/format error is not gate evidence **[oss-src]** | none known |
-| GATE-009 | `CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'` | none | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.ScheduledBackup` **[oss-src]**; provenance: `oss-src (grammar), oracle-pending` | none known |
+| GATE-009 | `CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'` | none | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.ScheduledBackup` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
 | GATE-010 | `ALTER BACKUP SCHEDULE 1 SET INTO 'nodelocal://1/par001'` | none; schedule lookup must not be required for the gate | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.AlterBackupSchedule` **[oss-src]** | none known |
-| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'` | none; no remote connection may be attempted | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.CreateTenantFromReplication` **[oss-src]**; provenance: `oss-src (grammar), oracle-pending` | none known |
+| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'` | none; no remote connection may be attempted | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.CreateTenantFromReplication` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
 
 The `IMPORT INTO` path used by `OSS-002` is deliberately excluded from GATE-006: its CSV reader is an OSS implementation. Likewise, supported CSV and Parquet `EXPORT` are not missing-feature gates. An unsupported option or disabled feature must be reported as its own non-gate negative case, not relabeled `XXC01`.
 
@@ -121,7 +121,7 @@ Summary line 6: PL/pgSQL and generic-plan settings have specific messages.
 Summary line 7: Four pgcrypto encryption builtins are covered.
 Summary line 8: Two AS OF SYSTEM TIME builtins are covered.
 Summary line 9: OSS CSV and Parquet paths are explicitly non-gates.
-Summary line 10: License checks are separated and marked oracle-pending.
+Summary line 10: License checks are separated; they await stock-binary validation.
 
 ## Corrected rows (v1.2)
 

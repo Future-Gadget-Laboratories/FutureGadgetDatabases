@@ -106,8 +106,29 @@ func classifyGateError(err error, statement, wantState, wantMessage string) erro
 	if !errors.As(err, &pgErr) {
 		return fmt.Errorf("%s did not return a PostgreSQL error: %w", statement, err)
 	}
-	if pgErr.Code != wantState || !strings.Contains(pgErr.Message, wantMessage) {
+	if pgErr.Code != wantState || !containsToken(pgErr.Message, wantMessage) {
 		return fmt.Errorf("%s SQLSTATE=%s message=%q; want %s and message containing %q", statement, pgErr.Code, pgErr.Message, wantState, wantMessage)
 	}
 	return nil
+}
+
+// containsToken reports whether want occurs in msg and is not immediately
+// followed by an identifier character, so "*tree.Backup" does not match
+// "*tree.BackupSchedule".
+func containsToken(msg, want string) bool {
+	for from := 0; ; {
+		i := strings.Index(msg[from:], want)
+		if i < 0 {
+			return false
+		}
+		end := from + i + len(want)
+		if end == len(msg) || !isIdentByte(msg[end]) {
+			return true
+		}
+		from += i + 1
+	}
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }

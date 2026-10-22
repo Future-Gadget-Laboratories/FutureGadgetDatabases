@@ -141,9 +141,9 @@ func cleanup(c *cluster.Cluster, dir string, rep *report.Report) error {
 	if c != nil {
 		err = errors.Join(c.Stop(ctx), c.Reap())
 	}
-	if err == nil {
-		err = os.RemoveAll(dir)
-	}
+	// Always try to remove the temporary stores, even after a stop error, and
+	// report both failures.
+	err = errors.Join(err, os.RemoveAll(dir))
 	if err != nil {
 		err = fmt.Errorf("OSS capabilities cleanup; work directory %s: %w", dir, err)
 	}

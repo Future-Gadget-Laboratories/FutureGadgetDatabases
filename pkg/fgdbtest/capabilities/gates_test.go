@@ -96,3 +96,18 @@ func TestGateContractRegistry(t *testing.T) {
 		t.Fatalf("claims.yaml GATE ids = %v, want %v", registered, want)
 	}
 }
+
+func TestGateContractTypeBoundary(t *testing.T) {
+	want := cclMessage + " *tree.Backup"
+	for msg, ok := range map[string]bool{
+		cclMessage + " *tree.Backup":         true,
+		cclMessage + " *tree.Backup (hint)":  true,
+		cclMessage + " *tree.BackupSchedule": false,
+		cclMessage + " *tree.Backup_x":       false,
+		cclMessage + " *tree.Restore":        false,
+	} {
+		if got := containsToken(msg, want); got != ok {
+			t.Errorf("containsToken(%q) = %v, want %v", msg, got, ok)
+		}
+	}
+}
