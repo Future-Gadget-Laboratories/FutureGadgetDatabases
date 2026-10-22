@@ -155,3 +155,45 @@
     - pkg/fgdbtest/capabilities:TestRequireCCLError
   tier: interim
   status: partial
+- id: OSS-004
+  claim: The runtime capability slice observes row-level TTL deleting an expired row.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-005
+  claim: The runtime capability slice verifies GEOS area through the beside-binary lib directory.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLib
+  tier: interim
+  status: partial
+- id: OSS-006
+  claim: The runtime capability slice verifies READ COMMITTED across two SQL connections.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-007
+  claim: The runtime capability slice verifies PostgreSQL-wire COPY FROM and COPY TO.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-008
+  claim: The runtime capability slice verifies accepted OSS IMPORT formats and PARQUET rejection.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestImportFixtureHandler
+  tier: interim
+  status: partial

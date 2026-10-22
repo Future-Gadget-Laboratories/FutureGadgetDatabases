@@ -4,6 +4,7 @@ go_library(
     name = "capabilities",
     testonly = True,
     srcs = [
+        "guards.go",
         "run.go",
         "sql.go",
     ],
@@ -15,12 +16,16 @@ go_library(
         "//pkg/fgdbtest/report",
         "@com_github_jackc_pgx_v5//:pgx",
         "@com_github_jackc_pgx_v5//pgconn",
+        "@com_github_linkedin_goavro_v2//:goavro",
     ],
 )
 
 go_test(
     name = "capabilities_test",
-    srcs = ["capabilities_test.go"],
+    srcs = [
+        "capabilities_test.go",
+        "guards_test.go",
+    ],
     embed = [":capabilities"],
     deps = [
         "//pkg/fgdbtest/labels",

@@ -19,11 +19,16 @@ import (
 )
 
 const (
-	ClaimVersion = "OSS-001"
-	ClaimImport  = "OSS-002"
-	ClaimBackup  = "OSS-003"
-	stepSetup    = "OSS-SETUP"
-	suiteTimeout = 10 * time.Minute
+	ClaimVersion      = "OSS-001"
+	ClaimImport       = "OSS-002"
+	ClaimBackup       = "OSS-003"
+	ClaimTTL          = "OSS-004"
+	ClaimGEOS         = "OSS-005"
+	ClaimRC           = "OSS-006"
+	ClaimCopy         = "OSS-007"
+	ClaimImportMatrix = "OSS-008"
+	stepSetup         = "OSS-SETUP"
+	suiteTimeout      = 10 * time.Minute
 )
 
 // Config supplies the binary and a parent for disposable stores.
@@ -56,7 +61,7 @@ func Run(ctx context.Context, cfg Config) (*report.Report, error) {
 
 func newReport(meta report.Meta) *report.Report {
 	rep := report.New(meta)
-	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup} {
+	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup, ClaimTTL, ClaimGEOS, ClaimRC, ClaimCopy, ClaimImportMatrix} {
 		rep.Set(id, labels.NotTested, "capability check did not run")
 	}
 	return rep
@@ -98,7 +103,8 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	note(rep, ClaimImport, ClaimImport, importErr)
 	backupErr := rejectBackup(ctx, conn)
 	note(rep, ClaimBackup, ClaimBackup, backupErr)
-	return rep, errors.Join(importErr, backupErr)
+	guardErr := runGuards(ctx, cfg, conn, c, rep)
+	return rep, errors.Join(importErr, backupErr, guardErr)
 }
 
 func connect(ctx context.Context, c *cluster.Cluster) (*pgx.Conn, error) {
