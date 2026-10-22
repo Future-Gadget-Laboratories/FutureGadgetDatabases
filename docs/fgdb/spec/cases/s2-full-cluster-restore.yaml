@@ -1,0 +1,60 @@
+# FGL documentation case data. Apache-2.0. Draft; not executed.
+schema_version: 1
+id: s2-full-cluster-restore
+slice: S2
+description: Restore a full cluster to an isolated empty target
+fixtures:
+  source: fresh isolated cluster, SQL user root
+  target: fresh isolated cluster with no user-created objects; shared case storage
+variables:
+  collection: nodelocal://1/par031/s2-full-cluster-restore
+setup:
+- 'on': source
+  sql: CREATE DATABASE par031_src
+- 'on': source
+  sql: CREATE TABLE par031_src.public.t (id INT PRIMARY KEY, v STRING, INDEX (v))
+- 'on': source
+  sql: INSERT INTO par031_src.public.t VALUES (1, 'one'), (2, NULL), (3, '')
+- 'on': source
+  sql: BACKUP INTO '${collection}'
+statement:
+  'on': target
+  sql: RESTORE FROM LATEST IN '${collection}'
+expect:
+  result:
+    columns:
+    - job_id
+    - status
+    - fraction_completed
+    - rows
+    - index_entries
+    - bytes
+    rows: null
+    row_match: pending
+    capture:
+      job_id: operation_job_id
+  masks:
+  - field: job_id
+    kind: job_id
+  - field: bytes
+    kind: size
+post:
+- 'on': target
+  sql: SELECT count(*) AS n FROM par031_src.public.t
+  expect:
+    result:
+      columns:
+      - n
+      rows:
+      - n: 3
+      row_match: exact
+oracle:
+  stock_version: v23.2.15
+  doc_urls:
+  - https://www.cockroachlabs.com/docs/v23.2/restore
+  verification: unverified
+  recorded_at: null
+  license_key_state: not_checked
+  evidence_note: UNVERIFIED — needs black-box run
+  pending_fields:
+  - Runtime results and SQL result types have not been recorded.

@@ -1,0 +1,69 @@
+# FGL documentation case data. Apache-2.0. Draft; not executed.
+schema_version: 1
+id: s1-full-cluster
+slice: S1
+description: Full cluster backup; retain source rows and expose a collection
+fixtures:
+  source: fresh isolated cluster, SQL user root
+variables:
+  collection: nodelocal://1/par031/s1-full-cluster
+setup:
+- 'on': source
+  sql: CREATE DATABASE par031_src
+- 'on': source
+  sql: CREATE TABLE par031_src.public.t (id INT PRIMARY KEY, v STRING, INDEX (v))
+- 'on': source
+  sql: INSERT INTO par031_src.public.t VALUES (1, 'one'), (2, NULL), (3, '')
+statement:
+  'on': source
+  sql: BACKUP INTO '${collection}'
+expect:
+  result:
+    columns:
+    - job_id
+    - status
+    - fraction_completed
+    - rows
+    - index_entries
+    - bytes
+    rows: null
+    row_match: pending
+    capture:
+      job_id: operation_job_id
+  masks:
+  - field: job_id
+    kind: job_id
+  - field: bytes
+    kind: size
+post:
+- 'on': source
+  sql: SELECT count(*) AS n FROM par031_src.public.t
+  expect:
+    result:
+      columns:
+      - n
+      rows:
+      - n: 3
+      row_match: exact
+- 'on': source
+  sql: SHOW BACKUPS IN '${collection}'
+  expect:
+    result:
+      columns:
+      - path
+      rows:
+      - path: <path>
+      row_match: exact
+    masks:
+    - field: path
+      kind: path
+oracle:
+  stock_version: v23.2.15
+  doc_urls:
+  - https://www.cockroachlabs.com/docs/v23.2/backup
+  verification: unverified
+  recorded_at: null
+  license_key_state: not_checked
+  evidence_note: UNVERIFIED — needs black-box run
+  pending_fields:
+  - Runtime results and SQL result types have not been recorded.
