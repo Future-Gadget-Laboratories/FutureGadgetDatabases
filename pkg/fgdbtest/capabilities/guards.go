@@ -148,7 +148,7 @@ func guardGEOS(ctx context.Context, conn *pgx.Conn, lib string) error {
 	if err := conn.QueryRow(queryCtx, `SELECT ST_Area(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'))`).Scan(&area); err != nil {
 		return fmt.Errorf("GEOS query using %s: %w", lib, err)
 	}
-	if math.Abs(area-1) > 1e-9 {
+	if math.IsNaN(area) || math.IsInf(area, 0) || math.Abs(area-1) > 1e-9 {
 		return fmt.Errorf("GEOS area=%v, want 1", area)
 	}
 	return nil
@@ -560,7 +560,9 @@ func importJobDone(jobID int64, status, errText string) (bool, error) {
 	switch status {
 	case "succeeded":
 		return true, nil
-	case "failed", "canceled", "reverting", "revert-failed":
+	// reverting is still active (rollback in progress); keep polling so cleanup
+	// never drops the target table under a running revert.
+	case "failed", "canceled", "revert-failed":
 		return true, fmt.Errorf("job %d %s: %s", jobID, status, errText)
 	default:
 		return false, nil

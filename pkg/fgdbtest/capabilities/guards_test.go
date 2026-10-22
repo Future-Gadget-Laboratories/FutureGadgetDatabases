@@ -132,7 +132,9 @@ func TestImportJobDone(t *testing.T) {
 		{"succeeded", true, true},
 		{"failed", true, false},
 		{"canceled", true, false},
-		{"reverting", true, false},
+		{"revert-failed", true, false},
+		{"reverting", false, false},
+		{"cancel-requested", false, false},
 		{"running", false, false},
 		{"pending", false, false},
 	} {
