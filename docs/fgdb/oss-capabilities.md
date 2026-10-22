@@ -33,6 +33,10 @@ The manual self-hosted compile runs this target after its existing OSS build and
 
 The HTTP fixture serves a fixed in-memory CSV, supports HEAD and ranges through Go's standard HTTP handler, and listens on loopback. It accepts no external URL or file path. SQL values are read through pgx, including structured PostgreSQL errors.
 
+## PAR-001 CCL gate contract
+
+The runtime slice also records the 24 active PAR-001 gates as separate claims: GATE-001..GATE-005, GATE-007..GATE-013, and GATE-015..GATE-026. These table-driven cases exercise the approved statement, hook, and builtin CCL gates and require SQLSTATE `XXC01` plus the spec's message substring. Setup, transport, parser, permission, and other mismatches fail closed; a setup failure leaves later gate claims `not_tested`. The corrected replication form remains oracle-pending. Retired grammar and unreachable OSS rows are excluded from the claim set. CSV and Parquet export parity rows are not gate claims; PARITY-001 is deferred in this slice.
+
 ## Run it
 
 Cluster-free helper/unit checks:

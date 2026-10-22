@@ -56,7 +56,9 @@ func Run(ctx context.Context, cfg Config) (*report.Report, error) {
 
 func newReport(meta report.Meta) *report.Report {
 	rep := report.New(meta)
-	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup} {
+	ids := []string{ClaimVersion, ClaimImport, ClaimBackup}
+	ids = append(ids, gateClaimIDs()...)
+	for _, id := range ids {
 		rep.Set(id, labels.NotTested, "capability check did not run")
 	}
 	return rep
@@ -98,7 +100,8 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	note(rep, ClaimImport, ClaimImport, importErr)
 	backupErr := rejectBackup(ctx, conn)
 	note(rep, ClaimBackup, ClaimBackup, backupErr)
-	return rep, errors.Join(importErr, backupErr)
+	gateErr := runGateContract(ctx, conn, rep)
+	return rep, errors.Join(importErr, backupErr, gateErr)
 }
 
 func connect(ctx context.Context, c *cluster.Cluster) (*pgx.Conn, error) {
