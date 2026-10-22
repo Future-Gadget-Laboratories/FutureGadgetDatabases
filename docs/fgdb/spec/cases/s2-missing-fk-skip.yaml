@@ -1,0 +1,79 @@
+# FGL documentation case data. Apache-2.0. Draft; not executed.
+schema_version: 1
+id: s2-missing-fk-skip
+slice: S2
+description: Missing referenced table with skip option
+fixtures:
+  source: fresh isolated cluster, SQL user root
+variables:
+  collection: nodelocal://1/par031/s2-missing-fk-skip
+setup:
+- 'on': source
+  sql: CREATE DATABASE par031_src
+- 'on': source
+  sql: CREATE TABLE par031_src.public.parent (id INT PRIMARY KEY)
+- 'on': source
+  sql: CREATE TABLE par031_src.public.child (id INT PRIMARY KEY, parent_id INT REFERENCES par031_src.public.parent(id))
+- 'on': source
+  sql: INSERT INTO par031_src.public.parent VALUES (1)
+- 'on': source
+  sql: INSERT INTO par031_src.public.child VALUES (10, 1)
+- 'on': source
+  sql: BACKUP TABLE par031_src.public.child INTO '${collection}'
+- 'on': source
+  sql: CREATE DATABASE par031_dst
+statement:
+  'on': source
+  sql: RESTORE TABLE par031_src.public.child FROM LATEST IN '${collection}' WITH into_db = 'par031_dst',
+    skip_missing_foreign_keys
+expect:
+  result:
+    columns:
+    - job_id
+    - status
+    - fraction_completed
+    - rows
+    - index_entries
+    - bytes
+    values:
+      status: succeeded
+      fraction_completed: 1
+    rows: null
+    row_match: pending
+    capture:
+      job_id: operation_job_id
+  masks:
+  - field: job_id
+    kind: job_id
+  - field: bytes
+    kind: size
+post:
+- 'on': source
+  sql: SELECT id, parent_id FROM par031_dst.public.child
+  expect:
+    result:
+      columns:
+      - id
+      - parent_id
+      rows:
+      - id: 10
+        parent_id: 1
+      row_match: exact
+- 'on': source
+  sql: SHOW CONSTRAINTS FROM par031_dst.public.child
+  expect:
+    result:
+      columns: null
+      rows: null
+      row_match: pending
+  pending: Assert primary key retained and missing foreign key absent after recording result columns.
+oracle:
+  stock_version: v23.2.15
+  doc_urls:
+  - https://www.cockroachlabs.com/docs/v23.2/restore
+  verification: unverified
+  recorded_at: null
+  license_key_state: not_checked
+  evidence_note: UNVERIFIED — needs black-box run
+  pending_fields:
+  - Runtime results and SQL result types have not been recorded.
