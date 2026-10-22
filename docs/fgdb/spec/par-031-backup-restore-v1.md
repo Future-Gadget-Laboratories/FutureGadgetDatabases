@@ -6,7 +6,7 @@
 | Record | Value |
 | --- | --- |
 | Status | **Draft v1** — unsealed; not an implementation handoff |
-| Item | PAR-031, night build 1; S1–S3 (S3 also informs PAR-035) |
+| Item | PAR-031; S1–S3 (S3 also informs PAR-035) |
 | Date | 2026-10-21 |
 | Spec writer | FGL spec team (agent-drafted); no implementation role for this feature |
 | Skill bundles used | database-fgdb@1.0.1; impl-documentation |
