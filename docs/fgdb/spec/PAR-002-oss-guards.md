@@ -29,7 +29,9 @@ The harness should first create the default database and verify SQL readiness,
 then execute the claim's setup SQL. Use fresh table names or drop each table at
 cleanup. All polling uses a monotonic deadline and a bounded query context.
 
-## Maintainer notes (v1.2, 2026-10-22)
+## Maintainer notes (v1.3, 2026-10-22)
+
+- v1.3: OSS-005 fails closed when libraries are missing, and it must prove the libraries beside the binary were the ones loaded. OSS-008 imports run as detached jobs and are polled until they reach a terminal status. Every setup statement has a bounded time limit.
 
 - OSS-008: `MYSQLDUMP` and `PGDUMP` need the `IMPORT TABLE`/bundle form, which PAR-001 GATE-006 lists as possibly gated. They are **oracle-pending**: implement `CSV`, `DELIMITED`, `PGCOPY` and `AVRO` through `IMPORT INTO` as required cases. Report the dump formats as `not_tested` with a reason until oracle evidence decides them. The PARQUET rejection case stays required.
 - Erratum (v1.2): OSS-007 COPY TO must use the query form `COPY (SELECT id, v FROM copy_guard ORDER BY id) TO STDOUT`. A black-box run showed that `COPY copy_guard ORDER BY id TO STDOUT` is a syntax error (42601).
@@ -57,7 +59,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 | Setup SQL | `SELECT ST_Area(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));` |
 | Expected observable result | One row with one numeric value equal to `1`. **[oss-src]** |
 | Timing | The query must complete within 10 seconds after SQL readiness. |
-| Must not count as pass | A missing-library startup skip, a test marked “not applicable,” a fallback that does not use the beside-binary `lib/`, a NULL/error result, or a result accepted only by rounding an incorrect area. Missing or unloadable libraries are reported `not_tested`, never `pass`; the claim then fails the required runtime tier. |
+| Must not count as pass | A missing-library startup skip, a test marked “not applicable,” a fallback that does not use the beside-binary `lib/`, a NULL/error result, or a result accepted only by rounding an incorrect area. Missing or unloadable libraries make the claim `fail` (v1.3), never `not_tested` or `pass`. The guard must also show that each node process mapped `libgeos_c.so` from the beside-binary `lib/` (for example through the process memory map). A correct area alone does not prove where the library came from. |
 
 ### OSS-006 — READ COMMITTED works when enabled
 
@@ -87,7 +89,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 | Setup SQL | For row formats: `CREATE TABLE import_guard (id INT PRIMARY KEY, v STRING NOT NULL);` For dump formats, provide a minimal valid dump whose table/data correspond to `import_guard`, or use the format's `IMPORT INTO` form where accepted. |
 | Expected observable result — accepted formats | `CSV`, `DELIMITED`, `PGCOPY`, `MYSQLDUMP`, `PGDUMP`, and `AVRO` are recognized OSS formats. With a valid fixture and format-specific required options, the statement succeeds and a query of the imported target returns exactly `(1, 'alpha')`, `(2, 'beta')`, with count `2`. **[oss-src]** |
 | Expected observable result — rejected format | `IMPORT INTO import_guard PARQUET DATA ('nodelocal://1/par002/unused')` fails with SQLSTATE `0A000` and message containing `unsupported import format: "PARQUET"`. **[oss-src]** |
-| Timing | Each accepted-format import has a 60-second deadline; each rejected-format assertion has a 10-second deadline. Poll job completion where IMPORT is asynchronous, then verify rows. |
+| Timing | Each accepted-format import runs as a detached job, polled until it reaches a terminal status, with a 120-second deadline (v1.3); each rejected-format assertion has a 10-second deadline. Poll job completion where IMPORT is asynchronous, then verify rows. |
 | Must not count as pass | Parser success without successful load, an empty target, extra/incorrect rows, a fixture served from a non-loopback source, treating a malformed fixture as evidence that the format is rejected, or accepting a format because the server skipped the import. A format is `not_tested` if its valid fixture is unavailable. |
 
 The matrix is about SQL format recognition and successful loading, not every
@@ -131,7 +133,7 @@ Acceptance claim ids:
 3. TTL polling uses one-second job adoption and a bounded deadline.
 4. OSS-005 checks a GEOS area calculation.
 5. GEOS libraries must be beside the binary under `lib/`.
-6. Missing GEOS libraries are `not_tested`, never a pass.
+6. Missing GEOS libraries, or a GEOS library loaded from anywhere other than the beside-binary `lib/`, fail OSS-005.
 7. OSS-006 enables and exercises READ COMMITTED across two connections.
 8. OSS-007 verifies both COPY FROM and COPY TO.
 9. OSS-008 covers six recognized IMPORT formats and one rejected format.

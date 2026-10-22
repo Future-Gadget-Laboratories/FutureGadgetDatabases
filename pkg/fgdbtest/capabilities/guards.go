@@ -70,6 +70,9 @@ func runGuards(ctx context.Context, cfg Config, conn *pgx.Conn, c *cluster.Clust
 		errs = append(errs, err)
 	} else {
 		err = guardGEOS(ctx, conn, lib)
+		if err == nil {
+			err = proveGEOSLoaded(c, lib)
+		}
 		note(rep, ClaimGEOS, ClaimGEOS, err)
 		if err != nil {
 			errs = append(errs, err)
@@ -104,6 +107,8 @@ func besideBinaryLib(binary string) (string, error) {
 }
 
 func readSettingText(ctx context.Context, conn *pgx.Conn, setting string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, stepTimeout)
+	defer cancel()
 	var value string
 	// SHOW ALL CLUSTER SETTINGS exposes every value as text, independent of the setting's type.
 	const query = "SELECT value FROM [SHOW ALL CLUSTER SETTINGS] WHERE variable = $1"
@@ -116,7 +121,7 @@ func readSettingText(ctx context.Context, conn *pgx.Conn, setting string) (strin
 // execEach runs each statement on its own so none shares an implicit transaction.
 func execEach(ctx context.Context, conn *pgx.Conn, statements ...string) error {
 	for _, statement := range statements {
-		if _, err := conn.Exec(ctx, statement); err != nil {
+		if _, err := stepExec(ctx, conn, statement); err != nil {
 			return fmt.Errorf("%q: %w", statement, err)
 		}
 	}
@@ -192,12 +197,12 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 	if err != nil {
 		return err
 	}
-	defer a.Close(context.Background())
+	defer closeBounded(a)
 	b, err := connect(ctx, c)
 	if err != nil {
 		return err
 	}
-	defer b.Close(context.Background())
+	defer closeBounded(b)
 	originalEnabled, readErr := readSettingText(ctx, a, "sql.txn.read_committed_isolation.enabled")
 	if readErr != nil {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
@@ -216,27 +221,31 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 	); err != nil {
 		return fmt.Errorf("READ COMMITTED setup: %w", err)
 	}
-	if _, err = a.Exec(ctx, `BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED`); err != nil {
+	if _, err = stepExec(ctx, a, `BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED`); err != nil {
 		return err
 	}
+	rcCtx, rcCancel := context.WithTimeout(ctx, rcStepTimeout)
+	defer rcCancel()
 	var first int
-	if err = a.QueryRow(ctx, `SELECT count(*) FROM rc_guard`).Scan(&first); err != nil || first != 1 {
+	if err = a.QueryRow(rcCtx, `SELECT count(*) FROM rc_guard`).Scan(&first); err != nil || first != 1 {
 		return fmt.Errorf("READ COMMITTED first count=%d: %w", first, err)
 	}
-	if _, err = b.Exec(ctx, `INSERT INTO rc_guard VALUES (2)`); err != nil {
+	if _, err = stepExec(ctx, b, `INSERT INTO rc_guard VALUES (2)`); err != nil {
 		return err
 	}
+	secondCtx, secondCancel := context.WithTimeout(ctx, rcStepTimeout)
+	defer secondCancel()
 	var second int
-	if err = a.QueryRow(ctx, `SELECT count(*) FROM rc_guard`).Scan(&second); err != nil || second != 2 {
+	if err = a.QueryRow(secondCtx, `SELECT count(*) FROM rc_guard`).Scan(&second); err != nil || second != 2 {
 		return fmt.Errorf("READ COMMITTED second count=%d: %w", second, err)
 	}
-	_, err = a.Exec(ctx, `COMMIT`)
+	_, err = stepExec(ctx, a, `COMMIT`)
 	return err
 }
 
 // OSS-007: exercise pgx's wire-protocol COPY methods in both directions.
 func guardCopy(ctx context.Context, conn *pgx.Conn) (err error) {
-	if _, err := conn.Exec(ctx, `DROP TABLE IF EXISTS copy_guard; CREATE TABLE copy_guard (id INT PRIMARY KEY, v STRING NOT NULL)`); err != nil {
+	if _, err := stepExec(ctx, conn, `DROP TABLE IF EXISTS copy_guard; CREATE TABLE copy_guard (id INT PRIMARY KEY, v STRING NOT NULL)`); err != nil {
 		return err
 	}
 	defer func() {
@@ -285,16 +294,18 @@ func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
 	}()
 	for i, f := range fixtures {
 		table := fmt.Sprintf("import_guard_%d", i)
-		if _, createErr := conn.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s (id INT PRIMARY KEY, v STRING NOT NULL)`, table)); createErr != nil {
+		if _, createErr := stepExec(ctx, conn, fmt.Sprintf(`CREATE TABLE %s (id INT PRIMARY KEY, v STRING NOT NULL)`, table)); createErr != nil {
 			errs = append(errs, fmt.Errorf("IMPORT %s create target: %w", f.format, createErr))
 			continue
 		}
 		stmt := fmt.Sprintf(`IMPORT INTO %s %s DATA ('%s%s')`, table, f.format, srv.URL, f.path)
 		if f.format == "DELIMITED" {
-			stmt += ` WITH fields_terminated_by = e'\t'`
+			stmt += ` WITH fields_terminated_by = e'\t', detached`
+		} else {
+			stmt += ` WITH detached`
 		}
-		importCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		_, importErr := conn.Exec(importCtx, stmt)
+		importCtx, cancel := context.WithTimeout(ctx, importBudget)
+		importErr := runImportJob(importCtx, conn, stmt)
 		if importErr != nil {
 			cancel()
 			errs = append(errs, fmt.Errorf("IMPORT %s: %w", f.format, importErr))
@@ -311,7 +322,7 @@ func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
 			errs = append(errs, fmt.Errorf("IMPORT %s cleanup: %w", f.format, dropErr))
 		}
 	}
-	if _, createErr := conn.Exec(ctx, `CREATE TABLE import_guard (id INT PRIMARY KEY, v STRING NOT NULL)`); createErr != nil {
+	if _, createErr := stepExec(ctx, conn, `CREATE TABLE import_guard (id INT PRIMARY KEY, v STRING NOT NULL)`); createErr != nil {
 		errs = append(errs, fmt.Errorf("IMPORT PARQUET create target: %w", createErr))
 		return errors.Join(errs...)
 	}
@@ -414,4 +425,118 @@ func cleanupExec(conn *pgx.Conn, stmt string) (pgconn.CommandTag, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	return conn.Exec(ctx, stmt)
+}
+
+// proveGEOSLoaded fails unless every node process has mapped libgeos_c.so from
+// the beside-binary lib directory. An ST_Area result alone could come from a
+// system GEOS, so a correct result is not enough to prove where it came from.
+func proveGEOSLoaded(c *cluster.Cluster, lib string) error {
+	want, err := filepath.EvalSymlinks(filepath.Join(lib, "libgeos_c.so"))
+	if err != nil {
+		return fmt.Errorf("resolve beside-binary libgeos_c.so: %w", err)
+	}
+	nodes := c.Nodes()
+	if len(nodes) == 0 {
+		return errors.New("GEOS load proof: no nodes")
+	}
+	for _, n := range nodes {
+		raw, err := os.ReadFile(n.PidFile)
+		if err != nil {
+			return fmt.Errorf("GEOS load proof: node %d pid file: %w", n.Index+1, err)
+		}
+		pid := strings.TrimSpace(string(raw))
+		maps, err := os.ReadFile(filepath.Join("/proc", pid, "maps"))
+		if err != nil {
+			return fmt.Errorf("GEOS load proof: node %d maps: %w", n.Index+1, err)
+		}
+		if err := mapsHasLibrary(string(maps), want); err != nil {
+			return fmt.Errorf("GEOS load proof: node %d: %w", n.Index+1, err)
+		}
+	}
+	return nil
+}
+
+// mapsHasLibrary reports whether a /proc/<pid>/maps listing maps path, and
+// names any other libgeos_c mapping it finds instead.
+func mapsHasLibrary(maps, path string) error {
+	var other []string
+	for _, line := range strings.Split(maps, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		mapped := strings.Join(fields[5:], " ")
+		if mapped == path {
+			return nil
+		}
+		if strings.Contains(filepath.Base(mapped), "libgeos_c") {
+			other = append(other, mapped)
+		}
+	}
+	if len(other) > 0 {
+		return fmt.Errorf("libgeos_c mapped from %v, want %s", other, path)
+	}
+	return fmt.Errorf("%s not mapped", path)
+}
+
+const (
+	// stepTimeout bounds each setup or verification statement.
+	stepTimeout = 30 * time.Second
+	// rcStepTimeout is the PAR-002 OSS-006 budget for each READ COMMITTED read.
+	rcStepTimeout = 10 * time.Second
+	// importBudget bounds one IMPORT job from submission to terminal status.
+	importBudget = 120 * time.Second
+)
+
+func stepExec(ctx context.Context, conn *pgx.Conn, stmt string) (pgconn.CommandTag, error) {
+	ctx, cancel := context.WithTimeout(ctx, stepTimeout)
+	defer cancel()
+	return conn.Exec(ctx, stmt)
+}
+
+func closeBounded(conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	_ = conn.Close(ctx)
+}
+
+// runImportJob submits a detached IMPORT and polls its job until it reaches a
+// terminal status, so verification never races an asynchronous load.
+func runImportJob(ctx context.Context, conn *pgx.Conn, stmt string) error {
+	var jobID int64
+	submitCtx, cancel := context.WithTimeout(ctx, stepTimeout)
+	err := conn.QueryRow(submitCtx, stmt).Scan(&jobID)
+	cancel()
+	if err != nil {
+		return err
+	}
+	for {
+		var status, errText string
+		pollCtx, cancel := context.WithTimeout(ctx, stepTimeout)
+		err := conn.QueryRow(pollCtx, `SELECT status, COALESCE(error, '') FROM [SHOW JOB $1]`, jobID).Scan(&status, &errText)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("poll job %d: %w", jobID, err)
+		}
+		if done, err := importJobDone(jobID, status, errText); done {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("job %d still %s: %w", jobID, status, ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// importJobDone classifies a SHOW JOB status; only succeeded counts as success.
+func importJobDone(jobID int64, status, errText string) (bool, error) {
+	switch status {
+	case "succeeded":
+		return true, nil
+	case "failed", "canceled", "reverting", "revert-failed":
+		return true, fmt.Errorf("job %d %s: %s", jobID, status, errText)
+	default:
+		return false, nil
+	}
 }
