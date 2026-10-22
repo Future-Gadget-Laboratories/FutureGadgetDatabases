@@ -263,7 +263,9 @@ scope, and zero-versus-nonzero restored row assertions remain meaningful.
 The adjacent [cases/](cases/) files are independent examples, not a runner or a
 claim of executed tests. This section is the normative contract a future runner
 must implement; [tools/validate_cases.py](tools/validate_cases.py) is a
-docs-side checker for it (`python3 tools/validate_cases.py`, needs PyYAML).
+docs-side checker for it (`python3 tools/validate_cases.py`, needs PyYAML). It
+reports malformed input as errors and never raises; its tests are in
+[tools/test_validate_cases.py](tools/test_validate_cases.py).
 
 **Rules for every level.** Each file holds exactly one YAML document, a mapping.
 Every mapping listed below is closed: **a key not listed as required or optional
