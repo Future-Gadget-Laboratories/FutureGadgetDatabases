@@ -29,6 +29,9 @@ expect:
     - rows
     - index_entries
     - bytes
+    values:
+      status: succeeded
+      fraction_completed: 1
     rows: null
     row_match: pending
     capture:
