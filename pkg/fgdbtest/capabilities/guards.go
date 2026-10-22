@@ -542,14 +542,14 @@ func runImportJob(ctx context.Context, conn *pgx.Conn, stmt string) error {
 		err := conn.QueryRow(pollCtx, `SELECT status, COALESCE(error, '') FROM [SHOW JOB $1]`, jobID).Scan(&status, &errText)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("poll job %d: %w", jobID, err)
+			return errors.Join(fmt.Errorf("poll job %d: %w", jobID, err), drainImportJob(conn, jobID))
 		}
 		if done, err := importJobDone(jobID, status, errText); done {
 			return err
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("job %d still %s: %w", jobID, status, ctx.Err())
+			return errors.Join(fmt.Errorf("job %d still %s: %w", jobID, status, ctx.Err()), drainImportJob(conn, jobID))
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -567,4 +567,43 @@ func importJobDone(jobID int64, status, errText string) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+// importDrainBudget bounds cancelling a stuck IMPORT and waiting for it to stop.
+const importDrainBudget = 60 * time.Second
+
+// drainImportJob cancels a job that did not finish in time and waits until it
+// reaches a terminal state, so deferred cleanup never drops a table under a
+// running IMPORT or revert. It uses a fresh bounded context because the
+// caller's context has usually expired.
+func drainImportJob(conn *pgx.Conn, jobID int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), importDrainBudget)
+	defer cancel()
+	// CANCEL JOB errors if the job is already terminal; the poll below decides.
+	_, _ = conn.Exec(ctx, `CANCEL JOB $1`, jobID)
+	for {
+		var status string
+		pollCtx, pollCancel := context.WithTimeout(ctx, stepTimeout)
+		err := conn.QueryRow(pollCtx, `SELECT status FROM [SHOW JOB $1]`, jobID).Scan(&status)
+		pollCancel()
+		if err != nil {
+			return fmt.Errorf("drain job %d: %w", jobID, err)
+		}
+		if importJobTerminal(status) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("drain job %d still %s after cancel: %w", jobID, status, ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func importJobTerminal(status string) bool {
+	switch status {
+	case "succeeded", "failed", "canceled", "revert-failed":
+		return true
+	}
+	return false
 }

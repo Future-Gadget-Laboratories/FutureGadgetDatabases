@@ -144,3 +144,14 @@ func TestImportJobDone(t *testing.T) {
 		}
 	}
 }
+
+func TestImportJobTerminal(t *testing.T) {
+	for status, want := range map[string]bool{
+		"succeeded": true, "failed": true, "canceled": true, "revert-failed": true,
+		"running": false, "reverting": false, "cancel-requested": false, "pending": false,
+	} {
+		if got := importJobTerminal(status); got != want {
+			t.Errorf("importJobTerminal(%q) = %v, want %v", status, got, want)
+		}
+	}
+}
