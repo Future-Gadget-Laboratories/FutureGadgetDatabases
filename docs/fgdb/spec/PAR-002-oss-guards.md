@@ -31,7 +31,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 
 ## Maintainer notes (v1.3, 2026-10-22)
 
-- v1.3: OSS-005 fails closed when libraries are missing, and it must prove the libraries beside the binary were the ones loaded. OSS-008 imports run as detached jobs and are polled until they reach a terminal status. Every setup statement has a bounded time limit.
+- v1.3: OSS-005 fails closed when libraries are missing, and it must prove the libraries beside the binary were the ones loaded. OSS-008 imports run as detached jobs and are polled until they reach a terminal status. Every setup statement has a bounded time limit. OSS-006 uses the 10s budget for B's insert as well as A's reads.
 
 - OSS-008: `MYSQLDUMP` and `PGDUMP` need the `IMPORT TABLE`/bundle form, which PAR-001 GATE-006 lists as possibly gated. They are **oracle-pending**: implement `CSV`, `DELIMITED`, `PGCOPY` and `AVRO` through `IMPORT INTO` as required cases. Report the dump formats as `not_tested` with a reason until oracle evidence decides them. The PARQUET rejection case stays required.
 - Erratum (v1.2): OSS-007 COPY TO must use the query form `COPY (SELECT id, v FROM copy_guard ORDER BY id) TO STDOUT`. A black-box run showed that `COPY copy_guard ORDER BY id TO STDOUT` is a syntax error (42601).
@@ -59,7 +59,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 | Setup SQL | `SELECT ST_Area(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));` |
 | Expected observable result | One row with one numeric value equal to `1`. **[oss-src]** |
 | Timing | The query must complete within 10 seconds after SQL readiness. |
-| Must not count as pass | A missing-library startup skip, a test marked “not applicable,” a fallback that does not use the beside-binary `lib/`, a NULL/error result, or a result accepted only by rounding an incorrect area. Missing or unloadable libraries make the claim `fail` (v1.3), never `not_tested` or `pass`. The guard must also show that each node process mapped `libgeos_c.so` from the beside-binary `lib/` (for example through the process memory map). A correct area alone does not prove where the library came from. |
+| Must not count as pass | A missing-library startup skip, a test marked “not applicable,” a fallback that does not use the beside-binary `lib/`, a NULL/error result, or a result accepted only by rounding an incorrect area. Missing or unloadable libraries make the claim `fail` (v1.3), never `not_tested` or `pass`. Both files must be regular files, not symlinks. The guard must also show that each node process mapped both `libgeos.so` and `libgeos_c.so` from the beside-binary `lib/`, and no GEOS library from anywhere else (for example through the process memory map). A correct area alone does not prove where the library came from. |
 
 ### OSS-006 — READ COMMITTED works when enabled
 

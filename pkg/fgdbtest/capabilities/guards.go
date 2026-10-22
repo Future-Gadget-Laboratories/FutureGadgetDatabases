@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,9 +96,13 @@ func besideBinaryLib(binary string) (string, error) {
 		return "", errors.New("lib is not a directory")
 	}
 	for _, name := range []string{"libgeos.so", "libgeos_c.so"} {
-		st, err := os.Stat(filepath.Join(lib, name))
+		// Lstat: a symlink could point at a system GEOS and still look valid.
+		st, err := os.Lstat(filepath.Join(lib, name))
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", name, err)
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%s is a symlink; beside-binary GEOS must be regular files", name)
 		}
 		if !st.Mode().IsRegular() {
 			return "", fmt.Errorf("%s is not a regular file", name)
@@ -197,12 +202,12 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 	if err != nil {
 		return err
 	}
-	defer closeBounded(a)
+	defer func() { err = errors.Join(err, closeBounded(a)) }()
 	b, err := connect(ctx, c)
 	if err != nil {
 		return err
 	}
-	defer closeBounded(b)
+	defer func() { err = errors.Join(err, closeBounded(b)) }()
 	originalEnabled, readErr := readSettingText(ctx, a, "sql.txn.read_committed_isolation.enabled")
 	if readErr != nil {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
@@ -230,7 +235,7 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 	if err = a.QueryRow(rcCtx, `SELECT count(*) FROM rc_guard`).Scan(&first); err != nil || first != 1 {
 		return fmt.Errorf("READ COMMITTED first count=%d: %w", first, err)
 	}
-	if _, err = stepExec(ctx, b, `INSERT INTO rc_guard VALUES (2)`); err != nil {
+	if err = rcExec(ctx, b, `INSERT INTO rc_guard VALUES (2)`); err != nil {
 		return err
 	}
 	secondCtx, secondCancel := context.WithTimeout(ctx, rcStepTimeout)
@@ -352,6 +357,7 @@ func fixtureHandler(fixtures []importFixture) http.HandlerFunc {
 		}
 		for _, f := range fixtures {
 			if r.URL.Path == f.path {
+				w.Header().Set("Content-Length", strconv.Itoa(len(f.body)))
 				w.WriteHeader(http.StatusOK)
 				if r.Method != http.MethodHead {
 					_, _ = io.WriteString(w, f.body)
@@ -431,9 +437,9 @@ func cleanupExec(conn *pgx.Conn, stmt string) (pgconn.CommandTag, error) {
 // the beside-binary lib directory. An ST_Area result alone could come from a
 // system GEOS, so a correct result is not enough to prove where it came from.
 func proveGEOSLoaded(c *cluster.Cluster, lib string) error {
-	want, err := filepath.EvalSymlinks(filepath.Join(lib, "libgeos_c.so"))
+	dir, err := filepath.EvalSymlinks(lib)
 	if err != nil {
-		return fmt.Errorf("resolve beside-binary libgeos_c.so: %w", err)
+		return fmt.Errorf("resolve beside-binary lib: %w", err)
 	}
 	nodes := c.Nodes()
 	if len(nodes) == 0 {
@@ -449,16 +455,17 @@ func proveGEOSLoaded(c *cluster.Cluster, lib string) error {
 		if err != nil {
 			return fmt.Errorf("GEOS load proof: node %d maps: %w", n.Index+1, err)
 		}
-		if err := mapsHasLibrary(string(maps), want); err != nil {
+		if err := mapsGEOSOnlyFrom(string(maps), dir); err != nil {
 			return fmt.Errorf("GEOS load proof: node %d: %w", n.Index+1, err)
 		}
 	}
 	return nil
 }
 
-// mapsHasLibrary reports whether a /proc/<pid>/maps listing maps path, and
-// names any other libgeos_c mapping it finds instead.
-func mapsHasLibrary(maps, path string) error {
+// mapsGEOSOnlyFrom requires /proc/<pid>/maps to map both libgeos.so and
+// libgeos_c.so from dir, and no GEOS library from anywhere else.
+func mapsGEOSOnlyFrom(maps, dir string) error {
+	found := map[string]bool{}
 	var other []string
 	for _, line := range strings.Split(maps, "\n") {
 		fields := strings.Fields(line)
@@ -466,17 +473,25 @@ func mapsHasLibrary(maps, path string) error {
 			continue
 		}
 		mapped := strings.Join(fields[5:], " ")
-		if mapped == path {
-			return nil
+		base := filepath.Base(mapped)
+		if !strings.HasPrefix(base, "libgeos") {
+			continue
 		}
-		if strings.Contains(filepath.Base(mapped), "libgeos_c") {
-			other = append(other, mapped)
+		if filepath.Dir(mapped) == dir && (base == "libgeos.so" || base == "libgeos_c.so") {
+			found[base] = true
+			continue
 		}
+		other = append(other, mapped)
 	}
 	if len(other) > 0 {
-		return fmt.Errorf("libgeos_c mapped from %v, want %s", other, path)
+		return fmt.Errorf("GEOS mapped from outside %s: %v", dir, other)
 	}
-	return fmt.Errorf("%s not mapped", path)
+	for _, name := range []string{"libgeos.so", "libgeos_c.so"} {
+		if !found[name] {
+			return fmt.Errorf("%s not mapped from %s", name, dir)
+		}
+	}
+	return nil
 }
 
 const (
@@ -494,10 +509,21 @@ func stepExec(ctx context.Context, conn *pgx.Conn, stmt string) (pgconn.CommandT
 	return conn.Exec(ctx, stmt)
 }
 
-func closeBounded(conn *pgx.Conn) {
+// rcExec bounds one READ COMMITTED step by the spec's 10s budget.
+func rcExec(ctx context.Context, conn *pgx.Conn, stmt string) error {
+	ctx, cancel := context.WithTimeout(ctx, rcStepTimeout)
+	defer cancel()
+	_, err := conn.Exec(ctx, stmt)
+	return err
+}
+
+func closeBounded(conn *pgx.Conn) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
-	_ = conn.Close(ctx)
+	if err := conn.Close(ctx); err != nil {
+		return fmt.Errorf("close connection: %w", err)
+	}
+	return nil
 }
 
 // runImportJob submits a detached IMPORT and polls its job until it reaches a

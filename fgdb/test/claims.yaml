@@ -170,6 +170,8 @@
   tests:
     - pkg/fgdbtest/capabilities:TestOSSCapabilities
     - pkg/fgdbtest/capabilities:TestBesideBinaryLib
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLibRejectsSymlink
+    - pkg/fgdbtest/capabilities:TestMapsGEOSOnlyFrom
   tier: interim
   status: partial
 - id: OSS-006
