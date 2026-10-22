@@ -8,7 +8,7 @@
 | Spec id | PAR-002 |
 | Version | v1 |
 | Date | 2026-10-22 |
-| Role | spec writer (Codex, cleanroom spec role) |
+| Role | spec writer (cleanroom spec role; see docs/fgdb/CLEANROOM.md) |
 | Sources consulted | `pkg/fgdbtest/capabilities`; `docs/fgdb/oss-capabilities.md`; `docs/fgdb/getting-started.md`; OSS v23.2.15 SQL, importer, copy, TTL, transaction, and spatial behavior in this checkout |
 
 ## Scope and common setup
@@ -23,7 +23,7 @@ successful skip.
 Each expected-result cell below includes its provenance. `oss-src` means the
 observable contract is derived from the OSS v23.2.15 tree; `docs` means it is
 derived from the public FGDb documentation; `oracle-pending` would require a
-stock-binary Decode run, but no such run is available for this spec.
+stock-binary black-box validation run, but no such run is available for this spec.
 
 The harness should first create the default database and verify SQL readiness,
 then execute the claim's setup SQL. Use fresh table names or drop each table at
@@ -35,7 +35,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 - Erratum (v1.2): OSS-007 COPY TO must use the query form `COPY (SELECT id, v FROM copy_guard ORDER BY id) TO STDOUT`. A black-box run showed that `COPY copy_guard ORDER BY id TO STDOUT` is a syntax error (42601).
 - Open (v1.2): OSS-004 timing. On a fresh single node, the row-level TTL schedule had a `next_run` but did not delete the expired row within 300 s (black-box run of the shipped OSS binary). Until the cause is known, the guard is opt-in (`FGDB_TTL_GUARD=1`) and otherwise reports `not_tested`. The spec writer should research the scheduler start-up delay and the TTL read lag for the next spec version.
 - OSS-005: the GEOS area check accepts `1` within float tolerance 1e-9 only.
-- Every `[oss-src]` result must be confirmed by a Decode oracle run, or by the pinned `cockroach-oss` CI run, before the claim leaves `partial`.
+- Every `[oss-src]` result must be confirmed by a black-box validation run of the stock binary, or by the pinned `cockroach-oss` CI run, before the claim leaves `partial`.
 
 ## Acceptance claims
 
@@ -46,7 +46,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 | Preconditions | Start one node with the normal OSS binary. Keep TTL enabled. The table must have an ascending primary key. |
 | Setup SQL | `SET CLUSTER SETTING sql.ttl.job.enabled = true;`<br>`SET CLUSTER SETTING jobs.registry.interval.adopt = '1s';`<br>`CREATE TABLE ttl_guard (id INT PRIMARY KEY, v STRING) WITH (ttl_expire_after = '1 second', ttl_job_cron = '* * * * *');`<br>`INSERT INTO ttl_guard VALUES (1, 'expired'), (2, 'live');`<br>`UPDATE ttl_guard SET crdb_internal_expiration = now() - INTERVAL '1 minute' WHERE id = 1;` |
 | Expected observable result | Repeatedly run `SELECT id, v FROM ttl_guard ORDER BY id` until it returns exactly `(2, 'live')`; the expired row is absent. **[oss-src]** |
-| Timing | The five-field cron runs at most one minute after its scheduled boundary; the adoption interval is lowered to 1 second. Allow up to 90 seconds after setup, with a query timeout on each poll. |
+| Timing | The five-field cron runs at most one minute after its scheduled boundary; the adoption interval is lowered to 1 second. Allow up to 300 seconds after setup (v1.2; the guard is opt-in, see maintainer notes), with a query timeout on each poll. |
 | Must not count as pass | A row hidden only by a test query predicate; the schedule exists but no deletion is observed; TTL is disabled; a timeout; or a job/setup error. Restore `jobs.registry.interval.adopt` before teardown when the harness changes it. |
 
 ### OSS-005 — GEOS-backed spatial functions work with `lib/` beside the binary
@@ -75,7 +75,7 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 | --- | --- |
 | Preconditions | Use a PostgreSQL wire client capable of COPY-in and COPY-out. Do not substitute ordinary INSERT/SELECT for the COPY protocol. |
 | Setup SQL and input | `CREATE TABLE copy_guard (id INT PRIMARY KEY, v STRING NOT NULL);`<br>Send `COPY copy_guard FROM STDIN` with text rows `1\talpha\n2\tbeta\n`, then send COPY-done. |
-| Expected observable result | COPY-in reports two rows. `SELECT id, v FROM copy_guard ORDER BY id` returns `(1, 'alpha')`, `(2, 'beta')`. `COPY copy_guard ORDER BY id TO STDOUT` returns exactly `1\talpha\n2\tbeta\n`. **[oss-src]** |
+| Expected observable result | COPY-in reports two rows. `SELECT id, v FROM copy_guard ORDER BY id` returns `(1, 'alpha')`, `(2, 'beta')`. `COPY (SELECT id, v FROM copy_guard ORDER BY id) TO STDOUT` returns exactly `1\talpha\n2\tbeta\n`. **[oss-src]** |
 | Timing | Each COPY operation and the verification query must finish within 10 seconds. |
 | Must not count as pass | Data loaded by INSERT, a client-side transformed output, a truncated stream, a result with an extra row, or success that omits either COPY direction. |
 
@@ -113,7 +113,7 @@ turns the run into a failure even if SQL assertions passed.
 - Confirm exact stock-binary result formatting for numeric `ST_Area` over the wire.
 - Confirm the minimal valid fixtures and completion behavior for each accepted
   IMPORT format on the shipped OSS binary.
-- Confirm whether a stock Decode oracle reports any additional format-specific
+- Confirm whether a stock-binary black-box validation run reports any additional format-specific
   notices that the guard should record.
 
 Acceptance claim ids:

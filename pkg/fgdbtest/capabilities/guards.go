@@ -64,7 +64,10 @@ func runGuards(ctx context.Context, cfg Config, conn *pgx.Conn, c *cluster.Clust
 	}
 	lib, err := besideBinaryLib(cfg.Binary)
 	if err != nil {
-		rep.Set(ClaimGEOS, labels.NotTested, fmt.Sprintf("GEOS beside-binary libraries not tested: %v", err))
+		// A required claim must fail closed when its libraries are missing.
+		err = fmt.Errorf("GEOS beside-binary libraries unavailable: %w", err)
+		note(rep, ClaimGEOS, ClaimGEOS, err)
+		errs = append(errs, err)
 	} else {
 		err = guardGEOS(ctx, conn, lib)
 		note(rep, ClaimGEOS, ClaimGEOS, err)
@@ -147,10 +150,15 @@ func guardTTL(ctx context.Context, conn *pgx.Conn) (err error) {
 	if readErr != nil {
 		return fmt.Errorf("read TTL adoption setting: %w", readErr)
 	}
+	originalTTLEnabled, readErr := readSettingText(ctx, conn, "sql.ttl.job.enabled")
+	if readErr != nil {
+		return fmt.Errorf("read TTL enabled setting: %w", readErr)
+	}
 	defer func() {
-		_, dropErr := conn.Exec(context.Background(), `DROP TABLE IF EXISTS ttl_guard`)
-		_, restoreErr := conn.Exec(context.Background(), fmt.Sprintf("SET CLUSTER SETTING jobs.registry.interval.adopt = %s", sqlLiteral(originalAdopt)))
-		err = errors.Join(err, dropErr, restoreErr)
+		_, dropErr := cleanupExec(conn, `DROP TABLE IF EXISTS ttl_guard`)
+		_, restoreErr := cleanupExec(conn, fmt.Sprintf("SET CLUSTER SETTING jobs.registry.interval.adopt = %s", sqlLiteral(originalAdopt)))
+		_, enabledErr := cleanupExec(conn, fmt.Sprintf("SET CLUSTER SETTING sql.ttl.job.enabled = %s", sqlLiteral(originalTTLEnabled)))
+		err = errors.Join(err, dropErr, restoreErr, enabledErr)
 	}()
 	// Cluster settings cannot share an implicit multi-statement transaction.
 	if err := execEach(ctx, conn,
@@ -195,9 +203,9 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
 	}
 	defer func() {
-		_, _ = a.Exec(context.Background(), `ROLLBACK`)
-		_, dropErr := a.Exec(context.Background(), `DROP TABLE IF EXISTS rc_guard`)
-		_, restoreErr := a.Exec(context.Background(), fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", originalEnabled))
+		_, _ = cleanupExec(a, `ROLLBACK`)
+		_, dropErr := cleanupExec(a, `DROP TABLE IF EXISTS rc_guard`)
+		_, restoreErr := cleanupExec(a, fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled)))
 		err = errors.Join(err, dropErr, restoreErr)
 	}()
 	if err = execEach(ctx, a,
@@ -232,7 +240,7 @@ func guardCopy(ctx context.Context, conn *pgx.Conn) (err error) {
 		return err
 	}
 	defer func() {
-		_, dropErr := conn.Exec(context.Background(), `DROP TABLE IF EXISTS copy_guard`)
+		_, dropErr := cleanupExec(conn, `DROP TABLE IF EXISTS copy_guard`)
 		err = errors.Join(err, dropErr)
 	}()
 	deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -271,7 +279,7 @@ func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
 	defer srv.Close()
 	defer func() {
 		for i := range fixtures {
-			_, dropErr := conn.Exec(context.Background(), fmt.Sprintf(`DROP TABLE IF EXISTS import_guard_%d`, i))
+			_, dropErr := cleanupExec(conn, fmt.Sprintf(`DROP TABLE IF EXISTS import_guard_%d`, i))
 			err = errors.Join(err, dropErr)
 		}
 	}()
@@ -299,7 +307,7 @@ func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
 		} else if !equalRows(rows, [][]string{{"1", "alpha"}, {"2", "beta"}}) {
 			errs = append(errs, fmt.Errorf("IMPORT %s rows=%v: want exactly two fixture rows", f.format, rows))
 		}
-		if _, dropErr := conn.Exec(context.Background(), fmt.Sprintf(`DROP TABLE IF EXISTS %s`, table)); dropErr != nil {
+		if _, dropErr := cleanupExec(conn, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, table)); dropErr != nil {
 			errs = append(errs, fmt.Errorf("IMPORT %s cleanup: %w", f.format, dropErr))
 		}
 	}
@@ -308,7 +316,7 @@ func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
 		return errors.Join(errs...)
 	}
 	defer func() {
-		_, dropErr := conn.Exec(context.Background(), `DROP TABLE IF EXISTS import_guard`)
+		_, dropErr := cleanupExec(conn, `DROP TABLE IF EXISTS import_guard`)
 		err = errors.Join(err, dropErr)
 	}()
 	parquetCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -396,4 +404,14 @@ func avroFixture() []byte {
 	}
 	_ = w.Append([]interface{}{map[string]interface{}{"id": int32(1), "v": "alpha"}, map[string]interface{}{"id": int32(2), "v": "beta"}})
 	return b.Bytes()
+}
+
+const cleanupTimeout = 30 * time.Second
+
+// cleanupExec runs deferred cleanup with a bounded context so a wedged node
+// cannot hang the suite after the main context has expired.
+func cleanupExec(conn *pgx.Conn, stmt string) (pgconn.CommandTag, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	return conn.Exec(ctx, stmt)
 }

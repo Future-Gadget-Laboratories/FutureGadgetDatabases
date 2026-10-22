@@ -156,7 +156,7 @@
   tier: interim
   status: partial
 - id: OSS-004
-  claim: The runtime capability slice observes row-level TTL deleting an expired row.
+  claim: When FGDB_TTL_GUARD=1, the runtime capability slice observes row-level TTL deleting an expired row; otherwise the claim is reported not_tested.
   source: docs/fgdb/spec/PAR-002-oss-guards.md
   category: capabilities
   tests:
@@ -189,7 +189,7 @@
   tier: interim
   status: partial
 - id: OSS-008
-  claim: The runtime capability slice verifies accepted OSS IMPORT formats and PARQUET rejection.
+  claim: The runtime capability slice verifies CSV, DELIMITED, AVRO and PGCOPY IMPORT plus PARQUET rejection; MYSQLDUMP and PGDUMP are not covered (oracle-pending).
   source: docs/fgdb/spec/PAR-002-oss-guards.md
   category: capabilities
   tests:

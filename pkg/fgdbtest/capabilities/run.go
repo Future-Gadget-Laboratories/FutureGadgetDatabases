@@ -28,7 +28,7 @@ const (
 	ClaimCopy         = "OSS-007"
 	ClaimImportMatrix = "OSS-008"
 	stepSetup         = "OSS-SETUP"
-	suiteTimeout      = 10 * time.Minute
+	suiteTimeout      = 14 * time.Minute // below the 15m go test budget; covers the 300s TTL and import polls
 )
 
 // Config supplies the binary and a parent for disposable stores.
