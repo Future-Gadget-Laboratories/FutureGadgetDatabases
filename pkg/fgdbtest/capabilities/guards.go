@@ -93,7 +93,7 @@ func besideBinaryLib(binary string) (string, error) {
 	if !info.IsDir() {
 		return "", errors.New("lib is not a directory")
 	}
-	for _, name := range []string{"libgeos.so", "libgeos_c.so"} {
+	for _, name := range []string{geosLib, geosCLib} {
 		// Lstat: a symlink could point at a system GEOS and still look valid.
 		st, err := os.Lstat(filepath.Join(lib, name))
 		if err != nil {
@@ -257,7 +257,7 @@ func guardCopy(ctx context.Context, conn *pgx.Conn) (err error) {
 	}()
 	deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	tag, err := conn.PgConn().CopyFrom(deadline, strings.NewReader("1\talpha\n2\tbeta\n"), `COPY copy_guard FROM STDIN`)
+	tag, err := conn.PgConn().CopyFrom(deadline, strings.NewReader(tsvRows), `COPY copy_guard FROM STDIN`)
 	if err != nil {
 		return fmt.Errorf("COPY FROM: %w", err)
 	}
@@ -272,7 +272,7 @@ func guardCopy(ctx context.Context, conn *pgx.Conn) (err error) {
 	if _, err = conn.PgConn().CopyTo(deadline, &out, `COPY (SELECT id, v FROM copy_guard ORDER BY id) TO STDOUT`); err != nil {
 		return fmt.Errorf("COPY TO: %w", err)
 	}
-	if out.String() != "1\talpha\n2\tbeta\n" {
+	if out.String() != tsvRows {
 		return fmt.Errorf("COPY TO output=%q", out.String())
 	}
 	return nil
@@ -280,9 +280,18 @@ func guardCopy(ctx context.Context, conn *pgx.Conn) (err error) {
 
 type importFixture struct{ format, path, body string }
 
+// GEOS libraries that must come from the binary's lib/ directory.
+const (
+	geosLib  = "libgeos.so"
+	geosCLib = "libgeos_c.so"
+)
+
+// tsvRows is the two-row tab-separated fixture used by COPY, DELIMITED and PGCOPY.
+const tsvRows = "1\talpha\n2\tbeta\n"
+
 // OSS-008: accepted row formats use loopback HTTP fixtures; dump formats remain oracle-pending.
 func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
-	fixtures := []importFixture{{"CSV", "/par002.csv", "1,alpha\n2,beta\n"}, {"DELIMITED", "/par002.delimited", "1\talpha\n2\tbeta\n"}, {"PGCOPY", "/par002.pgc", string(pgCopyFixture())}, {"AVRO", "/par002.avro", string(avroFixture())}}
+	fixtures := []importFixture{{"CSV", "/par002.csv", "1,alpha\n2,beta\n"}, {"DELIMITED", "/par002.delimited", tsvRows}, {"PGCOPY", "/par002.pgc", string(pgCopyFixture())}, {"AVRO", "/par002.avro", string(avroFixture())}}
 	var errs []error
 	srv := httptest.NewServer(fixtureHandler(fixtures))
 	/*
@@ -296,35 +305,49 @@ func guardImportMatrix(ctx context.Context, conn *pgx.Conn) (err error) {
 		}
 	}()
 	for i, f := range fixtures {
-		table := fmt.Sprintf("import_guard_%d", i)
-		if _, createErr := stepExec(ctx, conn, fmt.Sprintf(`CREATE TABLE %s (id INT PRIMARY KEY, v STRING NOT NULL)`, table)); createErr != nil {
-			errs = append(errs, fmt.Errorf("IMPORT %s create target: %w", f.format, createErr))
-			continue
-		}
-		stmt := fmt.Sprintf(`IMPORT INTO %s %s DATA ('%s%s')`, table, f.format, srv.URL, f.path)
-		if f.format == "DELIMITED" {
-			stmt += ` WITH fields_terminated_by = e'\t', detached`
-		} else {
-			stmt += ` WITH detached`
-		}
-		importCtx, cancel := context.WithTimeout(ctx, importBudget)
-		importErr := runImportJob(importCtx, conn, stmt)
-		if importErr != nil {
-			cancel()
-			errs = append(errs, fmt.Errorf("IMPORT %s: %w", f.format, importErr))
-			continue
-		}
-		rows, rowErr := queryRows(importCtx, conn, fmt.Sprintf(`SELECT id, v FROM %s ORDER BY id`, table))
-		cancel()
-		if rowErr != nil {
-			errs = append(errs, fmt.Errorf("IMPORT %s rows=%v: %w", f.format, rows, rowErr))
-		} else if !equalRows(rows, [][]string{{"1", "alpha"}, {"2", "beta"}}) {
-			errs = append(errs, fmt.Errorf("IMPORT %s rows=%v: want exactly two fixture rows", f.format, rows))
-		}
-		if _, dropErr := cleanupExec(conn, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, table)); dropErr != nil {
-			errs = append(errs, fmt.Errorf("IMPORT %s cleanup: %w", f.format, dropErr))
-		}
+		errs = append(errs, importFixtureCase(ctx, conn, srv.URL, i, f)...)
 	}
+	return errors.Join(append(errs, guardImportParquet(ctx, conn))...)
+}
+
+// importFixtureCase runs one detached IMPORT from the loopback fixture server
+// and checks the imported rows. Table cleanup is also deferred by the caller.
+func importFixtureCase(ctx context.Context, conn *pgx.Conn, baseURL string, i int, f importFixture) []error {
+	var errs []error
+	table := fmt.Sprintf("import_guard_%d", i)
+	if _, createErr := stepExec(ctx, conn, fmt.Sprintf(`CREATE TABLE %s (id INT PRIMARY KEY, v STRING NOT NULL)`, table)); createErr != nil {
+		errs = append(errs, fmt.Errorf("IMPORT %s create target: %w", f.format, createErr))
+		return errs
+	}
+	stmt := fmt.Sprintf(`IMPORT INTO %s %s DATA ('%s%s')`, table, f.format, baseURL, f.path)
+	if f.format == "DELIMITED" {
+		stmt += ` WITH fields_terminated_by = e'\t', detached`
+	} else {
+		stmt += ` WITH detached`
+	}
+	importCtx, cancel := context.WithTimeout(ctx, importBudget)
+	importErr := runImportJob(importCtx, conn, stmt)
+	if importErr != nil {
+		cancel()
+		errs = append(errs, fmt.Errorf("IMPORT %s: %w", f.format, importErr))
+		return errs
+	}
+	rows, rowErr := queryRows(importCtx, conn, fmt.Sprintf(`SELECT id, v FROM %s ORDER BY id`, table))
+	cancel()
+	if rowErr != nil {
+		errs = append(errs, fmt.Errorf("IMPORT %s rows=%v: %w", f.format, rows, rowErr))
+	} else if !equalRows(rows, [][]string{{"1", "alpha"}, {"2", "beta"}}) {
+		errs = append(errs, fmt.Errorf("IMPORT %s rows=%v: want exactly two fixture rows", f.format, rows))
+	}
+	if _, dropErr := cleanupExec(conn, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, table)); dropErr != nil {
+		errs = append(errs, fmt.Errorf("IMPORT %s cleanup: %w", f.format, dropErr))
+	}
+	return errs
+}
+
+// guardImportParquet checks that IMPORT PARQUET is rejected as unsupported.
+func guardImportParquet(ctx context.Context, conn *pgx.Conn) (err error) {
+	var errs []error
 	if _, createErr := stepExec(ctx, conn, `CREATE TABLE import_guard (id INT PRIMARY KEY, v STRING NOT NULL)`); createErr != nil {
 		errs = append(errs, fmt.Errorf("IMPORT PARQUET create target: %w", createErr))
 		return errors.Join(errs...)
@@ -404,7 +427,7 @@ func equalRows(got, want [][]string) bool {
 	return true
 }
 func pgCopyFixture() []byte {
-	return []byte("1\talpha\n2\tbeta\n")
+	return []byte(tsvRows)
 }
 func avroFixture() []byte {
 	schema := `{"type":"record","name":"row","fields":[{"name":"id","type":"int"},{"name":"v","type":"string"}]}`
@@ -475,7 +498,7 @@ func mapsGEOSOnlyFrom(maps, dir string) error {
 		if !strings.HasPrefix(base, "libgeos") {
 			continue
 		}
-		if filepath.Dir(mapped) == dir && (base == "libgeos.so" || base == "libgeos_c.so") {
+		if filepath.Dir(mapped) == dir && (base == geosLib || base == geosCLib) {
 			found[base] = true
 			continue
 		}
@@ -484,7 +507,7 @@ func mapsGEOSOnlyFrom(maps, dir string) error {
 	if len(other) > 0 {
 		return fmt.Errorf("GEOS mapped from outside %s: %v", dir, other)
 	}
-	for _, name := range []string{"libgeos.so", "libgeos_c.so"} {
+	for _, name := range []string{geosLib, geosCLib} {
 		if !found[name] {
 			return fmt.Errorf("%s not mapped from %s", name, dir)
 		}
