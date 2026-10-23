@@ -14,7 +14,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -359,11 +358,8 @@ func fixtureHandler(fixtures []importFixture) http.HandlerFunc {
 				// Fixtures are raw import data, never HTML.
 				w.Header().Set("Content-Type", "application/octet-stream")
 				w.Header().Set("X-Content-Type-Options", "nosniff")
-				w.Header().Set("Content-Length", strconv.Itoa(len(f.body)))
-				w.WriteHeader(http.StatusOK)
-				if r.Method != http.MethodHead {
-					_, _ = w.Write([]byte(f.body))
-				}
+				// ServeContent sets Content-Length and omits the body for HEAD.
+				http.ServeContent(w, r, filepath.Base(f.path), time.Time{}, strings.NewReader(f.body))
 				return
 			}
 		}
