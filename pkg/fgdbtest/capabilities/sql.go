@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,12 +32,15 @@ func importCSV(ctx context.Context, conn *pgx.Conn) error {
 	}
 	// The fixture URL is bound as a placeholder rather than spliced into SQL.
 	const stmt = "IMPORT INTO defaultdb.public.fgdb_capability_import CSV DATA ($1)"
-	fixtureURL := srv.URL + fixturePath
+	fixtureURL, err := url.JoinPath(srv.URL, fixturePath)
+	if err != nil {
+		return fmt.Errorf("fixture URL: %w", err)
+	}
 	if _, err := conn.Exec(ctx, stmt, fixtureURL); err != nil {
 		return fmt.Errorf("OSS CSV IMPORT: %w", err)
 	}
 	var count, exact int64
-	err := conn.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE (id = 1 AND value = 'alpha') OR (id = 2 AND value = 'beta')) FROM defaultdb.public.fgdb_capability_import`).Scan(&count, &exact)
+	err = conn.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE (id = 1 AND value = 'alpha') OR (id = 2 AND value = 'beta')) FROM defaultdb.public.fgdb_capability_import`).Scan(&count, &exact)
 	if err != nil {
 		return fmt.Errorf("check imported rows: %w", err)
 	}
