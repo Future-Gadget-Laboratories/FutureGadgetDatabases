@@ -23,7 +23,7 @@ func TestParseTag(t *testing.T) {
 		{name: "development build", tag: "v23.2.15-fgdb.8-dev", ok: false},
 		{name: "missing FGDb prefix", tag: "v23.2.15", ok: false},
 		{name: "zero fix number", tag: "v23.2.15-fgdb.0", ok: false},
-		{name: "missing CRDB-shaped prefix", tag: "fgdb-v1.2.3+crdb.v23.2.15", ok: false},
+		{name: "missing CRDB-shaped prefix", tag: "fgdb-v1.2.3", ok: false},
 		{name: "leading zero", tag: "v23.2.15-fgdb-v01.2.3", ok: false},
 		{name: "overflow", tag: "v23.2.15-fgdb-v18446744073709551616.0.0", ok: false},
 	}

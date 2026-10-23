@@ -42,9 +42,10 @@ var (
 // ParseTag parses an FGDb release identity from a CRDB-shaped build tag.
 // Feature-line tags use the v23.2.15-fgdb-vMAJOR.MINOR.PATCH[-rc.N] grammar;
 // their FGDb identity is in the prerelease portion of the CRDB version. The
-// external N1 release tag (fgdb-vMAJOR.MINOR.PATCH+crdb.v23.2.15) maps to this
-// binary build tag. Non-FGDb tags, development tags, and malformed or
-// non-canonical tags return an error.
+// external N1 release tag is fgdb-vMAJOR.MINOR.PATCH[-rc.N]; the CRDB
+// base belongs in binary long-version output and image labels. ParseTag
+// consumes the CRDB-shaped binary build tag. Non-FGDb tags, development tags,
+// and malformed or non-canonical tags return an error.
 func ParseTag(tag string) (Release, error) {
 	if m := fixTagRE.FindStringSubmatch(tag); m != nil {
 		fix, err := parseNumber(m[1])
