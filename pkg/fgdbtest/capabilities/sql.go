@@ -31,7 +31,8 @@ func importCSV(ctx context.Context, conn *pgx.Conn) error {
 	}
 	// The fixture URL is bound as a placeholder rather than spliced into SQL.
 	const stmt = "IMPORT INTO defaultdb.public.fgdb_capability_import CSV DATA ($1)"
-	if _, err := conn.Exec(ctx, stmt, srv.URL+fixturePath); err != nil {
+	fixtureURL := srv.URL + fixturePath
+	if _, err := conn.Exec(ctx, stmt, fixtureURL); err != nil {
 		return fmt.Errorf("OSS CSV IMPORT: %w", err)
 	}
 	var count, exact int64
