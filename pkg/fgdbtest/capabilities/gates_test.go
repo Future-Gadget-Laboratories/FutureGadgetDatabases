@@ -18,6 +18,7 @@ import (
 
 func TestGateContractClassifier(t *testing.T) {
 	const statement = "SELECT gate()"
+	const wantMessage = cclMessage + " *tree.Gate"
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -25,12 +26,12 @@ func TestGateContractClassifier(t *testing.T) {
 	}{
 		{name: "success"},
 		{name: "transport", err: errors.New("connection refused")},
-		{name: "wrong SQLSTATE", err: &pgconn.PgError{Code: "42501", Message: cclMessage + " *tree.Gate"}},
+		{name: "wrong SQLSTATE", err: &pgconn.PgError{Code: "42501", Message: wantMessage}},
 		{name: "wrong message", err: &pgconn.PgError{Code: cclState, Message: "wrong"}},
-		{name: "right", err: &pgconn.PgError{Code: cclState, Message: cclMessage + " *tree.Gate"}, want: true},
+		{name: "right", err: &pgconn.PgError{Code: cclState, Message: wantMessage}, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := classifyGateError(tc.err, statement, cclState, cclMessage+" *tree.Gate")
+			err := classifyGateError(tc.err, statement, cclState, wantMessage)
 			if (err == nil) != tc.want {
 				t.Fatalf("classifyGateError = %v, want success %v", err, tc.want)
 			}
