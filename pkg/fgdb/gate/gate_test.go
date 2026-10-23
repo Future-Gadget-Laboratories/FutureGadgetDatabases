@@ -44,4 +44,16 @@ func TestRunRejectsNilSelectedPath(t *testing.T) {
 	if err := Run(false, nil, func() error { return nil }); err == nil {
 		t.Fatal("Run(false) with nil stock path succeeded")
 	}
+
+	stockCalled := false
+	stock := func() error {
+		stockCalled = true
+		return nil
+	}
+	if err := Run(true, stock, nil); err == nil {
+		t.Fatal("Run(true) with nil FGDb path succeeded")
+	}
+	if stockCalled {
+		t.Fatal("Run(true) with nil FGDb path called stock path")
+	}
 }

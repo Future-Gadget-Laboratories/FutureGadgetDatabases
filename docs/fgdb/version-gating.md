@@ -10,25 +10,25 @@ This note defines how FGDb-only behavior will be introduced while preserving the
 
 ## GATE: disabled means today's behavior
 
-Every `fgdb.<feature>.enabled` setting is a cluster-scoped boolean with default `false`. When it is false, callers take the existing OSS path. They must not enter FGDb-only code, perform FGDb side effects, or replace the existing error with an FGDb-specific message. The behavior includes the result, error text, SQLSTATE, visible settings, and job state.
+Every `fgdb.<feature>.enabled` setting is a boolean with default `false`. When it is false, callers take the existing OSS path. They must not enter FGDb-only code, perform FGDb side effects, or replace the existing error with an FGDb-specific message. Off-path parity covers feature-operation behavior: results, errors, SQLSTATE, and job state. Registering an `fgdb.*` setting adds a settings-catalog entry, so the setting name is visible in `SHOW ALL CLUSTER SETTINGS` even while its value is false.
 
 An entry point must check the flag before FGDb-specific work. For example, a future in-core backup entry point checks `fgdb.backup.enabled` before creating any FGDb job, schedule, manifest, or file. When off, it follows the current `BACKUP`/`RESTORE` path and returns the same OSS/CCL-boundary error as the v23.2.15 oracle. This is the GATE contract. CockroachDB's public v23.2 [`BACKUP`](https://www.cockroachlabs.com/docs/v23.2/backup.html) and [`RESTORE`](https://www.cockroachlabs.com/docs/v23.2/restore.html) references describe those SQL statements; exact parity remains subject to black-box recording.
 
 | Setting | Type | Default | Initial purpose |
 | --- | --- | --- | --- |
-| `fgdb.backup.enabled` | `ApplicationLevel` boolean cluster setting | `false` | Enable the future in-core FGDb backup implementation after the compatibility checks below. |
+| `fgdb.backup.enabled` | `ApplicationLevel` boolean cluster setting | `false` | Enable the future in-core FGDb backup implementation for the tenant whose setting is true, after the compatibility checks below. |
 
-Register settings through the existing `pkg/settings` machinery when server wiring is implemented. They are public and reportable like other feature settings. Do not use the upstream feature-flag default or its “disabled by database administrator” error behavior: an off FGDb flag preserves today's path and error.
+Register settings through the existing `pkg/settings` machinery when server wiring is implemented. In this v23.2.15 tree, `ApplicationLevel` is the class name; its setting value is separate for the system tenant/interface and each virtual cluster. Enablement is therefore per tenant: the system tenant and each virtual cluster remain off until that tenant's setting is explicitly enabled. A virtual cluster cannot enable the feature for another tenant. This tenant-local scope is the conservative choice because opt-in cannot silently enable FGDb behavior for other tenants; feature implementations must remain tenant-scoped and must not use this flag to turn on shared storage behavior. The setting name is public and reportable like other feature settings, including its presence in `SHOW ALL CLUSTER SETTINGS` while off. Do not use the upstream feature-flag default or its “disabled by database administrator” error behavior: an off FGDb flag preserves today's feature-operation path and error.
 
 The small `pkg/fgdb/gate` package defines the setting-name and branch contract in pure Go. Registration, SQL `SET CLUSTER SETTING` integration, telemetry, and feature execution are follow-up work.
 
 ## Enabling a feature on a cluster
 
-Before a feature is enabled, every live, non-decommissioned node must report an FGDb release at or above that feature's required release **N**. Determine node identity from the existing gossip `roachpb.NodeDescriptor.build_tag`, which is populated from build metadata; the corresponding `crdb_internal.node_build_info` `Version` field is a CRDB compatibility version, not the FGDb release identity. Parse the tag strictly. Reject unknown, missing, malformed, or below-required tags when enabling.
+Before a tenant enables a feature, every live, non-decommissioned node in the shared cluster must report an FGDb release at or above that feature's required release **N**. Determine node identity from the existing gossip `roachpb.NodeDescriptor.build_tag`, which is populated from build metadata. In v23.2.15, `crdb_internal.node_build_info` populates `Version` directly from `build.GetInfo().Tag`, so it is build-tag-derived as well and can expose FGDb release identity. Parse the tag strictly. Reject unknown, missing, malformed, or below-required tags when enabling.
 
-This check uses the existing node membership and liveness semantics. It does not add cluster-version keys or bump the cluster `version` setting. The active cluster version remains final `V23_2`; `ServerVersion` continues to use CRDB `23.2.x` semantics. FGDb release identity belongs in build tag and display metadata.
+This check uses the existing node membership and liveness semantics. It does not add cluster-version keys or bump the cluster `version` setting. The binary's CRDB compatibility version and active cluster version remain on the `V23_2` line; `ServerVersion` continues to use CRDB `23.2.x` semantics. The build tag carries FGDb release identity. Because `node_build_info.Version` is tag-derived, an FGDb tag can be visible to SQL clients querying that virtual table; the exact client-visible effect and any required compatibility treatment remain open for implementation and oracle validation.
 
-The setting transition is the control point: check all live nodes, reject the transition with a clear error if any node fails, then persist the setting through existing cluster settings storage (`system.settings`). Recheck membership and versions when enabling after upgrades; operational guidance for long-lived enabled clusters must describe what happens when an older or unknown node joins. That runtime policy and the error's exact SQLSTATE/message are open for implementation and oracle validation.
+The setting transition in the tenant is the control point: check all live nodes, reject the transition with a clear error if any node fails, then persist the tenant's setting through existing cluster settings storage (`system.settings`). Recheck membership and versions when enabling after upgrades; operational guidance for long-lived enabled tenants must describe what happens when an older or unknown node joins. That runtime policy and the error's exact SQLSTATE/message are open for implementation and oracle validation.
 
 The helper in `pkg/fgdb/release` recognizes the current fix-line form and a provisional new-line form. It does not yet decide cross-line ordering or implement node enumeration.
 
@@ -37,11 +37,11 @@ The helper in `pkg/fgdb/release` recognizes the current fix-line form and a prov
 | Transition | Rule |
 | --- | --- |
 | Old fix line → new feature line | Normal rolling restart while all FGDb feature flags remain off. |
-| New feature line → old fix line | Allowed only when every `fgdb.<feature>.enabled` setting is false and has never been true cluster-wide. |
-| First transition of any flag to true | Rollback cutover. The setting's persisted history is the operational evidence; production rollback assumes operators do not manually reset the flag to erase that history. |
+| New feature line → old fix line | Allowed only when every tenant's `fgdb.<feature>.enabled` setting is false, no tenant has ever enabled one, and no FGDb persisted format exists. |
+| First transition of any flag to true in any tenant | Rollback cutover for the whole shared cluster. A durable activation marker or an explicit durable operator record is required; the record must identify the feature, tenant, and first activation and remain verifiable after the setting is turned off. |
 | Any FGDb persisted format exists | Blocks downgrade regardless of current flag value. This includes future jobs, schedules, and manifests. Their format compatibility must be designed and tested before implementation. |
 
-The current design uses existing persisted cluster settings in `system.settings`; it adds no table or column. A stronger durable activation audit, such as `fgdb.<feature>.activated_at`, is an open design choice and is not part of this contract.
+`system.settings` stores current values and does not provide value history, so its row alone cannot prove that a flag was never enabled. The implementation design must provide durable evidence independent of the current value, such as a write-once activation marker recorded on the first transition to true, or an explicitly maintained durable operator record with the same information. Downgrade eligibility requires checking that evidence for every feature and tenant and confirming that no marker or record exists. This is a design requirement only: PAR-003 adds no table, column, or marker implementation.
 
 ## Protobuf add-only rule
 
@@ -65,7 +65,7 @@ The options are:
 
 Until D1a is decided, the new-line parser grammar is provisional N1: `fgdb-vMAJOR.MINOR.PATCH` with optional `-rc.N`. The current old-line parser accepts `v23.2.15-fgdb.N`. `pkg/fgdb/release` labels the N1 grammar provisional in code. Once D1a is decided, update the grammar and build-tag metadata contract together.
 
-Both lines keep cluster version `V23_2`. Existing CRDB-shaped version parsing in the server and `crdb_internal.node_build_info` remains unchanged. Tag-filter and release-workflow updates are a follow-up; this change does not edit `.github/`.
+Both lines keep the binary's CRDB compatibility version and cluster version on the `V23_2` line; existing CRDB-shaped version parsing and `ServerVersion` semantics remain unchanged. The build tag carries FGDb release identity. Since `crdb_internal.node_build_info.Version` is populated from that tag in v23.2.15, the field can display the FGDb tag to SQL clients; the client-visible compatibility impact and any follow-up separation are open items for oracle validation. Tag-filter and release-workflow updates are a follow-up; this change does not edit `.github/`.
 
 ## Validation and dependencies
 
