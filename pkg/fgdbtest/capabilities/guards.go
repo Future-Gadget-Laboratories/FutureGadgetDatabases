@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -357,10 +356,13 @@ func fixtureHandler(fixtures []importFixture) http.HandlerFunc {
 		}
 		for _, f := range fixtures {
 			if r.URL.Path == f.path {
+				// Fixtures are raw import data, never HTML.
+				w.Header().Set("Content-Type", "application/octet-stream")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Header().Set("Content-Length", strconv.Itoa(len(f.body)))
 				w.WriteHeader(http.StatusOK)
 				if r.Method != http.MethodHead {
-					_, _ = io.WriteString(w, f.body)
+					_, _ = w.Write([]byte(f.body))
 				}
 				return
 			}
