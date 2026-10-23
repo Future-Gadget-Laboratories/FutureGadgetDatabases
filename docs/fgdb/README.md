@@ -13,6 +13,7 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [architecture.md](architecture.md) | SQL, ranges, copies, and what a crash means |
 | [license.md](license.md) | BSL change date, CCL, CSL, and what not to ship |
 | [releases.md](releases.md) | Tarball URLs, image names, and digest pins |
+| [version-gating.md](version-gating.md) | Feature flags, release compatibility, and rollback rules |
 | [operations.md](operations.md) | Telemetry, certificates, a crash drill, and a careful note on decommission |
 | [backup.md](backup.md) | Logical backup and restore to a directory or S3 |
 | [contributing.md](contributing.md) | A first evening on the project |
