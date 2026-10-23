@@ -24,13 +24,13 @@ The small `pkg/fgdb/gate` package defines the setting-name and branch contract i
 
 ## Enabling a feature on a cluster
 
-Before a tenant enables a feature, every live, non-decommissioned node in the shared cluster must report an FGDb release at or above that feature's required release **N**. Determine node identity from the existing gossip `roachpb.NodeDescriptor.build_tag`, which is populated from build metadata. In v23.2.15, `crdb_internal.node_build_info` populates `Version` directly from `build.GetInfo().Tag`, so it is build-tag-derived as well and can expose FGDb release identity. Parse the tag strictly. Reject unknown, missing, malformed, or below-required tags when enabling.
+Before a tenant enables a feature, every live, non-decommissioned node in the shared cluster must report an FGDb release at or above that feature's required release **N**. Read each node's existing gossip `roachpb.NodeDescriptor.build_tag`, populated from `build.GetInfo().Tag`, and parse it strictly with `pkg/fgdb/release`. Reject unknown, missing, malformed, or below-required tags when enabling. The check uses gossip descriptors because they carry each node's build tag; `crdb_internal.node_build_info` is local-node-only in this tree and is for inspection, not cluster enumeration.
 
-This check uses the existing node membership and liveness semantics. It does not add cluster-version keys or bump the cluster `version` setting. The binary's CRDB compatibility version and active cluster version remain on the `V23_2` line; `ServerVersion` continues to use CRDB `23.2.x` semantics. The build tag carries FGDb release identity. Because `node_build_info.Version` is tag-derived, an FGDb tag can be visible to SQL clients querying that virtual table; the exact client-visible effect and any required compatibility treatment remain open for implementation and oracle validation.
+This check uses the existing node membership and liveness semantics. It does not add cluster-version keys or bump the cluster `version` setting. The binary's CRDB compatibility version and active cluster version remain on the `V23_2` line; `ServerVersion` continues to use CRDB `23.2.x` semantics. The binary build tag **must remain a CRDB-shaped version string accepted by this tree's `pkg/util/version.Parse`**. The fixes-only form is `v23.2.15-fgdb.N`; the feature-line form is `v23.2.15-fgdb-vMAJOR.MINOR.PATCH`, with optional `-rc.N`. These preserve the CRDB version prefix and carry the FGDb release identity in the prerelease portion. In this tree, `build.GetInfo().Tag` populates both `NodeDescriptor.build_tag` and `crdb_internal.node_build_info.Version`, so `Version` remains a parser-valid CRDB-shaped version while retaining its build-version meaning. The all-nodes enable check reads and parses `NodeDescriptor.build_tag` from gossip, not the local virtual table.
 
 The setting transition in the tenant is the control point: check all live nodes, reject the transition with a clear error if any node fails, then persist the tenant's setting through existing cluster settings storage (`system.settings`). Recheck membership and versions when enabling after upgrades; operational guidance for long-lived enabled tenants must describe what happens when an older or unknown node joins. That runtime policy and the error's exact SQLSTATE/message are open for implementation and oracle validation.
 
-The helper in `pkg/fgdb/release` recognizes the current fix-line form and a provisional new-line form. It does not yet decide cross-line ordering or implement node enumeration.
+The helper in `pkg/fgdb/release` parses both CRDB-shaped forms into their FGDb release identity. It does not yet decide cross-line ordering or implement node enumeration.
 
 ## Rollback matrix
 
@@ -59,13 +59,13 @@ The options are:
 
 | Option | Example tags | Base version location |
 | --- | --- | --- |
-| N1, FGDb semver | `fgdb-v1.0.0`, `fgdb-v1.1.0`, `fgdb-v1.0.0-rc.1` | Build metadata and release metadata, for example `fgdb-v1.0.0+crdb.v23.2.15` in long version output and image labels. |
+| N1, FGDb semver | `fgdb-v1.0.0+crdb.v23.2.15`, `fgdb-v1.1.0+crdb.v23.2.15`, `fgdb-v1.0.0-rc.1+crdb.v23.2.15` | Release metadata; the corresponding binary build tags are CRDB-shaped, for example `v23.2.15-fgdb-v1.0.0` and `v23.2.15-fgdb-v1.0.0-rc.1`. |
 | N2, base-anchored | `v23.2-fgdb2.0.0`, `v23.2-fgdb2.0.0-rc.1` | Tag prefix. |
 | N3, calendar line | `fgdb-2026.1`, `fgdb-2026.1.1`, `fgdb-2026.2-rc.1` | Build metadata and release metadata. |
 
-Until D1a is decided, the new-line parser grammar is provisional N1: `fgdb-vMAJOR.MINOR.PATCH` with optional `-rc.N`. The current old-line parser accepts `v23.2.15-fgdb.N`. `pkg/fgdb/release` labels the N1 grammar provisional in code. Once D1a is decided, update the grammar and build-tag metadata contract together.
+Until D1a is decided, the release-tag naming options remain open. For N1, the release tag grammar is `fgdb-vMAJOR.MINOR.PATCH+crdb.v23.2.15`, with optional `-rc.N` before the `+`; the build system maps that release identity to the CRDB-shaped binary tag `v23.2.15-fgdb-vMAJOR.MINOR.PATCH[-rc.N]`. The current fixes-only binary tag remains `v23.2.15-fgdb.N`. `pkg/fgdb/release.ParseTag` consumes the binary build tag, not the external release tag. D1a may choose another public release-tag scheme, but any scheme must keep the binary build tag CRDB-shaped and preserve a parseable FGDb identity in it.
 
-Both lines keep the binary's CRDB compatibility version and cluster version on the `V23_2` line; existing CRDB-shaped version parsing and `ServerVersion` semantics remain unchanged. The build tag carries FGDb release identity. Since `crdb_internal.node_build_info.Version` is populated from that tag in v23.2.15, the field can display the FGDb tag to SQL clients; the client-visible compatibility impact and any follow-up separation are open items for oracle validation. Tag-filter and release-workflow updates are a follow-up; this change does not edit `.github/`.
+Both lines keep the binary's CRDB compatibility version and cluster version on the `V23_2` line; existing CRDB-shaped version parsing and `ServerVersion` semantics remain unchanged. `build.GetInfo().Tag` is the CRDB-shaped binary build tag, and it is the source for both gossip `NodeDescriptor.build_tag` and `crdb_internal.node_build_info.Version`. FGDb identity is encoded in the tag's prerelease portion, so the `Version` field retains its CRDB-shaped, parser-accepted contract. The all-nodes enable check reads that same identity from gossip descriptors. Tag-filter and release-workflow updates are a follow-up; this change does not edit `.github/`.
 
 ## Validation and dependencies
 

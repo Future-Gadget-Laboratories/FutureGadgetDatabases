@@ -4,7 +4,11 @@
 
 package release
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cockroachdb/cockroach/pkg/util/version"
+)
 
 func TestParseTag(t *testing.T) {
 	tests := []struct {
@@ -14,13 +18,14 @@ func TestParseTag(t *testing.T) {
 		ok   bool
 	}{
 		{name: "fix line", tag: "v23.2.15-fgdb.7", want: Release{Line: FixLine, Fix: 7}, ok: true},
-		{name: "provisional feature line", tag: "fgdb-v1.2.3", want: Release{Line: FeatureLine, Major: 1, Minor: 2, Patch: 3}, ok: true},
-		{name: "provisional release candidate", tag: "fgdb-v1.0.0-rc.2", want: Release{Line: FeatureLine, Major: 1, Patch: 0, Prerelease: 2}, ok: true},
+		{name: "provisional feature line", tag: "v23.2.15-fgdb-v1.2.3", want: Release{Line: FeatureLine, Major: 1, Minor: 2, Patch: 3}, ok: true},
+		{name: "provisional release candidate", tag: "v23.2.15-fgdb-v1.0.0-rc.2", want: Release{Line: FeatureLine, Major: 1, Patch: 0, Prerelease: 2}, ok: true},
 		{name: "development build", tag: "v23.2.15-fgdb.8-dev", ok: false},
 		{name: "missing FGDb prefix", tag: "v23.2.15", ok: false},
 		{name: "zero fix number", tag: "v23.2.15-fgdb.0", ok: false},
-		{name: "leading zero", tag: "fgdb-v01.2.3", ok: false},
-		{name: "overflow", tag: "fgdb-v18446744073709551616.0.0", ok: false},
+		{name: "missing CRDB-shaped prefix", tag: "fgdb-v1.2.3+crdb.v23.2.15", ok: false},
+		{name: "leading zero", tag: "v23.2.15-fgdb-v01.2.3", ok: false},
+		{name: "overflow", tag: "v23.2.15-fgdb-v18446744073709551616.0.0", ok: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -32,5 +37,17 @@ func TestParseTag(t *testing.T) {
 				t.Errorf("ParseTag(%q) = %+v, want %+v", tc.tag, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBuildTagsAreCRDBVersions(t *testing.T) {
+	for _, tag := range []string{
+		"v23.2.15-fgdb.7",
+		"v23.2.15-fgdb-v1.0.0",
+		"v23.2.15-fgdb-v1.0.0-rc.1",
+	} {
+		if _, err := version.Parse(tag); err != nil {
+			t.Errorf("version.Parse(%q) = %v, want valid CRDB-shaped version", tag, err)
+		}
 	}
 }

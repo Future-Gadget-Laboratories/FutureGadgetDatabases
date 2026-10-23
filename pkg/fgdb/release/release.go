@@ -36,12 +36,15 @@ type Release struct {
 
 var (
 	fixTagRE     = regexp.MustCompile(`^v23\.2\.15-fgdb\.([1-9][0-9]*)$`)
-	featureTagRE = regexp.MustCompile(`^fgdb-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.([1-9][0-9]*))?$`)
+	featureTagRE = regexp.MustCompile(`^v23\.2\.15-fgdb-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.([1-9][0-9]*))?$`)
 )
 
-// ParseTag parses an FGDb build tag. The feature-line grammar is provisional
-// N1 and must be revisited when the naming decision is made. Non-FGDb tags,
-// development tags, and malformed or non-canonical tags return an error.
+// ParseTag parses an FGDb release identity from a CRDB-shaped build tag.
+// Feature-line tags use the v23.2.15-fgdb-vMAJOR.MINOR.PATCH[-rc.N] grammar;
+// their FGDb identity is in the prerelease portion of the CRDB version. The
+// external N1 release tag (fgdb-vMAJOR.MINOR.PATCH+crdb.v23.2.15) maps to this
+// binary build tag. Non-FGDb tags, development tags, and malformed or
+// non-canonical tags return an error.
 func ParseTag(tag string) (Release, error) {
 	if m := fixTagRE.FindStringSubmatch(tag); m != nil {
 		fix, err := parseNumber(m[1])
