@@ -57,7 +57,7 @@ func TestMissingBinaryDoesNotPass(t *testing.T) {
 	if err == nil || rep == nil || !rep.Rejected() {
 		t.Fatalf("missing binary: report=%v error=%v", rep, err)
 	}
-	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup} {
+	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup, ClaimTTL, ClaimGEOS, ClaimRC, ClaimCopy, ClaimImportMatrix} {
 		if got := rep.Outcome(id); got != labels.NotTested {
 			t.Errorf("claim %s = %s, want not_tested", id, got)
 		}

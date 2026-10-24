@@ -55,6 +55,16 @@ Use the OSS binary from the verified release archive or an OSS candidate build. 
 
 Set `FGDB_OUTPUT` to retain `result.json` and `summary.md` outside the Go test's temporary directory. Report `source_sha` identifies the suite checkout supplied by the caller; `candidate_sha256` identifies the supplied candidate tarball. They are different provenance fields. Do not describe a pinned-release run as a test of a newly built database candidate.
 
+## PAR-002 guards
+
+The runtime slice also records OSS-004 through OSS-008: row-level TTL expiry,
+GEOS using both beside-binary `lib/` libraries, READ COMMITTED across two
+connections, PostgreSQL-wire COPY in both directions, and the IMPORT matrix.
+CSV, DELIMITED, PGCOPY, and AVRO use loopback fixtures. PARQUET must be
+rejected with SQLSTATE `0A000`; MYSQLDUMP and PGDUMP remain `not_tested` until
+oracle evidence is available. Missing GEOS libraries and unavailable valid
+fixtures are never treated as passes.
+
 `fgdb/test/run.sh interim` (also nightly and weekly) runs the same capability implementation and merges its per-claim outcomes into the tier report. The PR tier runs only its helper tests. The required capability step reports missing setup and omitted checks explicitly, and fails the tier rather than accepting a skipped runtime check.
 
 The patch-test workflow runs `TestOSSCapabilities` against its existing checksum-pinned `v23.2.15-fgdb.1` binary after the backup integration tests. It uploads the capability report on completion. It does not build the changed server; the manual compile and interim candidate run provide that separate evidence.
@@ -63,4 +73,6 @@ The patch-test workflow runs `TestOSSCapabilities` against its existing checksum
 
 All node stores are temporary and owned by this test. SQL and startup have bounded contexts. Shutdown uses the existing stop and final-reap mechanisms; cleanup errors fail the run. A failure before a check leaves that claim `not_tested` rather than marking it successful.
 
-This adds no secure-mode, upgrade, network-partition, disk-fault, TTL, GEOS, auth-fallback, or full statement-coverage claim. The report keeps its existing partition/disk NOT-tested lines. Expand those capabilities in later slices with their own evidence and cleanup constraints.
+PAR-002 adds the TTL (opt-in), GEOS, READ COMMITTED, COPY and IMPORT-format guards described in [spec/PAR-002-oss-guards.md](spec/PAR-002-oss-guards.md). Missing beside-binary GEOS libraries fail the run, and so do symlinked library files or a node that maps any GEOS library from outside that `lib/` (checked through `/proc/<pid>/maps`, so Linux only). IMPORT runs as a detached job and is polled to a terminal status. Each setup statement has a 30s limit. Deferred cleanup uses its own 30s bounded context. This adds no secure-mode, upgrade, network-partition, disk-fault, auth-fallback, or full statement-coverage claim. The report keeps its existing partition/disk NOT-tested lines. Expand those capabilities in later slices with their own evidence and cleanup constraints.
+
+`OSS-004` (row-level TTL) is opt-in. Set `FGDB_TTL_GUARD=1` to run it. Without that, it reports `not_tested` with the reason; see the open question in `docs/fgdb/spec/PAR-002-oss-guards.md`.
