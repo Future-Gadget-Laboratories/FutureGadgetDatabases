@@ -226,6 +226,8 @@ func (h *Harness) ensureFaultLines() {
 }
 
 func runCommand(ctx context.Context, name string, args ...string) error {
+	// name and args come from the checked-in tier definitions and fixed harness commands, not network input.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd := exec.CommandContext(ctx, name, args...)
 	env, err := cluster.CommandEnv()
 	if err != nil {
