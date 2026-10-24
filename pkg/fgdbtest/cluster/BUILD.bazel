@@ -14,11 +14,7 @@ go_library(
     embedsrcs = ["allowlist.txt"],
     importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster",
     visibility = ["//visibility:public"],
-    data = ["//fgdb/test:scripts/scrub-credentials.sh"],
-    deps = [
-        "//pkg/build/bazel",
-        "@org_golang_x_sys//unix",
-    ],
+    deps = ["@org_golang_x_sys//unix"],
 )
 
 go_test(
@@ -28,6 +24,10 @@ go_test(
         "proc_test.go",
         "url_test.go",
     ],
+    data = ["//fgdb/test:scripts/scrub-credentials.sh"],
     embed = [":cluster"],
-    deps = ["@org_golang_x_sys//unix"],
+    deps = [
+        "//pkg/build/bazel",
+        "@org_golang_x_sys//unix",
+    ],
 )
