@@ -47,14 +47,14 @@ func TestReleaseLibRejectsSymlink(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	real := filepath.Join(dir, "real")
-	if err := os.Mkdir(real, 0o755); err != nil {
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(real, geosLibrary), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(realDir, geosLibrary), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(dir, "lib")); err != nil {
+	if err := os.Symlink(realDir, filepath.Join(dir, "lib")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ProcessEnv(bin); err == nil || !strings.Contains(err.Error(), "symlink") {
