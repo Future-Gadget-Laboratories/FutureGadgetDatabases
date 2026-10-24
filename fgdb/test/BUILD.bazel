@@ -10,3 +10,9 @@ filegroup(
     ]),
     visibility = ["//visibility:public"],
 )
+
+exports_files([
+    "claims.yaml",
+    "skips.yaml",
+    "scripts/scrub-credentials.sh",
+])
