@@ -3,13 +3,13 @@
 
 # PAR-004 benchmark harness and baseline
 
-**Status: Proposed, v1.1**
+**Status: Proposed, v1.2**
 
 ## Scope and non-goals
 
 This specification defines the benchmark tooling, pinned run configuration, result format, and regression gates for PAR-004. It does not change database or core code. A later PR will add the harness under `fgdb/bench/`; another later PR will wire it into CI.
 
-This version covers the required macro workloads M-KV0, M-KV95, M-YCSB-A..F, M-TPCC-D, and M-BANK, plus the microbenchmark suites U-STORAGE, U-OPT, and U-SQL. It defines how to record the v23.2.15 baseline; it does not claim that baseline has already been captured.
+This version covers the required macro workloads M-KV0, M-KV95, M-YCSB-A..F, M-TPCC-D, and M-BANK, plus the microbenchmark suites U-STORAGE, U-OPT, and U-SQL. M-RECOVERY is deferred to a later version. It defines how to record the v23.2.15 baseline; it does not claim that baseline has already been captured.
 
 ## Systems
 
@@ -28,7 +28,6 @@ Each run records the workload ID, its versioned invocation/configuration, and an
 | M-YCSB-A..F | Standard workload mixes: A update-heavy, B read-mostly, C read-only, D read-latest, E short scans, and F read-modify-write. Record the specific letter on each run. |
 | M-TPCC-D | TPC-C-derived mixed OLTP and multi-statement transactions, with a fixed warehouse count per hardware class. Report derived new orders per minute; do not call the result tpmC. |
 | M-BANK | Account transfers under load, including transactional correctness and contention behavior. |
-| M-RECOVERY | Recovery behavior, measuring service unavailability and time to normal after a recovery event. |
 | U-STORAGE | MVCC storage reads, writes, scans, garbage collection, export, and intent operations. |
 | U-OPT | SQL optimizer phase, end-to-end, and foreign-key insert benchmark performance. |
 | U-SQL | In-process SQL query and planning performance. |
@@ -46,29 +45,29 @@ Every accepted run must record the following before results can be compared:
 
 ## Result schema v1
 
-Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps use RFC 3339 UTC. Durations use seconds; throughput uses operations per second; latency values use milliseconds; `cv` is a unitless fraction (for example, `0.02` means 2%). Top-level metrics are medians across repetitions. The latency fields summarize the measured-window client latency distribution. Errors count failed operations during that window. A run with errors greater than zero is invalid for gating; M-BANK correctness failures fail the gate outright.
+Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps use RFC 3339 UTC. Durations use seconds; throughput units are `ops_s` or, for M-TPCC-D, `new_orders_per_min`; latency values use milliseconds; `cv` is a unitless fraction (for example, `0.02` means 2%). Macro top-level throughput and latency metrics are medians across repetitions. The latency fields summarize the measured-window client latency distribution. Per-repetition `errors` count failed operations during that window; top-level `errors_total` is their sum. Any `errors_total` greater than zero makes a run invalid for gating. For M-BANK, the sum of per-repetition `correctness_violations` must also be zero or the gate fails outright. The schema is a discriminated union: `kind="macro"` requires the macro fields below; `kind="micro"` requires only common fields plus `micro` and `artifact`, with macro-only fields absent.
 
-| Field | Type | Meaning |
+| Field | Applies to | Type | Meaning |
 | --- | --- | --- |
-| `schema_version` | string | Result format version, `"1"`. |
-| `run_id` | string | Unique identifier for this run. |
-| `kind` | string | `macro` or `micro`. |
-| `system` | string | For macro runs, `B0` or `S0`; for micro runs, `main` or `candidate`. |
-| `binary_version` | string | Human-readable binary version. |
-| `commit` | string | Source commit SHA used to build the binary. |
-| `workload_id` | string | Workload ID and, for M-YCSB, the selected letter. |
-| `config` | object | Pinned workload, cluster, tool, and run-protocol settings, including the seed. |
-| `hardware_class` | object | Hardware class ID and descriptive hardware/environment fields. |
-| `started_at` | string | RFC 3339 UTC start time. |
-| `duration_s` | number | Measured-window duration in seconds, excluding warm-up. |
-| `primary_metric` | object | `{name, value, unit}` primary measure; for M-TPCC-D use `new_orders_per_min`, otherwise `ops_s`. |
-| `repetitions` | array of objects | Per-repetition `throughput_ops_s`, `latency_ms` (`p50`, `p95`, `p99`, `p99_9`, `max`), and `errors`. |
-| `throughput_ops_s` | number | Median raw throughput in operations per second across repetitions. |
-| `latency_ms` | object | Median `p50`, `p95`, `p99`, `p99_9`, and `max` latency in milliseconds across repetitions. |
-| `errors` | integer | Median failed operations during the measured window across repetitions. |
-| `cv` | object | Sample coefficient of variation (standard deviation with n-1 denominator divided by mean) across repetitions for `throughput` and `p99`; each value is a unitless fraction. |
-| `recovery` | object, optional | For M-RECOVERY only: `{unavailability_s, time_to_normal_s}` in seconds. |
-| `artifact` | string, optional | For micro runs, path to raw `benchstat` text; micro results are stored there. |
+| `schema_version` | all | string | Result format version, `"1"`. |
+| `run_id` | all | string | Unique identifier for this run. |
+| `kind` | all | string | `macro` or `micro`; selects the required fields. |
+| `system` | all | string | For macro runs, `B0` or `S0`; for micro runs, `main` or `candidate`. |
+| `binary_version` | all | string | Human-readable binary version. |
+| `commit` | all | string | Source commit SHA used to build the binary. |
+| `workload_id` | all | string | Workload ID and, for M-YCSB, the selected letter. |
+| `config` | all | object | Pinned workload, cluster, tool, and run-protocol settings, including the seed. |
+| `hardware_class` | all | object | Hardware class ID and descriptive hardware/environment fields. |
+| `started_at` | all | string | RFC 3339 UTC start time. |
+| `duration_s` | all | number | Measured-window duration in seconds, excluding warm-up. |
+| `repetitions` | macro | array of objects | Per-repetition `throughput` (`value`, `unit`), `latency_ms` (`p50`, `p95`, `p99`, `p99_9`, `max`), and `errors`; M-BANK also requires `correctness_violations`. |
+| `throughput` | macro | object | Median `{value, unit}` throughput across repetitions; unit is `ops_s`, except M-TPCC-D uses `new_orders_per_min`. |
+| `latency_ms` | macro | object | Median `p50`, `p95`, `p99`, `p99_9`, and `max` latency in milliseconds across repetitions. |
+| `errors_total` | macro | integer | Sum of per-repetition failed operations during the measured windows; must be zero for gating. |
+| `correctness_violations_total` | M-BANK macro | integer | Sum of per-repetition correctness violations; must be zero for gating. |
+| `cv` | macro | object | Sample coefficient of variation (standard deviation with n-1 denominator divided by mean) across repetitions for `throughput` values and `p99`; each value is a unitless fraction rounded to four decimal places. |
+| `micro` | micro | object | `{benchmarks:[{name, time_ns_op, allocs_op, bytes_op, samples}]}` with per-benchmark measurements. |
+| `artifact` | micro | string | Path to raw `benchstat` text. |
 
 **Abridged illustrative example; required fields from Pinned configuration are omitted.**
 
@@ -98,18 +97,18 @@ Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps us
   },
   "started_at": "2026-01-01T00:00:00Z",
   "duration_s": 600,
-  "primary_metric": {"name": "ops", "value": 1000, "unit": "ops_s"},
   "repetitions": [
-    {"throughput_ops_s": 1000, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0},
-    {"throughput_ops_s": 1010, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.4, "p99_9": 12.1, "max": 22.0}, "errors": 0},
-    {"throughput_ops_s": 995, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.9, "max": 22.0}, "errors": 0},
-    {"throughput_ops_s": 1005, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0},
-    {"throughput_ops_s": 990, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.8, "max": 22.0}, "errors": 0}
+    {"throughput": {"value": 1000, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0, "correctness_violations": 0},
+    {"throughput": {"value": 1010, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.4, "p99_9": 12.1, "max": 22.0}, "errors": 0, "correctness_violations": 0},
+    {"throughput": {"value": 995, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.9, "max": 22.0}, "errors": 0, "correctness_violations": 0},
+    {"throughput": {"value": 1005, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0, "correctness_violations": 0},
+    {"throughput": {"value": 990, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.8, "max": 22.0}, "errors": 0, "correctness_violations": 0}
   ],
-  "throughput_ops_s": 1000,
+  "throughput": {"value": 1000, "unit": "ops_s"},
   "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0},
-  "errors": 0,
-  "cv": {"throughput": 0.0079, "p99": 0.0095}
+  "errors_total": 0,
+  "correctness_violations_total": 0,
+  "cv": {"throughput": 0.0079, "p99": 0.0101}
 }
 ```
 
@@ -117,16 +116,15 @@ Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps us
 
 **PERF-001 micro gate.** For each covered microbenchmark, compare `main` with `candidate` using `benchstat`. Micro results are raw benchstat text referenced by `artifact`. Fail on a statistically significant regression when `time/op` or `allocs/op` is more than 3% worse. The significance test is benchstat's test.
 
-Macro gates use the median across repetitions (the top-level stored value). For each metric, compute per-repetition deltas `(candidate - B0) / B0` and a 95% bootstrap confidence interval from 10,000 resamples using the fixed seed recorded in `config`. Fail if the interval excludes zero on the worse side and the median delta exceeds the applicable practical threshold:
+For each macro metric, define `delta = (median(candidate repetitions) - median(B0 repetitions)) / median(B0 repetitions)`. Independently bootstrap-resample repetitions from each side, with replacement, for 10,000 draws using the recorded seed, recomputing this same delta for each draw. The gated candidate value is the stored top-level median. Fail iff the 95% confidence interval lies entirely on the worse side of zero and the point delta exceeds the applicable practical threshold. Compare throughput in the same unit recorded for both systems (`ops_s`, or `new_orders_per_min` for M-TPCC-D).
 
 | Suite | Failure threshold |
 | --- | --- |
 | Macro throughput, nightly | More than 3% worse than B0. |
 | Macro throughput, release | More than 2% worse than B0. |
 | Macro p99 or p99.9 latency | More than 10% worse than B0. |
-| M-RECOVERY unavailability or time to normal | More than 10% worse than B0. |
 
-The first PAR-004 macro baseline gate applies these thresholds to M-KV0, M-KV95, M-YCSB-A..F, M-TPCC-D, M-BANK, and M-RECOVERY. Stability must be established before a hardware class gates changes: coefficient of variation below 2% for throughput and below 5% for p99 latency. If a run exceeds either limit, investigate the environment and do not treat it as a valid gating comparison.
+The first PAR-004 macro baseline gate applies these thresholds to M-KV0, M-KV95, M-YCSB-A..F, M-TPCC-D, and M-BANK. Stability must be established before a hardware class gates changes: coefficient of variation below 2% for throughput and below 5% for p99 latency. If a run exceeds either limit, investigate the environment and do not treat it as a valid gating comparison.
 
 ## Publishing
 
