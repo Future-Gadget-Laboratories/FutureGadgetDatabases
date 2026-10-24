@@ -18,8 +18,8 @@ update itself. That stays on unless the config file sets `auto_update: false`.
 Register that runner on a machine with at least 30 GiB of RAM and 150 GiB
 free on a local disk. The script refuses a smaller machine unless you pass
 `--allow-small-host` to test the script itself. Do not point the compile at
-`ubuntu-latest`. The workflow asks for both `self-hosted` and `fgdb-build`,
-so a runner that only has `self-hosted` will not pick up the job.
+`ubuntu-latest`. When `FGDB_BUILD_RUNS_ON` is set to
+`["self-hosted","fgdb-build"]`, the workflow requires both labels.
 
 ## What it sets up
 
