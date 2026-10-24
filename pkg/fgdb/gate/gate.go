@@ -33,10 +33,11 @@ func SettingName(feature string) (string, error) {
 	return settingPrefix + feature + settingSuffix, nil
 }
 
-// Run calls the stock path while disabled and the FGDb path while enabled.
-// The caller supplies both paths so the disabled branch preserves its existing
-// result and error, including SQLSTATE when returned by that path. A nil
-// callback for the selected branch returns an error.
+// Run calls stockPath when disabled and fgdbPath when enabled. It returns the
+// selected callback's error unchanged, preserving a stock error and any
+// SQLSTATE it carries. Non-error results are the callback's responsibility,
+// such as values captured by a closure. A nil callback for the selected branch
+// returns an error.
 func Run(enabled bool, stockPath, fgdbPath func() error) error {
 	path := stockPath
 	if enabled {
