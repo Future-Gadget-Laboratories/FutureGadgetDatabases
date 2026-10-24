@@ -144,6 +144,8 @@ jobs:
     name: Build cockroach-oss
     needs: gate
     if: needs.gate.outputs.skip != 'true'
+    # If FGDB_BUILD_RUNS_ON is unset, this falls back to any self-hosted runner.
+    # Set it to a JSON array of labels that selects release-only runners.
     runs-on: ${{ fromJSON(vars.FGDB_BUILD_RUNS_ON || '["self-hosted"]') }}
     timeout-minutes: 480
     permissions:
