@@ -18,6 +18,7 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [contributing.md](contributing.md) | A first evening on the project |
 | [security.md](security.md) | How to report a vulnerability |
 | [roadmap.md](roadmap.md) | v23.2.15 pin, then cleanroom work, then naming |
+| [spec/PAR-004-benchmark-harness.md](spec/PAR-004-benchmark-harness.md) | Proposed benchmark harness, result schema, and baseline gates |
 | [CLEANROOM.md](CLEANROOM.md) | How to rewrite newer behavior without copying proprietary code |
 | [SOURCES.md](SOURCES.md) | Public sources for that cleanroom process |
 | [../agent/CLEANROOM-ENFORCEMENT.md](../agent/CLEANROOM-ENFORCEMENT.md) | Rules for people and agents: refuse contaminated work and discard it |
