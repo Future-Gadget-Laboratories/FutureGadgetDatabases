@@ -10,5 +10,6 @@ go_library(
 go_test(
     name = "release_test",
     srcs = ["release_test.go"],
+    deps = ["//pkg/util/version"],
     embed = [":release"],
 )
