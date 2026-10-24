@@ -426,6 +426,8 @@ func equalRows(got, want [][]string) bool {
 	}
 	return true
 }
+
+// pgCopyFixture is COPY text format (tab delimiter, \N null): IMPORT PGCOPY does not read binary COPY.
 func pgCopyFixture() []byte {
 	return []byte(tsvRows)
 }
