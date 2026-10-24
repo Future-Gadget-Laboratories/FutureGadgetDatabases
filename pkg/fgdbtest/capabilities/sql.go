@@ -30,13 +30,14 @@ func importCSV(ctx context.Context, conn *pgx.Conn) error {
 	if _, err := conn.Exec(ctx, "CREATE TABLE defaultdb.public.fgdb_capability_import (id INT PRIMARY KEY, value STRING NOT NULL)"); err != nil {
 		return fmt.Errorf("create IMPORT target: %w", err)
 	}
-	// The fixture URL is bound as a placeholder rather than spliced into SQL.
-	const stmt = "IMPORT INTO defaultdb.public.fgdb_capability_import CSV DATA ($1)"
-	fixtureURL, err := url.JoinPath(srv.URL, fixturePath)
-	if err != nil {
-		return fmt.Errorf("fixture URL: %w", err)
+	importURL, err := url.Parse(srv.URL)
+	if err != nil || importURL.Scheme != "http" || importURL.Hostname() != "127.0.0.1" && importURL.Hostname() != "::1" {
+		return fmt.Errorf("unexpected httptest URL %q", srv.URL)
 	}
-	if _, err := conn.Exec(ctx, stmt, fixtureURL); err != nil {
+	importURL = importURL.JoinPath(fixturePath)
+	// Bind the validated URL as a placeholder.
+	const stmt = "IMPORT INTO defaultdb.public.fgdb_capability_import CSV DATA ($1)"
+	if _, err := conn.Exec(ctx, stmt, importURL.String()); err != nil {
 		return fmt.Errorf("OSS CSV IMPORT: %w", err)
 	}
 	var count, exact int64
