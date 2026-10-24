@@ -4,8 +4,10 @@ The `cockroach-oss` compile runs on a self-hosted GitHub Actions runner with
 the labels `self-hosted` and `fgdb-build`.
 
 The release workflow's `FGDB_BUILD_RUNS_ON` repository variable is optional.
-If unset, it can run on any self-hosted runner; set it to a JSON array of
-labels that selects release-only runners.
+If the variable is unset, the build job can run on any self-hosted runner.
+Set the variable to a JSON array of labels that selects release-only runners.
+The two-label routing described here assumes the variable is set to
+`["self-hosted","fgdb-build"]`.
 
 The script is `build/fgdb/runner/setup-runner.sh`. It is idempotent.
 It prints a plan, then applies it. `--dry-run` stops after the plan.
