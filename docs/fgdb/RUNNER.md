@@ -1,7 +1,7 @@
 # Self-hosted Actions runner
 
-The `cockroach-oss` compile runs on a self-hosted GitHub Actions runner with
-the labels `self-hosted` and `fgdb-build`.
+This guide sets up a self-hosted GitHub Actions runner for the
+`cockroach-oss` compile with labels `self-hosted` and `fgdb-build`.
 
 The release workflow's `FGDB_BUILD_RUNS_ON` repository variable is optional.
 If the variable is unset, the build job can run on any self-hosted runner.
@@ -200,8 +200,8 @@ A later run without a token is safe once
 again; that needs a new token. `--dry-run` prints the plan only.
 
 Confirm in GitHub that the runner is Idle and has labels `self-hosted` and
-`fgdb-build`. The workflow asks for both labels, so a runner that only has
-`self-hosted` will not pick up the job.
+`fgdb-build`. When `FGDB_BUILD_RUNS_ON` is set to
+`["self-hosted","fgdb-build"]`, the workflow requires both labels.
 
 The runner needs outbound HTTPS to `github.com` (source, Actions, Bazelisk,
 the `cockroachdb/bazel` release), `storage.googleapis.com` (public Bazel

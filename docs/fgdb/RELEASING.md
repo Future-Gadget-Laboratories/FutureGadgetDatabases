@@ -45,7 +45,7 @@ Tagging the raw `v23.2.15` commit would run the old `bincheck` workflow
 the fork guard. The publish job refuses to create the tag in that case.
 
 The tag push builds `//pkg/cmd/cockroach-oss:cockroach-oss` and
-`//c-deps:libgeos` on the `fgdb-build` runner, checks that the binary is
+`//c-deps:libgeos` on the selected self-hosted runner, checks that the binary is
 CCL-free, then uploads the Release and the image.
 
 ### Smoke build without publishing
