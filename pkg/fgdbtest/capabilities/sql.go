@@ -37,9 +37,9 @@ func importCSV(ctx context.Context, conn *pgx.Conn) error {
 		return fmt.Errorf("unexpected httptest URL %q", srv.URL)
 	}
 	importURL = importURL.JoinPath(fixturePath)
-	// IMPORT has no bind placeholders, so quote the validated loopback URL as a SQL literal.
-	stmt := "IMPORT INTO defaultdb.public.fgdb_capability_import CSV DATA (" + quoteSQLString(importURL.String()) + ")"
-	if _, err := conn.Exec(ctx, stmt); err != nil {
+	// Bind the validated URL as a placeholder.
+	const stmt = "IMPORT INTO defaultdb.public.fgdb_capability_import CSV DATA ($1)"
+	if _, err := conn.Exec(ctx, stmt, importURL.String()); err != nil {
 		return fmt.Errorf("OSS CSV IMPORT: %w", err)
 	}
 	var count, exact int64
@@ -51,10 +51,6 @@ func importCSV(ctx context.Context, conn *pgx.Conn) error {
 		return fmt.Errorf("IMPORT returned count=%d exact=%d, want two exact fixture rows", count, exact)
 	}
 	return nil
-}
-
-func quoteSQLString(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func serveCSV(w http.ResponseWriter, r *http.Request) {
