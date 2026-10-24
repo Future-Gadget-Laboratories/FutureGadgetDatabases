@@ -45,10 +45,10 @@ Every accepted run must record the following before results can be compared:
 
 ## Result schema v1
 
-Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps use RFC 3339 UTC. Durations use seconds; throughput units are `ops_s` or, for M-TPCC-D, `new_orders_per_min`; latency values use milliseconds; `cv` is a unitless fraction (for example, `0.02` means 2%). Macro top-level throughput and latency metrics are medians across repetitions. The latency fields summarize the measured-window client latency distribution. Per-repetition `errors` count failed operations during that window; top-level `errors_total` is their sum. Any `errors_total` greater than zero makes a run invalid for gating. For M-BANK, the sum of per-repetition `correctness_violations` must also be zero or the gate fails outright. The schema is a discriminated union: `kind="macro"` requires the macro fields below; `kind="micro"` requires only common fields plus `micro` and `artifact`, with macro-only fields absent.
+Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps use RFC 3339 UTC. Durations use seconds; throughput units are `ops_s` or, for M-TPCC-D, `new_orders_per_min`; latency values use milliseconds; `cv` is a unitless fraction (for example, `0.02` means 2%). The micro `time_ns_op` measurement is in nanoseconds per operation, the one exception to the seconds convention. Macro top-level throughput and latency metrics are medians across repetitions. The latency fields summarize the measured-window client latency distribution. Per-repetition `errors` count failed operations during that window; top-level `errors_total` is their sum. Any `errors_total` greater than zero makes a run invalid for gating. For M-BANK, the sum of per-repetition `correctness_violations` must also be zero or the gate fails outright. The schema is a discriminated union: `kind="macro"` requires the macro fields below; `kind="micro"` requires only common fields plus `micro` and `artifact`, with macro-only fields absent.
 
 | Field | Applies to | Type | Meaning |
-| --- | --- | --- |
+| --- | --- | --- | --- |
 | `schema_version` | all | string | Result format version, `"1"`. |
 | `run_id` | all | string | Unique identifier for this run. |
 | `kind` | all | string | `macro` or `micro`; selects the required fields. |
@@ -98,23 +98,22 @@ Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps us
   "started_at": "2026-01-01T00:00:00Z",
   "duration_s": 600,
   "repetitions": [
-    {"throughput": {"value": 1000, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0, "correctness_violations": 0},
-    {"throughput": {"value": 1010, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.4, "p99_9": 12.1, "max": 22.0}, "errors": 0, "correctness_violations": 0},
-    {"throughput": {"value": 995, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.9, "max": 22.0}, "errors": 0, "correctness_violations": 0},
-    {"throughput": {"value": 1005, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0, "correctness_violations": 0},
-    {"throughput": {"value": 990, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.8, "max": 22.0}, "errors": 0, "correctness_violations": 0}
+    {"throughput": {"value": 1000, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0},
+    {"throughput": {"value": 1010, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.4, "p99_9": 12.1, "max": 22.0}, "errors": 0},
+    {"throughput": {"value": 995, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.9, "max": 22.0}, "errors": 0},
+    {"throughput": {"value": 1005, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0}, "errors": 0},
+    {"throughput": {"value": 990, "unit": "ops_s"}, "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.2, "p99_9": 11.8, "max": 22.0}, "errors": 0}
   ],
   "throughput": {"value": 1000, "unit": "ops_s"},
   "latency_ms": {"p50": 1.2, "p95": 4.1, "p99": 8.3, "p99_9": 12.0, "max": 22.0},
   "errors_total": 0,
-  "correctness_violations_total": 0,
   "cv": {"throughput": 0.0079, "p99": 0.0101}
 }
 ```
 
 ## Regression gates
 
-**PERF-001 micro gate.** For each covered microbenchmark, compare `main` with `candidate` using `benchstat`. Micro results are raw benchstat text referenced by `artifact`. Fail on a statistically significant regression when `time/op` or `allocs/op` is more than 3% worse. The significance test is benchstat's test.
+**PERF-001 micro gate.** For each covered microbenchmark, compare `main` with `candidate` using `benchstat`. Gate on the stored `micro.benchmarks[]` fields: benchstat `time/op` corresponds to `time_ns_op` (nanoseconds per operation) and `allocs/op` corresponds to `allocs_op`. The `artifact` field holds raw benchstat text as provenance only. Fail on a statistically significant regression when either gated metric is more than 3% worse. The significance test is benchstat's test.
 
 For each macro metric, define `delta = (median(candidate repetitions) - median(B0 repetitions)) / median(B0 repetitions)`. Independently bootstrap-resample repetitions from each side, with replacement, for 10,000 draws using the recorded seed, recomputing this same delta for each draw. The gated candidate value is the stored top-level median. Fail iff the 95% confidence interval lies entirely on the worse side of zero and the point delta exceeds the applicable practical threshold. Compare throughput in the same unit recorded for both systems (`ops_s`, or `new_orders_per_min` for M-TPCC-D).
 
