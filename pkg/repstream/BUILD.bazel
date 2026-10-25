@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "repstream",
@@ -10,5 +10,16 @@ go_library(
         "//pkg/sql/isql",
         "//pkg/sql/sem/eval",
         "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "repstream_test",
+    srcs = ["api_test.go"],
+    embed = [":repstream"],
+    deps = [
+        "//pkg/sql/clusterunique",
+        "//pkg/sql/isql",
+        "//pkg/sql/sem/eval",
     ],
 )

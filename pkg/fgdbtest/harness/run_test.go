@@ -94,3 +94,25 @@ func readSummary(t *testing.T, dir string) string {
 	}
 	return string(body)
 }
+
+func TestMissingCapabilityBinaryFailsTheTier(t *testing.T) {
+	t.Setenv("FGDB_COCKROACH", "")
+	root := t.TempDir()
+	writeTier(t, root, "interim", `
+name: interim
+steps:
+  - id: OSS-CAPABILITIES
+    kind: oss-capabilities
+`)
+	out := filepath.Join(t.TempDir(), "out")
+	h := &Harness{Root: root, TierName: "interim", Output: out}
+	if err := h.Run(context.Background()); err == nil {
+		t.Fatal("missing capability binary must fail the required tier")
+	}
+	body := readSummary(t, out)
+	for _, text := range []string{"result: fail", "OSS-CAPABILITIES: fail", "OSS-001", "OSS-002", "OSS-003"} {
+		if !strings.Contains(body, text) {
+			t.Errorf("summary is missing %q: %s", text, body)
+		}
+	}
+}

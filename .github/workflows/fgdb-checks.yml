@@ -18,6 +18,7 @@ on:
       - "fgdb/**"
       - "build/fgdb/**"
       - "pkg/fgdbtest/**"
+      - "pkg/repstream/**"
       - "pkg/cmd/fgdb-test/**"
       - "pkg/cmd/fgdb-backup/**"
       - "go.mod"

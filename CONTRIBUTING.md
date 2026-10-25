@@ -49,7 +49,7 @@ If you change `pkg/`, say what database behavior can change: correctness, durabi
 
 `.github/workflows/fgdb-checks.yml` runs the pr tier and the other fast checks on GitHub-hosted `ubuntu-latest`. Pull requests run it when they touch those paths. Every push to `main` runs it. A docs-only pull request does not need a Bazel compile.
 
-`.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` when a maintainer dispatches it with the 40-character SHA of a commit that is already on a branch or tag in this repository. A pull request does not start that workflow. The build runs on a self-hosted runner labeled `fgdb-pr-ephemeral`. The job has no secrets. The same rules are in [docs/fgdb/testing.md](docs/fgdb/testing.md).
+`.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` when a maintainer dispatches it with the 40-character SHA of a commit that is already on a branch or tag in this repository. A pull request does not start that workflow. The build runs on an ephemeral self-hosted build runner. The job has no secrets. The same rules are in [docs/fgdb/testing.md](docs/fgdb/testing.md).
 
 If you build a binary, use:
 
