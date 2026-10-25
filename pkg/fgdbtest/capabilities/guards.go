@@ -182,11 +182,12 @@ func guardTTL(ctx context.Context, conn *pgx.Conn) (err error) {
 	for time.Now().Before(deadline) {
 		pollCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		rows, err := queryRows(pollCtx, conn, `SELECT id, v FROM ttl_guard ORDER BY id`)
+		pollErr := pollCtx.Err()
 		cancel()
 		if err == nil && equalRows(rows, [][]string{{"2", "live"}}) {
 			return nil
 		}
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && pollErr == nil {
 			return fmt.Errorf("TTL poll: %w", err)
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -211,10 +212,10 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
 	}
 	defer func() {
-		_, _ = cleanupExec(a, `ROLLBACK`)
+		_, rollbackErr := cleanupExec(a, `ROLLBACK`)
 		_, dropErr := cleanupExec(a, `DROP TABLE IF EXISTS rc_guard`)
 		_, restoreErr := cleanupExec(a, fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled)))
-		err = errors.Join(err, dropErr, restoreErr)
+		err = errors.Join(err, rollbackErr, dropErr, restoreErr)
 	}()
 	if err = execEach(ctx, a,
 		`SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = true`,
