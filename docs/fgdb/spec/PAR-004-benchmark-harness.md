@@ -45,7 +45,7 @@ Every accepted run must record the following before results can be compared:
 
 ## Result schema v1
 
-Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps use RFC 3339 UTC. Durations use seconds; throughput units are `ops_s` or, for M-TPCC-D, `new_orders_per_min`; latency values use milliseconds; `cv` is a unitless fraction (for example, `0.02` means 2%). The micro `time_ns_op` measurement is in nanoseconds per operation, the one exception to the seconds convention. Macro top-level throughput and latency metrics are medians across repetitions. The latency fields summarize the measured-window client latency distribution. Per-repetition `errors` count failed operations during that window; top-level `errors_total` is their sum. Any `errors_total` greater than zero makes a run invalid for gating. For M-BANK, the sum of per-repetition `correctness_violations` must also be zero or the gate fails outright. The schema is a discriminated union: `kind="macro"` requires the macro fields below; `kind="micro"` requires only common fields plus `micro` and `artifact`, with macro-only fields absent.
+Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps use RFC 3339 UTC. Durations use seconds; throughput units are `ops_s` or, for M-TPCC-D, `new_orders_per_min`; latency values use milliseconds; `cv` is a unitless fraction (for example, `0.02` means 2%). The micro `time_ns_op` measurement is in nanoseconds per operation, the one exception to the seconds convention. Macro top-level throughput and latency metrics are medians across repetitions. Each micro benchmark stores per-repetition samples and the medians of those samples in its top-level `time_ns_op`, `bytes_op`, and `allocs_op` fields. The latency fields summarize the measured-window client latency distribution. Per-repetition `errors` count failed operations during that window; top-level `errors_total` is their sum. Any `errors_total` greater than zero makes a run invalid for gating. For M-BANK, the sum of per-repetition `correctness_violations` must also be zero or the gate fails outright. The schema is a discriminated union: `kind="macro"` requires the macro fields below; `kind="micro"` requires only common fields plus `micro` and `artifact`, with macro-only fields absent.
 
 | Field | Applies to | Type | Meaning |
 | --- | --- | --- | --- |
@@ -66,8 +66,10 @@ Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps us
 | `errors_total` | macro | integer | Sum of per-repetition failed operations during the measured windows; must be zero for gating. |
 | `correctness_violations_total` | M-BANK macro | integer | Sum of per-repetition correctness violations; must be zero for gating. |
 | `cv` | macro | object | Sample coefficient of variation (standard deviation with n-1 denominator divided by mean) across repetitions for `throughput` values and `p99`; each value is a unitless fraction rounded to four decimal places. |
-| `micro` | micro | object | `{benchmarks:[{name, time_ns_op, allocs_op, bytes_op, samples}]}` with per-benchmark measurements. |
+| `micro` | micro | object | Per-benchmark micro measurements, as defined below. |
 | `artifact` | micro | string | Path to raw `benchstat` text. |
+
+`micro.benchmarks` is an array of objects with a benchmark `name` (string), three top-level median fields (`time_ns_op`, `bytes_op`, and `allocs_op`, each a number), and a required `samples` object. The `samples` object contains one number per repetition in each of these arrays: `time_ns_op` (nanoseconds per operation), `bytes_op` (bytes per operation), and `allocs_op` (allocations per operation, a count). All three arrays have the same length, equal to `config.repetitions` and at least 10. Each top-level metric is the median of its matching `samples` array.
 
 **Abridged illustrative example; required fields from Pinned configuration are omitted.**
 
@@ -113,9 +115,16 @@ Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps us
 
 ## Regression gates
 
-**PERF-001 micro gate.** For each covered microbenchmark, compare `main` with `candidate` using `benchstat`. Gate on the stored `micro.benchmarks[]` fields: benchstat `time/op` corresponds to `time_ns_op` (nanoseconds per operation) and `allocs/op` corresponds to `allocs_op`. The `artifact` field holds raw benchstat text as provenance only. Fail on a statistically significant regression when either gated metric is more than 3% worse. The significance test is benchstat's test.
+**PERF-001 micro gate.** For each covered microbenchmark name, compare `main` with `candidate` using `benchstat` on the paired per-repetition `samples.time_ns_op` and `samples.allocs_op` arrays from their micro run records. The stored top-level `time_ns_op` and `allocs_op` values are median checks and do not replace the sample arrays as benchstat inputs; `time/op` corresponds to nanoseconds per operation and `allocs/op` to allocations per operation. The `artifact` field holds raw benchstat text as provenance only. Fail on a statistically significant regression when either gated metric is more than 3% worse. The significance test is benchstat's test.
 
-For each macro metric, define `delta = (median(candidate repetitions) - median(B0 repetitions)) / median(B0 repetitions)`. Independently bootstrap-resample repetitions from each side, with replacement, for 10,000 draws using the recorded seed, recomputing this same delta for each draw. The gated candidate value is the stored top-level median. Fail iff the 95% confidence interval lies entirely on the worse side of zero and the point delta exceeds the applicable practical threshold. Compare throughput in the same unit recorded for both systems (`ops_s`, or `new_orders_per_min` for M-TPCC-D).
+For each macro metric, define `delta = (median(candidate repetitions) - median(B0 repetitions)) / median(B0 repetitions)`. Calculate the 95% confidence interval as follows:
+
+1. Use a percentile bootstrap with 10,000 draws. For each draw, independently sample with replacement `n` observations from the B0 repetitions and `m` observations from the candidate repetitions, where `n` and `m` are the respective repetition counts.
+2. For each draw, compute the same `delta` from the two resampled medians, using throughput `value` or the applicable `latency_ms.p99` or `latency_ms.p99_9` metric.
+3. Sort the 10,000 delta values. The interval endpoints are their 2.5th and 97.5th percentiles, calculated with the Hyndman–Fan type 7 quantile: for sorted values `x[0]` through `x[B-1]`, use `h = (B-1) * p` and `Q(p) = x[floor(h)] + (h - floor(h)) * (x[ceil(h)] - x[floor(h)])` for `p = 0.025` and `p = 0.975`.
+4. Use Go's `math/rand` bootstrap generator, initialized as `rand.New(rand.NewSource(seed))`, where `seed` is the B0 baseline run's recorded `config.seed`. Record `config.seed` in the B0 baseline JSON. For each draw, generate the B0 resample first, then the candidate resample, choosing each observation index with `Intn` on that side's repetition count.
+
+The gated candidate value is the stored top-level median. Fail iff the 95% confidence interval lies entirely on the worse side of zero and the point delta exceeds the applicable practical threshold. Compare throughput in the same unit recorded for both systems (`ops_s`, or `new_orders_per_min` for M-TPCC-D).
 
 | Suite | Failure threshold |
 | --- | --- |
