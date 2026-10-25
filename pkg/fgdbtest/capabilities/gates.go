@@ -38,7 +38,7 @@ var gateCases = []GateCase{
 	{ID: "GATE-008", Setup: []string{"CREATE TABLE IF NOT EXISTS par001 (id INT PRIMARY KEY)"}, Statement: "CREATE SCHEDULE FOR CHANGEFEED TABLE defaultdb.public.par001 INTO 'nodelocal://1/par001' RECURRING '@hourly'", WantSQLState: cclState, WantMessage: cclMessage + " *tree.ScheduledChangefeed"},
 	{ID: "GATE-009", Statement: "CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'", WantSQLState: cclState, WantMessage: cclMessage + " *tree.ScheduledBackup"},
 	{ID: "GATE-010", Statement: "ALTER BACKUP SCHEDULE 1 SET INTO 'nodelocal://1/par001'", WantSQLState: cclState, WantMessage: cclMessage + " *tree.AlterBackupSchedule"},
-	{ID: "GATE-011", Statement: "CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'", WantSQLState: cclState, WantMessage: cclMessage + " *tree.CreateTenantFromReplication"},
+	{ID: "GATE-011", Statement: "CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://invalid.invalid:26257'", WantSQLState: cclState, WantMessage: cclMessage + " *tree.CreateTenantFromReplication"},
 
 	// GATE-012 through GATE-020: specific hook gates.
 	{ID: "GATE-012", Statement: "CREATE DATABASE mr PRIMARY REGION 'us-east1' SURVIVE ZONE FAILURE", WantSQLState: cclState, WantMessage: "creating multi-region databases requires a CCL binary"},
@@ -69,13 +69,17 @@ func gateClaimIDs() []string {
 
 func runGateContract(ctx context.Context, conn *pgx.Conn, rep *report.Report) error {
 	var failures []error
-	for _, tc := range gateCases {
+	for i, tc := range gateCases {
 		caseCtx, cancel := context.WithTimeout(ctx, gateTimeout)
 		setupErr := runGateSetup(caseCtx, conn, tc)
 		if setupErr != nil {
 			cancel()
 			err := fmt.Errorf("%s setup: %w", tc.ID, setupErr)
 			note(rep, tc.ID, tc.ID, err)
+			for _, later := range gateCases[i+1:] {
+				detail := fmt.Sprintf("not run because %s setup failed", tc.ID)
+				rep.AddStep(report.StepResult{ID: later.ID, Outcome: labels.NotTested, Detail: detail, Required: true})
+			}
 			return errors.Join(append(failures, err)...)
 		}
 		_, err := conn.Exec(caseCtx, tc.Statement)

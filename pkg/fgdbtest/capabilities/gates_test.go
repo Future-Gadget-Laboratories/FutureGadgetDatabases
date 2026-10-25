@@ -5,6 +5,7 @@
 package capabilities
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,8 +14,61 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/labels"
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/report"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestGateSetupFailureReportsRemainingGatesNotTested(t *testing.T) {
+	cases := []GateCase{
+		{ID: "GATE-FAIL", Setup: []string{"SELECT 1"}, Statement: "SELECT 2"},
+		{ID: "GATE-LATER-1", Statement: "SELECT 3"},
+		{ID: "GATE-LATER-2", Statement: "SELECT 4"},
+	}
+	oldCases := gateCases
+	gateCases = cases
+	t.Cleanup(func() { gateCases = oldCases })
+
+	rep := report.New(report.Meta{})
+	conn := &pgx.Conn{}
+	err := runGateContract(context.Background(), conn, rep)
+	if err == nil {
+		t.Fatal("runGateContract succeeded after setup failure")
+	}
+	if rep.Outcome("GATE-FAIL") != labels.Fail {
+		t.Fatalf("failed gate outcome = %q, want fail", rep.Outcome("GATE-FAIL"))
+	}
+	for _, id := range []string{"GATE-LATER-1", "GATE-LATER-2"} {
+		if got := rep.Outcome(id); got != "" {
+			t.Errorf("unrun gate claim outcome = %q, want no claim update", got)
+		}
+		found := false
+		for _, step := range rep.Steps {
+			if step.ID == id && step.Outcome == labels.NotTested && step.Required {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing required not_tested step for %s", id)
+		}
+	}
+	if !rep.Rejected() {
+		t.Fatal("report accepted a gate setup failure")
+	}
+}
+
+func TestGate011UsesNonRoutablePlaceholder(t *testing.T) {
+	for _, tc := range gateCases {
+		if tc.ID == "GATE-011" {
+			if strings.Contains(tc.Statement, "127.0.0.1") || !strings.Contains(tc.Statement, "invalid.invalid") {
+				t.Fatalf("GATE-011 connection target is not an inert placeholder: %s", tc.Statement)
+			}
+			return
+		}
+	}
+	t.Fatal("GATE-011 is missing")
+}
 
 func TestGateContractClassifier(t *testing.T) {
 	const statement = "SELECT gate()"
