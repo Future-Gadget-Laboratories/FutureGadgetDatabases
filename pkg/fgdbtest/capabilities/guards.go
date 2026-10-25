@@ -178,19 +178,35 @@ func guardTTL(ctx context.Context, conn *pgx.Conn) (err error) {
 	); err != nil {
 		return fmt.Errorf("TTL setup: %w", err)
 	}
+	return pollTTL(ctx, func(pollCtx context.Context) ([][]string, error) {
+		return queryRows(pollCtx, conn, `SELECT id, v FROM ttl_guard ORDER BY id`)
+	})
+}
+
+func pollTTL(ctx context.Context, query func(context.Context) ([][]string, error)) error {
 	deadline := time.Now().Add(guardPoll)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("TTL poll: %w", err)
+		}
 		pollCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		rows, err := queryRows(pollCtx, conn, `SELECT id, v FROM ttl_guard ORDER BY id`)
+		rows, err := query(pollCtx)
 		pollErr := pollCtx.Err()
 		cancel()
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("TTL poll: %w", err)
+		}
 		if err == nil && equalRows(rows, [][]string{{"2", "live"}}) {
 			return nil
 		}
-		if err != nil && pollErr == nil {
+		if err != nil && pollErr != context.DeadlineExceeded {
 			return fmt.Errorf("TTL poll: %w", err)
 		}
-		time.Sleep(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("TTL poll: %w", ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 	return errors.New("TTL expired row was not deleted before deadline")
 }

@@ -5,13 +5,67 @@
 package capabilities
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestPollTTLQueryTimeoutRetry(t *testing.T) {
+	calls := 0
+	err := pollTTL(context.Background(), func(ctx context.Context) ([][]string, error) {
+		calls++
+		if calls == 1 {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return [][]string{{"2", "live"}}, nil
+	})
+	if err != nil || calls != 2 {
+		t.Fatalf("pollTTL: calls=%d err=%v, want 2 calls and success", calls, err)
+	}
+}
+
+func TestPollTTLParentCancellation(t *testing.T) {
+	for _, when := range []string{"before query", "during query", "between queries"} {
+		t.Run(when, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if when == "before query" {
+				cancel()
+			}
+			calls := 0
+			start := time.Now()
+			err := pollTTL(ctx, func(context.Context) ([][]string, error) {
+				calls++
+				if calls > 1 {
+					return [][]string{{"2", "live"}}, nil
+				}
+				if when == "between queries" {
+					time.AfterFunc(10*time.Millisecond, cancel)
+					return nil, nil
+				}
+				cancel()
+				return nil, ctx.Err()
+			})
+			wantCalls := 1
+			if when == "before query" {
+				wantCalls = 0
+			}
+			if !errors.Is(err, context.Canceled) || calls != wantCalls {
+				t.Fatalf("pollTTL: calls=%d err=%v, want %d calls and cancellation", calls, err, wantCalls)
+			}
+			if elapsed := time.Since(start); elapsed > time.Second {
+				t.Fatalf("cancellation took %s", elapsed)
+			}
+		})
+	}
+}
 
 func TestEqualRows(t *testing.T) {
 	for name, tc := range map[string]struct {
