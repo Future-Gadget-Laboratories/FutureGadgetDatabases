@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/labels"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/report"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -67,7 +67,11 @@ func gateClaimIDs() []string {
 	return ids
 }
 
-func runGateContract(ctx context.Context, conn *pgx.Conn, rep *report.Report) error {
+type gateExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func runGateContract(ctx context.Context, conn gateExecutor, rep *report.Report) error {
 	var failures []error
 	for i, tc := range gateCases {
 		caseCtx, cancel := context.WithTimeout(ctx, gateTimeout)
@@ -93,7 +97,7 @@ func runGateContract(ctx context.Context, conn *pgx.Conn, rep *report.Report) er
 	return errors.Join(failures...)
 }
 
-func runGateSetup(ctx context.Context, conn *pgx.Conn, tc GateCase) error {
+func runGateSetup(ctx context.Context, conn gateExecutor, tc GateCase) error {
 	for _, statement := range tc.Setup {
 		if _, err := conn.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("setup statement %q: %w", statement, err)

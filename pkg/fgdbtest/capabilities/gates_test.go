@@ -16,9 +16,16 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/labels"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/report"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type failingGateExecutor struct {
+	err error
+}
+
+func (e failingGateExecutor) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, e.err
+}
 
 func TestGateSetupFailureReportsRemainingGatesNotTested(t *testing.T) {
 	cases := []GateCase{
@@ -31,10 +38,11 @@ func TestGateSetupFailureReportsRemainingGatesNotTested(t *testing.T) {
 	t.Cleanup(func() { gateCases = oldCases })
 
 	rep := report.New(report.Meta{})
-	conn := &pgx.Conn{}
+	setupErr := errors.New("controlled setup failure")
+	conn := failingGateExecutor{err: setupErr}
 	err := runGateContract(context.Background(), conn, rep)
-	if err == nil {
-		t.Fatal("runGateContract succeeded after setup failure")
+	if !errors.Is(err, setupErr) {
+		t.Fatalf("runGateContract error = %v, want setup failure %v", err, setupErr)
 	}
 	if rep.Outcome("GATE-FAIL") != labels.Fail {
 		t.Fatalf("failed gate outcome = %q, want fail", rep.Outcome("GATE-FAIL"))
