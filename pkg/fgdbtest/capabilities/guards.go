@@ -228,10 +228,17 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
 	}
 	defer func() {
-		_, rollbackErr := cleanupExec(a, `ROLLBACK`)
-		_, dropErr := cleanupExec(a, `DROP TABLE IF EXISTS rc_guard`)
-		_, restoreErr := cleanupExec(a, fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled)))
-		err = errors.Join(err, rollbackErr, dropErr, restoreErr)
+		err = errors.Join(err, cleanupReadCommitted(func() byte {
+			// A failed COMMIT can leave the server idle or the connection closed.
+			// Neither needs a ROLLBACK; use pgx's current status, not a local flag.
+			if a.IsClosed() {
+				return 'I'
+			}
+			return a.PgConn().TxStatus()
+		}, originalEnabled, func(stmt string) error {
+			_, cleanupErr := cleanupExec(a, stmt)
+			return cleanupErr
+		}))
 	}()
 	if err = execEach(ctx, a,
 		`SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = true`,
@@ -261,6 +268,18 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 	}
 	_, err = stepExec(ctx, a, `COMMIT`)
 	return err
+}
+
+// cleanupReadCommitted rolls back only an open transaction and attempts every
+// remaining cleanup statement even if an earlier one fails.
+func cleanupReadCommitted(txStatus func() byte, originalEnabled string, exec func(string) error) error {
+	var rollbackErr error
+	if txStatus() != 'I' {
+		rollbackErr = exec(`ROLLBACK`)
+	}
+	dropErr := exec(`DROP TABLE IF EXISTS rc_guard`)
+	restoreErr := exec(fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled)))
+	return errors.Join(rollbackErr, dropErr, restoreErr)
 }
 
 // OSS-007: exercise pgx's wire-protocol COPY methods in both directions.

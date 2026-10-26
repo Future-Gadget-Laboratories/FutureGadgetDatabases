@@ -209,3 +209,49 @@ func TestImportJobTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupReadCommitted(t *testing.T) {
+	rollbackErr := errors.New("rollback failed")
+	dropErr := errors.New("drop failed")
+	restoreErr := errors.New("restore failed")
+	for _, tc := range []struct {
+		name     string
+		txStatus byte
+		failures map[string]error
+	}{
+		{name: "idle before begin or after commit", txStatus: 'I'},
+		{name: "open transaction", txStatus: 'T'},
+		{name: "aborted transaction", txStatus: 'E'},
+		{name: "rollback error", txStatus: 'T', failures: map[string]error{"ROLLBACK": rollbackErr}},
+		{name: "drop error while idle", txStatus: 'I', failures: map[string]error{"DROP TABLE IF EXISTS rc_guard": dropErr}},
+		{name: "restore error while idle", txStatus: 'I', failures: map[string]error{"SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'": restoreErr}},
+		{name: "all cleanup errors", txStatus: 'T', failures: map[string]error{
+			"ROLLBACK":                      rollbackErr,
+			"DROP TABLE IF EXISTS rc_guard": dropErr,
+			"SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'": restoreErr,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			err := cleanupReadCommitted(func() byte { return tc.txStatus }, "false", func(stmt string) error {
+				calls = append(calls, stmt)
+				return tc.failures[stmt]
+			})
+			want := []string{"DROP TABLE IF EXISTS rc_guard", "SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'"}
+			if tc.txStatus != 'I' {
+				want = append([]string{"ROLLBACK"}, want...)
+			}
+			if strings.Join(calls, ";") != strings.Join(want, ";") {
+				t.Fatalf("cleanup statements=%v, want %v", calls, want)
+			}
+			if len(tc.failures) == 0 && err != nil {
+				t.Fatalf("cleanup: %v", err)
+			}
+			for stmt, failure := range tc.failures {
+				if !errors.Is(err, failure) {
+					t.Errorf("cleanup error %v does not include %s error %v", err, stmt, failure)
+				}
+			}
+		})
+	}
+}
