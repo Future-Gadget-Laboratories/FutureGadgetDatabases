@@ -32,38 +32,45 @@ func TestPollTTLQueryTimeoutRetry(t *testing.T) {
 }
 
 func TestPollTTLParentCancellation(t *testing.T) {
-	for _, when := range []string{"before query", "during query", "between queries"} {
-		t.Run(when, func(t *testing.T) {
+	for _, tc := range []struct {
+		when      string
+		wantCalls int
+	}{
+		{"before query", 0},
+		{"during query", 1},
+		{"between queries", 1},
+	} {
+		t.Run(tc.when, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if when == "before query" {
+			if tc.when == "before query" {
 				cancel()
 			}
 			calls := 0
 			start := time.Now()
-			err := pollTTL(ctx, func(context.Context) ([][]string, error) {
-				calls++
-				if calls > 1 {
-					return [][]string{{"2", "live"}}, nil
-				}
-				if when == "between queries" {
-					time.AfterFunc(10*time.Millisecond, cancel)
-					return nil, nil
-				}
-				cancel()
-				return nil, ctx.Err()
-			})
-			wantCalls := 1
-			if when == "before query" {
-				wantCalls = 0
-			}
-			if !errors.Is(err, context.Canceled) || calls != wantCalls {
-				t.Fatalf("pollTTL: calls=%d err=%v, want %d calls and cancellation", calls, err, wantCalls)
+			err := pollTTL(ctx, ttlCancellationQuery(ctx, cancel, tc.when, &calls))
+			if !errors.Is(err, context.Canceled) || calls != tc.wantCalls {
+				t.Fatalf("pollTTL: calls=%d err=%v, want %d calls and cancellation", calls, err, tc.wantCalls)
 			}
 			if elapsed := time.Since(start); elapsed > time.Second {
 				t.Fatalf("cancellation took %s", elapsed)
 			}
 		})
+	}
+}
+
+func ttlCancellationQuery(ctx context.Context, cancel context.CancelFunc, when string, calls *int) func(context.Context) ([][]string, error) {
+	return func(context.Context) ([][]string, error) {
+		*calls++
+		if *calls > 1 {
+			return [][]string{{"2", "live"}}, nil
+		}
+		if when == "between queries" {
+			time.AfterFunc(10*time.Millisecond, cancel)
+			return nil, nil
+		}
+		cancel()
+		return nil, ctx.Err()
 	}
 }
 
@@ -210,60 +217,83 @@ func TestImportJobTerminal(t *testing.T) {
 	}
 }
 
+const (
+	rcDrop    = "DROP TABLE IF EXISTS rc_guard"
+	rcRestore = "SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'"
+)
+
 func TestCleanupReadCommitted(t *testing.T) {
 	rollbackErr := errors.New("rollback failed")
 	dropErr := errors.New("drop failed")
 	restoreErr := errors.New("restore failed")
 	for _, tc := range []struct {
-		name     string
-		txStatus byte
-		failures map[string]error
+		name         string
+		txStatus     byte
+		probeErr     error
+		wantRollback bool
+		wantFresh    bool
+		failures     map[string]error
 	}{
 		{name: "idle before begin or after commit", txStatus: 'I'},
-		{name: "open transaction", txStatus: 'T'},
-		{name: "aborted transaction", txStatus: 'E'},
-		{name: "rollback error", txStatus: 'T', failures: map[string]error{"ROLLBACK": rollbackErr}},
-		{name: "drop error while idle", txStatus: 'I', failures: map[string]error{"DROP TABLE IF EXISTS rc_guard": dropErr}},
-		{name: "restore error while idle", txStatus: 'I', failures: map[string]error{"SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'": restoreErr}},
-		{name: "all cleanup errors", txStatus: 'T', failures: map[string]error{
-			"ROLLBACK":                      rollbackErr,
-			"DROP TABLE IF EXISTS rc_guard": dropErr,
-			"SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'": restoreErr,
+		{name: "open transaction", txStatus: 'T', wantRollback: true, wantFresh: true},
+		{name: "aborted transaction", txStatus: 'E', wantRollback: true, wantFresh: true},
+		{name: "unknown status", txStatus: '?', wantFresh: true},
+		{name: "zero status", wantFresh: true},
+		{name: "timeout then rollback", txStatus: 'T', probeErr: context.DeadlineExceeded, wantRollback: true, wantFresh: true},
+		{name: "timeout while idle", txStatus: 'I', probeErr: context.DeadlineExceeded, wantFresh: true},
+		{name: "rollback error", txStatus: 'T', wantRollback: true, wantFresh: true, failures: map[string]error{"ROLLBACK": rollbackErr}},
+		{name: "drop error while idle", txStatus: 'I', failures: map[string]error{rcDrop: dropErr}},
+		{name: "restore error while idle", txStatus: 'I', failures: map[string]error{rcRestore: restoreErr}},
+		{name: "all cleanup errors", txStatus: 'T', wantRollback: true, wantFresh: true, failures: map[string]error{
+			"ROLLBACK": rollbackErr, rcDrop: dropErr, rcRestore: restoreErr,
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var calls []string
-			status := tc.txStatus
-			exec := func(stmt string) error {
-				calls = append(calls, stmt)
-				if stmt == "ROLLBACK" {
-					status = 'I'
-				}
-				return tc.failures[stmt]
+			primary := cleanupTestConnection{status: tc.txStatus, failures: tc.failures}
+			fresh := cleanupTestConnection{status: 'I', failures: tc.failures}
+			err := cleanupReadCommitted(primary.connection(t), "false", fresh.connector(t, nil), tc.probeErr)
+			wantPrimary := []string{rcDrop, rcRestore}
+			var wantFresh []string
+			wantConnections := 0
+			if tc.wantFresh {
+				wantPrimary = nil
+				wantFresh = []string{rcDrop, rcRestore}
+				wantConnections = 1
 			}
-			err := cleanupReadCommitted(cleanupConnection{
-				closed:   func() bool { return false },
-				txStatus: func() byte { return status },
-				exec:     exec,
-			}, "false", func(context.Context) (cleanupConnection, error) {
-				t.Fatal("unexpected fresh connection")
-				return cleanupConnection{}, nil
-			})
-			want := []string{"DROP TABLE IF EXISTS rc_guard", "SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'"}
-			if tc.txStatus != 'I' {
-				want = append([]string{"ROLLBACK"}, want...)
+			if tc.wantRollback {
+				wantPrimary = append([]string{"ROLLBACK"}, wantPrimary...)
 			}
-			if strings.Join(calls, ";") != strings.Join(want, ";") {
-				t.Fatalf("cleanup statements=%v, want %v", calls, want)
+			requireCleanupCalls(t, "primary", primary.calls, wantPrimary...)
+			requireCleanupCalls(t, "fresh", fresh.calls, wantFresh...)
+			requireFreshLifecycle(t, &fresh, wantConnections, tc.wantFresh)
+			requireCleanupErrors(t, err, tc.failures)
+		})
+	}
+}
+
+func TestCleanupReadCommittedFailedBegin(t *testing.T) {
+	beginErr := errors.New("begin failed")
+	const begin = "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED"
+	for _, tc := range []struct {
+		name   string
+		status byte
+	}{
+		{name: "idle", status: 'I'},
+		{name: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := cleanupTestConnection{status: tc.status, failures: map[string]error{begin: beginErr}}
+			fresh := cleanupTestConnection{status: 'I'}
+			conn := primary.connection(t)
+			probeErr := conn.exec(begin)
+			if !errors.Is(probeErr, beginErr) {
+				t.Fatalf("BEGIN error=%v, want %v", probeErr, beginErr)
 			}
-			if len(tc.failures) == 0 && err != nil {
-				t.Fatalf("cleanup: %v", err)
-			}
-			for stmt, failure := range tc.failures {
-				if !errors.Is(err, failure) {
-					t.Errorf("cleanup error %v does not include %s error %v", err, stmt, failure)
-				}
-			}
+			err := cleanupReadCommitted(conn, "false", fresh.connector(t, nil), probeErr)
+			requireCleanupCalls(t, "primary", primary.calls, begin)
+			requireCleanupCalls(t, "fresh", fresh.calls, rcDrop, rcRestore)
+			requireFreshLifecycle(t, &fresh, 1, true)
+			requireCleanupErrors(t, err, nil)
 		})
 	}
 }
@@ -282,52 +312,104 @@ func TestCleanupReadCommittedFreshConnection(t *testing.T) {
 		{name: "restore error", restoreErr: restoreErr},
 		{name: "connect error", connectErr: connectErr},
 		{name: "close error", closeErr: closeErr},
+		{name: "restore and close errors", restoreErr: restoreErr, closeErr: closeErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var calls []string
-			closed := false
-			primary := cleanupConnection{
-				closed:   func() bool { return true },
-				txStatus: func() byte { t.Fatal("status on closed primary"); return 'T' },
-				exec:     func(string) error { t.Fatal("exec on closed primary"); return nil },
+			primary := cleanupTestConnection{closed: true}
+			fresh := cleanupTestConnection{status: 'I', failures: map[string]error{rcRestore: tc.restoreErr}, closeErr: tc.closeErr}
+			err := cleanupReadCommitted(primary.connection(t), "false", fresh.connector(t, tc.connectErr), nil)
+			wantConnections := 1
+			wantCalls := []string{rcDrop, rcRestore}
+			if tc.connectErr != nil {
+				wantConnections = 2
+				wantCalls = nil
 			}
-			err := cleanupReadCommitted(primary, "false", func(ctx context.Context) (cleanupConnection, error) {
-				if ctx.Err() != nil {
-					t.Fatalf("fresh context: %v", ctx.Err())
-				}
-				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > cleanupTimeout {
-					t.Fatal("fresh connect context must have cleanup deadline")
-				}
-				if tc.connectErr != nil {
-					return cleanupConnection{}, tc.connectErr
-				}
-				return cleanupConnection{
-					closed:   func() bool { return false },
-					txStatus: func() byte { return 'I' },
-					exec: func(stmt string) error {
-						calls = append(calls, stmt)
-						if strings.HasPrefix(stmt, "SET CLUSTER SETTING") {
-							return tc.restoreErr
-						}
-						return nil
-					},
-					close: func() error { closed = true; return tc.closeErr },
-				}, nil
-			})
-			if tc.connectErr == nil {
-				want := "DROP TABLE IF EXISTS rc_guard;SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'"
-				if strings.Join(calls, ";") != want || !closed {
-					t.Fatalf("calls=%v closed=%v", calls, closed)
-				}
-			}
-			for _, failure := range []error{tc.connectErr, tc.restoreErr, tc.closeErr} {
-				if failure != nil && !errors.Is(err, failure) {
-					t.Errorf("cleanup error %v missing %v", err, failure)
-				}
-			}
-			if tc.connectErr == nil && tc.restoreErr == nil && tc.closeErr == nil && err != nil {
-				t.Fatal(err)
-			}
+			requireCleanupCalls(t, "primary", primary.calls)
+			requireCleanupCalls(t, "fresh", fresh.calls, wantCalls...)
+			requireFreshLifecycle(t, &fresh, wantConnections, tc.connectErr == nil)
+			requireCleanupErrors(t, err, map[string]error{"connect": tc.connectErr, "restore": tc.restoreErr, "close": tc.closeErr})
 		})
+	}
+}
+
+type cleanupTestConnection struct {
+	status      byte
+	closed      bool
+	calls       []string
+	failures    map[string]error
+	closeErr    error
+	connections int
+}
+
+func (c *cleanupTestConnection) connection(t *testing.T) cleanupConnection {
+	t.Helper()
+	return cleanupConnection{
+		closed: func() bool { return c.closed },
+		txStatus: func() byte {
+			if c.closed {
+				t.Fatal("status on closed connection")
+			}
+			return c.status
+		},
+		exec: func(stmt string) error {
+			if c.closed {
+				t.Fatal("exec on closed connection")
+			}
+			c.calls = append(c.calls, stmt)
+			err := c.failures[stmt]
+			if stmt == "ROLLBACK" && err == nil {
+				c.status = 'I'
+			}
+			return err
+		},
+		close: func() error { c.closed = true; return c.closeErr },
+	}
+}
+
+func (c *cleanupTestConnection) connector(t *testing.T, connectErr error) func(context.Context) (cleanupConnection, error) {
+	t.Helper()
+	return func(ctx context.Context) (cleanupConnection, error) {
+		c.connections++
+		if ctx.Err() != nil {
+			t.Fatalf("fresh context: %v", ctx.Err())
+		}
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > cleanupTimeout {
+			t.Fatal("fresh connect context must have cleanup deadline")
+		}
+		if connectErr != nil {
+			return cleanupConnection{}, connectErr
+		}
+		return c.connection(t), nil
+	}
+}
+
+func requireCleanupCalls(t *testing.T, name string, got []string, want ...string) {
+	t.Helper()
+	if strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Errorf("%s statements=%v, want %v", name, got, want)
+	}
+}
+
+func requireFreshLifecycle(t *testing.T, c *cleanupTestConnection, connections int, closed bool) {
+	t.Helper()
+	if c.connections != connections || c.closed != closed {
+		t.Errorf("fresh connections=%d closed=%v, want %d, %v", c.connections, c.closed, connections, closed)
+	}
+}
+
+func requireCleanupErrors(t *testing.T, got error, failures map[string]error) {
+	t.Helper()
+	wantError := false
+	for stmt, failure := range failures {
+		if failure == nil {
+			continue
+		}
+		wantError = true
+		if !errors.Is(got, failure) {
+			t.Errorf("cleanup error %v does not include %s error %v", got, stmt, failure)
+		}
+	}
+	if !wantError && got != nil {
+		t.Fatalf("cleanup: %v", got)
 	}
 }

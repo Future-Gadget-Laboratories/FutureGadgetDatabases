@@ -163,7 +163,7 @@ func guardTTL(ctx context.Context, conn *pgx.Conn, c *cluster.Cluster) (err erro
 		return fmt.Errorf("read TTL enabled setting: %w", readErr)
 	}
 	defer func() {
-		err = errors.Join(err, cleanupStatements(cleanupConnectionFor(conn), cleanupConnector(c),
+		err = errors.Join(err, cleanupStatements(cleanupConnectionFor(conn), cleanupConnector(c), err != nil,
 			`DROP TABLE IF EXISTS ttl_guard`,
 			fmt.Sprintf("SET CLUSTER SETTING jobs.registry.interval.adopt = %s", sqlLiteral(originalAdopt)),
 			fmt.Sprintf("SET CLUSTER SETTING sql.ttl.job.enabled = %s", sqlLiteral(originalTTLEnabled))))
@@ -228,7 +228,7 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
 	}
 	defer func() {
-		err = errors.Join(err, cleanupReadCommitted(cleanupConnectionFor(a), originalEnabled, cleanupConnector(c)))
+		err = errors.Join(err, cleanupReadCommitted(cleanupConnectionFor(a), originalEnabled, cleanupConnector(c), err))
 	}()
 	if err = execEach(ctx, a,
 		`SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = true`,
@@ -290,9 +290,9 @@ func cleanupConnector(c *cluster.Cluster) func(context.Context) (cleanupConnecti
 	}
 }
 
-// cleanupStatements switches to a fresh connection if the primary is closed or
-// still in a transaction. Each operation has its own independent cleanup budget.
-func cleanupStatements(primary cleanupConnection, connect func(context.Context) (cleanupConnection, error), statements ...string) (err error) {
+// cleanupStatements switches to a fresh connection when forced or when the
+// primary is closed or not idle. Each operation has an independent cleanup budget.
+func cleanupStatements(primary cleanupConnection, connect func(context.Context) (cleanupConnection, error), forceFresh bool, statements ...string) (err error) {
 	conn := primary
 	var fresh []cleanupConnection
 	defer func() {
@@ -301,7 +301,7 @@ func cleanupStatements(primary cleanupConnection, connect func(context.Context) 
 		}
 	}()
 	for _, stmt := range statements {
-		if conn.closed() || conn.txStatus() != 'I' {
+		if forceFresh || conn.closed() || conn.txStatus() != 'I' {
 			ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 			next, connectErr := connect(ctx)
 			cancel()
@@ -311,6 +311,7 @@ func cleanupStatements(primary cleanupConnection, connect func(context.Context) 
 			}
 			conn = next
 			fresh = append(fresh, conn)
+			forceFresh = false
 		}
 		err = errors.Join(err, conn.exec(stmt))
 	}
@@ -319,12 +320,20 @@ func cleanupStatements(primary cleanupConnection, connect func(context.Context) 
 
 // cleanupReadCommitted rolls back only an open transaction on a live primary,
 // then attempts both DROP and restore even if an earlier operation fails.
-func cleanupReadCommitted(primary cleanupConnection, originalEnabled string, connect func(context.Context) (cleanupConnection, error)) error {
+// Any probe error or rollback forces a fresh connection for these statements.
+func cleanupReadCommitted(primary cleanupConnection, originalEnabled string, connect func(context.Context) (cleanupConnection, error), probeErr error) error {
 	var rollbackErr error
-	if !primary.closed() && primary.txStatus() != 'I' {
-		rollbackErr = primary.exec(`ROLLBACK`)
+	forceFresh := probeErr != nil
+	if !primary.closed() {
+		switch primary.txStatus() {
+		case 'T', 'E':
+			rollbackErr = primary.exec(`ROLLBACK`)
+			// A rollback can make the primary idle after a timeout. Retain the
+			// fresh-connection requirement instead of trusting its new status.
+			forceFresh = true
+		}
 	}
-	return errors.Join(rollbackErr, cleanupStatements(primary, connect,
+	return errors.Join(rollbackErr, cleanupStatements(primary, connect, forceFresh,
 		`DROP TABLE IF EXISTS rc_guard`,
 		fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled))))
 }
