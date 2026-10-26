@@ -53,7 +53,7 @@ The following are parsed CCL-only statement families. The SQL is intentionally m
 | PARITY-002 | `EXPORT INTO PARQUET 'nodelocal://1/par001/out' FROM SELECT 1` | none | success is **not** a gate: OSS Parquet export processor is registered **[oss-src]** | not applicable; a successful Parquet export or a non-CCL data/format error is not gate evidence **[oss-src]** | none known |
 | GATE-009 | `CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'` | none | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.ScheduledBackup` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
 | GATE-010 | `ALTER BACKUP SCHEDULE 1 SET INTO 'nodelocal://1/par001'` | none; schedule lookup must not be required for the gate | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.AlterBackupSchedule` **[oss-src]** | none known |
-| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'` | none; no remote connection may be attempted | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.CreateTenantFromReplication` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
+| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://invalid.invalid:26257'` | none; no remote connection may be attempted | `XXC01` **[oss-src]** | common statement-gate prefix; type `*tree.CreateTenantFromReplication` **[oss-src]**; provenance: `oss-src (grammar), runtime-observed` | none known |
 
 The `IMPORT INTO` path used by `OSS-002` is deliberately excluded from GATE-006: its CSV reader is an OSS implementation. Likewise, supported CSV and Parquet `EXPORT` are not missing-feature gates. An unsupported option or disabled feature must be reported as its own non-gate negative case, not relabeled `XXC01`.
 
@@ -132,5 +132,5 @@ Summary line 10: License checks are separated; they await stock-binary validatio
 | GATE-007 | `ALTER BACKUP 'nodelocal://1/par001' ADD NEW_KMS = 'kms://local/new' WITH OLD_KMS = 'kms://local/old'` | corrected; `oss-src (grammar), runtime-observed` |
 | GATE-008 | `CREATE SCHEDULE FOR CHANGEFEED TABLE defaultdb.public.par001 INTO 'nodelocal://1/par001' RECURRING '@hourly'` | corrected; `oss-src (grammar), runtime-observed` |
 | GATE-009 | `CREATE SCHEDULE FOR BACKUP DATABASE defaultdb INTO 'nodelocal://1/par001' RECURRING '@daily'` | corrected; `oss-src (grammar), runtime-observed` |
-| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://127.0.0.1:26257'` | corrected; `oss-src (grammar), runtime-observed` |
+| GATE-011 | `CREATE VIRTUAL CLUSTER v FROM REPLICATION OF source ON 'postgresql://invalid.invalid:26257'` | corrected; `oss-src (grammar), runtime-observed` |
 | GATE-014 | `ALTER DATABASE defaultdb ADD REGION 'us-east1'` | `unreachable on cockroach-oss`; non-claim note, id not reused |

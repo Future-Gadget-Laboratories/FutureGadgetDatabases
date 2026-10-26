@@ -138,12 +138,18 @@ func cleanup(c *cluster.Cluster, dir string, rep *report.Report) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var err error
+	var reapErr error
 	if c != nil {
-		err = errors.Join(c.Stop(ctx), c.Reap())
+		err = c.Stop(ctx)
+		reapErr = c.Reap()
+	} else {
+		reapErr = errors.New("node termination could not be confirmed")
 	}
-	// Always try to remove the temporary stores, even after a stop error, and
-	// report both failures.
-	err = errors.Join(err, os.RemoveAll(dir))
+	if reapErr != nil {
+		err = errors.Join(err, fmt.Errorf("work directory %s kept for manual cleanup: %w", dir, reapErr))
+	} else {
+		err = errors.Join(err, os.RemoveAll(dir))
+	}
 	if err != nil {
 		err = fmt.Errorf("OSS capabilities cleanup; work directory %s: %w", dir, err)
 	}
