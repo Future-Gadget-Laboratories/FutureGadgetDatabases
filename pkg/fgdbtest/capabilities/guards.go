@@ -47,7 +47,7 @@ func runGuards(ctx context.Context, cfg Config, conn *pgx.Conn, c *cluster.Clust
 		checks = append([]struct {
 			id string
 			fn func() error
-		}{{ClaimTTL, func() error { return guardTTL(ctx, conn) }}}, checks...)
+		}{{ClaimTTL, func() error { return guardTTL(ctx, conn, c) }}}, checks...)
 	} else {
 		rep.Set(ClaimTTL, labels.NotTested, "OSS-004 not_tested: opt-in via "+ttlGuardEnv+"=1; expired-row deletion was not observed within the poll budget on a fresh node (spec open question)")
 	}
@@ -153,7 +153,7 @@ func guardGEOS(ctx context.Context, conn *pgx.Conn, lib string) error {
 }
 
 // OSS-004: TTL must visibly delete the expired row, not merely hide it.
-func guardTTL(ctx context.Context, conn *pgx.Conn) (err error) {
+func guardTTL(ctx context.Context, conn *pgx.Conn, c *cluster.Cluster) (err error) {
 	originalAdopt, readErr := readSettingText(ctx, conn, "jobs.registry.interval.adopt")
 	if readErr != nil {
 		return fmt.Errorf("read TTL adoption setting: %w", readErr)
@@ -163,10 +163,10 @@ func guardTTL(ctx context.Context, conn *pgx.Conn) (err error) {
 		return fmt.Errorf("read TTL enabled setting: %w", readErr)
 	}
 	defer func() {
-		_, dropErr := cleanupExec(conn, `DROP TABLE IF EXISTS ttl_guard`)
-		_, restoreErr := cleanupExec(conn, fmt.Sprintf("SET CLUSTER SETTING jobs.registry.interval.adopt = %s", sqlLiteral(originalAdopt)))
-		_, enabledErr := cleanupExec(conn, fmt.Sprintf("SET CLUSTER SETTING sql.ttl.job.enabled = %s", sqlLiteral(originalTTLEnabled)))
-		err = errors.Join(err, dropErr, restoreErr, enabledErr)
+		err = errors.Join(err, cleanupStatements(cleanupConnectionFor(conn), cleanupConnector(c),
+			`DROP TABLE IF EXISTS ttl_guard`,
+			fmt.Sprintf("SET CLUSTER SETTING jobs.registry.interval.adopt = %s", sqlLiteral(originalAdopt)),
+			fmt.Sprintf("SET CLUSTER SETTING sql.ttl.job.enabled = %s", sqlLiteral(originalTTLEnabled))))
 	}()
 	// Cluster settings cannot share an implicit multi-statement transaction.
 	if err := execEach(ctx, conn,
@@ -228,17 +228,7 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 		return fmt.Errorf("read READ COMMITTED setting: %w", readErr)
 	}
 	defer func() {
-		err = errors.Join(err, cleanupReadCommitted(func() byte {
-			// A failed COMMIT can leave the server idle or the connection closed.
-			// Neither needs a ROLLBACK; use pgx's current status, not a local flag.
-			if a.IsClosed() {
-				return 'I'
-			}
-			return a.PgConn().TxStatus()
-		}, originalEnabled, func(stmt string) error {
-			_, cleanupErr := cleanupExec(a, stmt)
-			return cleanupErr
-		}))
+		err = errors.Join(err, cleanupReadCommitted(cleanupConnectionFor(a), originalEnabled, cleanupConnector(c)))
 	}()
 	if err = execEach(ctx, a,
 		`SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = true`,
@@ -270,16 +260,73 @@ func guardReadCommitted(ctx context.Context, c *cluster.Cluster) (err error) {
 	return err
 }
 
-// cleanupReadCommitted rolls back only an open transaction and attempts every
-// remaining cleanup statement even if an earlier one fails.
-func cleanupReadCommitted(txStatus func() byte, originalEnabled string, exec func(string) error) error {
-	var rollbackErr error
-	if txStatus() != 'I' {
-		rollbackErr = exec(`ROLLBACK`)
+// cleanupConnection keeps deferred cleanup testable without a live cluster.
+type cleanupConnection struct {
+	closed   func() bool
+	txStatus func() byte
+	exec     func(string) error
+	close    func() error
+}
+
+func cleanupConnectionFor(conn *pgx.Conn) cleanupConnection {
+	return cleanupConnection{
+		closed:   conn.IsClosed,
+		txStatus: func() byte { return conn.PgConn().TxStatus() },
+		exec: func(stmt string) error {
+			_, err := cleanupExec(conn, stmt)
+			return err
+		},
+		close: func() error { return closeBounded(conn) },
 	}
-	dropErr := exec(`DROP TABLE IF EXISTS rc_guard`)
-	restoreErr := exec(fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled)))
-	return errors.Join(rollbackErr, dropErr, restoreErr)
+}
+
+func cleanupConnector(c *cluster.Cluster) func(context.Context) (cleanupConnection, error) {
+	return func(ctx context.Context) (cleanupConnection, error) {
+		conn, err := connect(ctx, c)
+		if err != nil {
+			return cleanupConnection{}, err
+		}
+		return cleanupConnectionFor(conn), nil
+	}
+}
+
+// cleanupStatements switches to a fresh connection if the primary is closed or
+// still in a transaction. Each operation has its own independent cleanup budget.
+func cleanupStatements(primary cleanupConnection, connect func(context.Context) (cleanupConnection, error), statements ...string) (err error) {
+	conn := primary
+	var fresh []cleanupConnection
+	defer func() {
+		for _, c := range fresh {
+			err = errors.Join(err, c.close())
+		}
+	}()
+	for _, stmt := range statements {
+		if conn.closed() || conn.txStatus() != 'I' {
+			ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+			next, connectErr := connect(ctx)
+			cancel()
+			if connectErr != nil {
+				err = errors.Join(err, connectErr)
+				continue
+			}
+			conn = next
+			fresh = append(fresh, conn)
+		}
+		err = errors.Join(err, conn.exec(stmt))
+	}
+	return err
+}
+
+// cleanupReadCommitted rolls back only an open transaction on a live primary,
+// then attempts both DROP and restore even if an earlier operation fails.
+func cleanupReadCommitted(primary cleanupConnection, originalEnabled string, connect func(context.Context) (cleanupConnection, error)) error {
+	var rollbackErr error
+	if !primary.closed() && primary.txStatus() != 'I' {
+		rollbackErr = primary.exec(`ROLLBACK`)
+	}
+	return errors.Join(rollbackErr, cleanupStatements(primary, connect,
+		`DROP TABLE IF EXISTS rc_guard`,
+		fmt.Sprintf("SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = %s", sqlLiteral(originalEnabled))))
 }
 
 // OSS-007: exercise pgx's wire-protocol COPY methods in both directions.

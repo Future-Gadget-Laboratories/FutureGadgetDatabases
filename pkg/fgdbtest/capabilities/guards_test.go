@@ -233,9 +233,21 @@ func TestCleanupReadCommitted(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls []string
-			err := cleanupReadCommitted(func() byte { return tc.txStatus }, "false", func(stmt string) error {
+			status := tc.txStatus
+			exec := func(stmt string) error {
 				calls = append(calls, stmt)
+				if stmt == "ROLLBACK" {
+					status = 'I'
+				}
 				return tc.failures[stmt]
+			}
+			err := cleanupReadCommitted(cleanupConnection{
+				closed:   func() bool { return false },
+				txStatus: func() byte { return status },
+				exec:     exec,
+			}, "false", func(context.Context) (cleanupConnection, error) {
+				t.Fatal("unexpected fresh connection")
+				return cleanupConnection{}, nil
 			})
 			want := []string{"DROP TABLE IF EXISTS rc_guard", "SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'"}
 			if tc.txStatus != 'I' {
@@ -251,6 +263,70 @@ func TestCleanupReadCommitted(t *testing.T) {
 				if !errors.Is(err, failure) {
 					t.Errorf("cleanup error %v does not include %s error %v", err, stmt, failure)
 				}
+			}
+		})
+	}
+}
+
+func TestCleanupReadCommittedFreshConnection(t *testing.T) {
+	restoreErr := errors.New("fresh restore failed")
+	connectErr := errors.New("fresh connect failed")
+	closeErr := errors.New("fresh close failed")
+	for _, tc := range []struct {
+		name       string
+		connectErr error
+		restoreErr error
+		closeErr   error
+	}{
+		{name: "closed primary"},
+		{name: "restore error", restoreErr: restoreErr},
+		{name: "connect error", connectErr: connectErr},
+		{name: "close error", closeErr: closeErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			closed := false
+			primary := cleanupConnection{
+				closed:   func() bool { return true },
+				txStatus: func() byte { t.Fatal("status on closed primary"); return 'T' },
+				exec:     func(string) error { t.Fatal("exec on closed primary"); return nil },
+			}
+			err := cleanupReadCommitted(primary, "false", func(ctx context.Context) (cleanupConnection, error) {
+				if ctx.Err() != nil {
+					t.Fatalf("fresh context: %v", ctx.Err())
+				}
+				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > cleanupTimeout {
+					t.Fatal("fresh connect context must have cleanup deadline")
+				}
+				if tc.connectErr != nil {
+					return cleanupConnection{}, tc.connectErr
+				}
+				return cleanupConnection{
+					closed:   func() bool { return false },
+					txStatus: func() byte { return 'I' },
+					exec: func(stmt string) error {
+						calls = append(calls, stmt)
+						if strings.HasPrefix(stmt, "SET CLUSTER SETTING") {
+							return tc.restoreErr
+						}
+						return nil
+					},
+					close: func() error { closed = true; return tc.closeErr },
+				}, nil
+			})
+			if tc.connectErr == nil {
+				want := "DROP TABLE IF EXISTS rc_guard;SET CLUSTER SETTING sql.txn.read_committed_isolation.enabled = 'false'"
+				if strings.Join(calls, ";") != want || !closed {
+					t.Fatalf("calls=%v closed=%v", calls, closed)
+				}
+			}
+			for _, failure := range []error{tc.connectErr, tc.restoreErr, tc.closeErr} {
+				if failure != nil && !errors.Is(err, failure) {
+					t.Errorf("cleanup error %v missing %v", err, failure)
+				}
+			}
+			if tc.connectErr == nil && tc.restoreErr == nil && tc.closeErr == nil && err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
