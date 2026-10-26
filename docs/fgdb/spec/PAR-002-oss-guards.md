@@ -45,10 +45,10 @@ cleanup. All polling uses a monotonic deadline and a bounded query context.
 
 | Item | Requirement |
 | --- | --- |
-| Preconditions | Start one node with the normal OSS binary. Keep TTL enabled. The table must have an ascending primary key. |
+| Preconditions | Opt in with `FGDB_TTL_GUARD=1`; otherwise report `not_tested` with a reason. Start one node with the normal OSS binary. Keep TTL enabled. The table must have an ascending primary key. |
 | Setup SQL | `SET CLUSTER SETTING sql.ttl.job.enabled = true;`<br>`SET CLUSTER SETTING jobs.registry.interval.adopt = '1s';`<br>`CREATE TABLE ttl_guard (id INT PRIMARY KEY, v STRING) WITH (ttl_expire_after = '1 second', ttl_job_cron = '* * * * *');`<br>`INSERT INTO ttl_guard VALUES (1, 'expired'), (2, 'live');`<br>`UPDATE ttl_guard SET crdb_internal_expiration = now() - INTERVAL '1 minute' WHERE id = 1;` |
-| Expected observable result | Repeatedly run `SELECT id, v FROM ttl_guard ORDER BY id` until it returns exactly `(2, 'live')`; the expired row is absent. **[oss-src]** |
-| Timing | The five-field cron runs at most one minute after its scheduled boundary; the adoption interval is lowered to 1 second. Allow up to 300 seconds after setup (v1.2; the guard is opt-in, see maintainer notes), with a query timeout on each poll. |
+| Expected observable result | Expired rows become eligible for eventual deletion by the TTL job; deletion timing is not guaranteed. **[oss-src]** In an opted-in run, repeatedly run `SELECT id, v FROM ttl_guard ORDER BY id`; pass only if it returns exactly `(2, 'live')`, showing the expired row is absent. |
+| Timing | The guard checks a 300-second budget after setup before starting each poll; an in-flight query may return a passing result after that budget, within its 2-second timeout. The adoption interval is lowered to 1 second. This is a test budget, not a guaranteed deletion deadline. A passing run establishes observed deletion only for that run; the fresh-node timing question remains open (see maintainer notes). |
 | Must not count as pass | A row hidden only by a test query predicate; the schedule exists but no deletion is observed; TTL is disabled; a timeout; or a job/setup error. Restore `jobs.registry.interval.adopt` before teardown when the harness changes it. |
 
 ### OSS-005 — GEOS-backed spatial functions work with `lib/` beside the binary
@@ -129,8 +129,8 @@ Acceptance claim ids:
 ## 10-line summary
 
 1. PAR-002 guards existing OSS behavior only.
-2. OSS-004 checks deletion of an expired TTL row.
-3. TTL polling uses one-second job adoption and a bounded deadline.
+2. OSS-004 checks deletion of an expired TTL row only when opted in; otherwise it is `not_tested`.
+3. TTL polling uses one-second job adoption and a 300-second test budget for starting polls; deletion timing is not guaranteed.
 4. OSS-005 checks a GEOS area calculation.
 5. GEOS libraries must be beside the binary under `lib/`.
 6. Missing GEOS libraries, or a GEOS library loaded from anywhere other than the beside-binary `lib/`, fail OSS-005.
