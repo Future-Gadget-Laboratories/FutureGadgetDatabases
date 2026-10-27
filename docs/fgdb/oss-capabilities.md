@@ -64,3 +64,8 @@ The patch-test workflow runs `TestOSSCapabilities` against its existing checksum
 All node stores are temporary and owned by this test. SQL and startup have bounded contexts. Shutdown uses the existing stop and final-reap mechanisms; cleanup errors fail the run. A failure before a check leaves that claim `not_tested` rather than marking it successful.
 
 This adds no secure-mode, upgrade, network-partition, disk-fault, TTL, GEOS, auth-fallback, or full statement-coverage claim. The report keeps its existing partition/disk NOT-tested lines. Expand those capabilities in later slices with their own evidence and cleanup constraints.
+
+The runtime capability slice also guards CSV and PARQUET EXPORT on OSS,
+including the existing administrator feature flag and transaction restriction.
+EXPORT is not subject to the BACKUP statement gate. Stock-binary output
+comparisons remain pending in `fgdb/test/conformance/par005-export/`.

@@ -56,7 +56,7 @@ func Run(ctx context.Context, cfg Config) (*report.Report, error) {
 
 func newReport(meta report.Meta) *report.Report {
 	rep := report.New(meta)
-	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup} {
+	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup, ClaimExportCSV, ClaimExportParquet, ClaimExportDisabled, ClaimExportGate} {
 		rep.Set(id, labels.NotTested, "capability check did not run")
 	}
 	return rep
@@ -98,7 +98,13 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	note(rep, ClaimImport, ClaimImport, importErr)
 	backupErr := rejectBackup(ctx, conn)
 	note(rep, ClaimBackup, ClaimBackup, backupErr)
-	return rep, errors.Join(importErr, backupErr)
+	exportErr := runExportChecks(ctx, conn, c.Nodes()[0].StoreDir, rep)
+	for _, id := range []string{ClaimExportCSV, ClaimExportParquet, ClaimExportDisabled, ClaimExportGate} {
+		if rep.Outcome(id) != labels.Pass {
+			exportErr = errors.Join(exportErr, fmt.Errorf("required capability %s did not pass", id))
+		}
+	}
+	return rep, errors.Join(importErr, backupErr, exportErr)
 }
 
 func connect(ctx context.Context, c *cluster.Cluster) (*pgx.Conn, error) {
