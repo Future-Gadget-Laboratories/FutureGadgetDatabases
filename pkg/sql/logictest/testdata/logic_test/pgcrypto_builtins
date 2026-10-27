@@ -289,23 +289,119 @@ SELECT crypt('password', '$2a$06$#kv6DxN3PpZo4YboQRrIVO')
 
 subtest end
 
+subtest cipher_builtins
+
+skipif config 3node-tenant-default-configs
+statement ok
+SET CLUSTER SETTING feature.pgcrypto_ciphers.enabled = true
+
+statement ok
+CREATE EXTENSION pgcrypto
+
+# NIST SP 800-38A F.2.1 (AES-128 CBC, public standard vector, no padding).
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710'::BYTES, '\x2b7e151628aed2a6abf7158809cf4f3c'::BYTES, '\x000102030405060708090a0b0c0d0e0f'::BYTES, 'aes-cbc/pad:none'), 'hex')
+----
+7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b273bed6b8e3c1743b7116e69e222295163ff1caa1681fac09120eca307586e1a7
+
+# Round trips across type strings, key sizes and plaintext lengths.
+skipif config 3node-tenant-default-configs
+query B
+SELECT bool_and(decrypt(encrypt(d, k, t), k, t) = d)
+FROM
+  (VALUES ('abc'::BYTES), (''::BYTES), ('0123456789abcdef0123456789abcdef01'::BYTES)) AS dv (d),
+  (
+    VALUES
+      ('k'::BYTES),
+      ('key'::BYTES),
+      ('0123456789abcdef'::BYTES),
+      ('0123456789abcdef01234567'::BYTES),
+      ('0123456789abcdef0123456789abcdef'::BYTES)
+  )
+    AS kv (k),
+  (VALUES ('aes'), ('aes-cbc'), ('aes-cbc/pad:pkcs'), ('aes/pad:pkcs')) AS tv (t)
+----
+true
+
+skipif config 3node-tenant-default-configs
+query B
+SELECT decrypt(encrypt('0123456789abcdef'::BYTES, 'key'::BYTES, 'aes/pad:none'), 'key'::BYTES, 'aes/pad:none') = '0123456789abcdef'::BYTES
+----
+true
+
+skipif config 3node-tenant-default-configs
+query B
+SELECT decrypt_iv(encrypt_iv('abc'::BYTES, 'key'::BYTES, '0123456789abcdef'::BYTES, 'aes-cbc'), 'key'::BYTES, '0123456789abcdef'::BYTES, 'aes-cbc') = 'abc'::BYTES
+----
+true
+
+# encrypt uses the all-zero IV and is deterministic.
+skipif config 3node-tenant-default-configs
+query B
+SELECT encrypt('abc'::BYTES, 'key'::BYTES, 'aes') = encrypt_iv('abc'::BYTES, 'key'::BYTES, '\x00000000000000000000000000000000'::BYTES, 'aes')
+----
+true
+
+skipif config 3node-tenant-default-configs
+query B
+SELECT encrypt('abc'::BYTES, 'key'::BYTES, 'aes') = encrypt('abc'::BYTES, 'key'::BYTES, 'aes')
+----
+true
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 cipher type "des" is not supported
+SELECT encrypt('abc'::BYTES, 'key'::BYTES, 'des')
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 cipher type "aes-ecb" is not supported
+SELECT encrypt('abc'::BYTES, 'key'::BYTES, 'aes-ecb')
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 cipher type "aes/pad:x" is not supported
+SELECT decrypt('\x6bc1bee22e409f96e93d7e117393172a'::BYTES, 'key'::BYTES, 'aes/pad:x')
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 data length 3 is not a multiple of the AES block size 16
+SELECT encrypt('abc'::BYTES, 'key'::BYTES, 'aes/pad:none')
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 invalid AES key length 33: key must be 1 to 32 bytes
+SELECT encrypt('abc'::BYTES, '0123456789abcdef0123456789abcdef0'::BYTES, 'aes')
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 invalid AES key length 0: key must be 1 to 32 bytes
+SELECT encrypt('abc'::BYTES, ''::BYTES, 'aes')
+
+skipif config 3node-tenant-default-configs
+statement error pgcode 22023 wrong key or corrupt data
+SELECT decrypt(encrypt('\x00000000000000000000000000000000'::BYTES, 'key'::BYTES, 'aes/pad:none'), 'key'::BYTES, 'aes')
+
+subtest end
+
+# Flag off: the cipher builtins return the CCL-required errors. Nothing below
+# this statement may depend on the cipher builtins working.
+skipif config 3node-tenant-default-configs
+statement ok
+SET CLUSTER SETTING feature.pgcrypto_ciphers.enabled = false
+
 subtest ccl_functions
 
 skipif config 3node-tenant-default-configs
 query error pgcode XXC01 encrypt can only be used with a CCL distribution
-SELECT encrypt('abc', 'key', 'aes')
+SELECT encrypt('abc'::BYTES, 'key'::BYTES, 'aes')
 
 skipif config 3node-tenant-default-configs
 query error pgcode XXC01 encrypt_iv can only be used with a CCL distribution
-SELECT encrypt_iv('abc', 'key', '123', 'aes')
+SELECT encrypt_iv('abc'::BYTES, 'key'::BYTES, '123'::BYTES, 'aes')
 
 skipif config 3node-tenant-default-configs
 query error pgcode XXC01 decrypt can only be used with a CCL distribution
-SELECT decrypt('\xdb5f149a7caf0cd275ca18c203a212c9', 'key', 'aes')
+SELECT decrypt('\xdb5f149a7caf0cd275ca18c203a212c9'::BYTES, 'key'::BYTES, 'aes')
 
 skipif config 3node-tenant-default-configs
 query error pgcode XXC01 decrypt_iv can only be used with a CCL distribution
-SELECT decrypt_iv('\x91b4ef63852013c8da53829da662b871', 'key', '123', 'aes')
+SELECT decrypt_iv('\x91b4ef63852013c8da53829da662b871'::BYTES, 'key'::BYTES, '123'::BYTES, 'aes')
 
 subtest end
 
