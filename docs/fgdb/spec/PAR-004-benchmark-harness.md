@@ -115,7 +115,7 @@ Each run is one JSON object. `schema_version` is the string `"1"`. Timestamps us
 
 ## Regression gates
 
-**PERF-001 micro gate.** For each covered microbenchmark name, compare `main` with `candidate` using `benchstat` on the paired per-repetition `samples.time_ns_op` and `samples.allocs_op` arrays from their micro run records. The stored top-level `time_ns_op` and `allocs_op` values are median checks and do not replace the sample arrays as benchstat inputs; `time/op` corresponds to nanoseconds per operation and `allocs/op` to allocations per operation. The `artifact` field holds raw benchstat text as provenance only. Fail on a statistically significant regression when either gated metric is more than 3% worse. The significance test is benchstat's test.
+**PERF-001 micro gate.** For each covered microbenchmark name, compare `main` with `candidate` using `benchstat` on the unpaired per-repetition `samples.time_ns_op` and `samples.allocs_op` arrays from their micro run records. Treat the `main` and `candidate` samples as independent; do not pair observations by array position. The stored top-level `time_ns_op` and `allocs_op` values are median checks and do not replace the sample arrays as benchstat inputs; `time/op` corresponds to nanoseconds per operation and `allocs/op` to allocations per operation. The `artifact` field holds raw benchstat text as provenance only. Fail on a statistically significant regression when either gated metric is more than 3% worse. The significance test is benchstat's test.
 
 For each macro metric, define `delta = (median(candidate repetitions) - median(B0 repetitions)) / median(B0 repetitions)`. Calculate the 95% confidence interval as follows:
 
