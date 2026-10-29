@@ -14,15 +14,19 @@
 
 ## Builder cleanroom boundary (mandatory)
 
+These are behavior-only draft specifications; references to this allowed OSS tree are context, not a substitute for behavioral requirements. Before implementer handoff, a maintainer must review for expression leakage and approve the spec under [CLEANROOM.md](../CLEANROOM.md); record the writer, reviewer, approval, spec version and eventual implementer in the audit trail. Approval is pending.
+
+Oracle baseline provenance: stock CockroachDB OSS v23.2.15 binary, with version and distribution recorded alongside each capture. Record reproducible inputs, settings, outputs or SQLSTATE and message, and capture date in versioned conformance vectors; never copy source or upstream test files. The stock OSS baseline may expose a stub rather than the desired success behavior; it does not establish missing success vectors. Any additional permitted behavioral oracle and its provenance must be identified and approved by the maintainer. Pending oracle data and approval are gates before handoff and implementation, not assumed evidence.
+
 Implement cipher hooks only in Apache-2.0 paths (`pkg/sql/sem/builtins/pgcrypto/`). **Never** read `pkg/ccl/pgcryptoccl` (not in OSS tree; listed only in root `pkg/BUILD.bazel` as CCL targets). No newer CRDB sources. Use **Go `crypto/*` stdlib** and existing `golang.org/x/crypto/bcrypt` already linked from `pgcrypto_builtins.go` for `crypt`/`gen_salt` — no new crypto dependencies without license review.
 
 ## 1. Goal, acceptance criteria, GATE decision
 
-**Goal.** Enable PostgreSQL-compatible `encrypt`, `decrypt`, `encrypt_iv`, and `decrypt_iv` on `cockroach-oss` with parity to stock v23.2.15 **full** binary behavior for supported algorithms (`aes` / `aes-cbc` / PKCS padding per builtin docs), while keeping existing OSS implementations for `digest`, `hmac`, `crypt`, `gen_salt`, and `gen_random_bytes`.
+**Goal.** Enable PostgreSQL-compatible `encrypt`, `decrypt`, `encrypt_iv`, and `decrypt_iv` on `cockroach-oss` with parity to stock v23.2.15 OSS baseline and an approved success oracle behavior for supported algorithms (`aes` / `aes-cbc` / PKCS padding per builtin docs), while keeping existing OSS implementations for `digest`, `hmac`, `crypt`, `gen_salt`, and `gen_random_bytes`.
 
 **Acceptance criteria.**
 
-1. **CRYPT-001.** Cipher parity is defined by an **oracle vector table** recorded from the stock v23.2.15 **full** binary (not the `ccl_functions` logic subtest — that subtest is four `query error` `XXC01` cases with 3-byte key/IV and non-round-trip hex literals). Vectors must include: type string; key length; IV length (for `_iv` funcs); whether `encrypt` output is deterministic across two calls with the same inputs; expected ciphertext/plaintext where applicable; and SQLSTATE + message for **cipher** failures (bad type, bad key length, `pad:none`). Implement `crypto/aes` + `crypto/cipher` CBC and PKCS#7 padding only. Type strings follow `cipherSupportedCipherTypeInfo` in `pgcrypto_builtins.go` — a **grammar**, not four fixed literals: `` `<algorithm>[-<mode>][/pad:<padding>]` `` with algorithm `aes`, mode `cbc` (default), padding `pkcs` (default, PKCS#7) or `none`; **`aes` alone means `aes-cbc` with PKCS#7**. Set builtin `encrypt` to **`Volatile`** only if the stock full binary shows two `encrypt` calls with identical args can differ; keep `encrypt_iv` **immutable** per `pgcrypto_builtins.go` unless oracle proves otherwise. If the stock oracle shows `encrypt` is non-deterministic, logic vectors must assert **round-trip** (`decrypt(encrypt(...))`) rather than a fixed ciphertext hex. Package unit tests that invoke hooks must use `eval.MakeTestingEvalContext(cluster.MakeTestingClusterSettings())` — a nil settings argument leaves `evalCtx.Settings` nil (`eval/context.go`).
+1. **CRYPT-001.** Cipher parity is defined by an **oracle vector table** recorded from the stock v23.2.15 OSS baseline and an approved success oracle (not the `ccl_functions` logic subtest — that subtest is four `query error` `XXC01` cases with 3-byte key/IV and non-round-trip hex literals). Vectors must include: type string; key length; IV length (for `_iv` funcs); whether `encrypt` output is deterministic across two calls with the same inputs; expected ciphertext/plaintext where applicable; and SQLSTATE + message for **cipher** failures (bad type, bad key length, `pad:none`). The proposed `pad:none` behavior is unpadded AES-CBC for block-aligned input, with an oracle-recorded error for non-aligned input; it is not established until approved vectors confirm it. Before implementation or handoff, capture and obtain maintainer approval of aligned and unaligned vectors for both encrypt and decrypt, including `_iv` variants. If the oracle rejects `pad:none` or differs from the proposal, record the observed results and revise this draft through maintainer review before implementation or handoff. Implement `crypto/aes` + `crypto/cipher` CBC with PKCS#7 and the approved `pad:none` behavior. Type strings follow `cipherSupportedCipherTypeInfo` in `pgcrypto_builtins.go` — a **grammar**, not four fixed literals: `` `<algorithm>[-<mode>][/pad:<padding>]` `` with algorithm `aes`, mode `cbc` (default), padding `pkcs` (default, PKCS#7) or `none`; **`aes` alone means `aes-cbc` with PKCS#7**. Set builtin `encrypt` to **`Volatile`** only if the approved success oracle shows two `encrypt` calls with identical args can differ; keep `encrypt_iv` **immutable** per `pgcrypto_builtins.go` unless oracle proves otherwise. If the approved success oracle shows `encrypt` is non-deterministic, logic vectors must assert **round-trip** (`decrypt(encrypt(...))`) rather than a fixed ciphertext hex. Package unit tests that invoke hooks must use `eval.MakeTestingEvalContext(cluster.MakeTestingClusterSettings())` — a nil settings argument leaves `evalCtx.Settings` nil (`eval/context.go`).
 2. **CRYPT-002 (GATE-off).** With `feature.pgcrypto_ciphers.enabled = false`, all four hooks return unchanged stub errors: SQLSTATE `XXC01` (`pgcode.CCLRequired`) and messages exactly `encrypt can only be used with a CCL distribution`, `encrypt_iv can only be used with a CCL distribution`, `decrypt can only be used with a CCL distribution`, `decrypt_iv can only be used with a CCL distribution` (`pkg/sql/sem/builtins/pgcrypto/pgcrypto.go:21–47`). PAR-001 row updates are **follow-up** when that spec exists.
 3. **CRYPT-003.** Existing subtests for `digest`, `hmac`, `gen_salt`, `crypt`, `gen_random_bytes` in `pgcrypto_builtins` remain passing — no regressions.
 4. **CRYPT-004.** `CREATE EXTENSION pgcrypto` still allowed (`pkg/sql/create_extension.go` lists `pgcrypto` and returns success). The shared logic file must include `statement ok` / `CREATE EXTENSION pgcrypto` so the claim’s cited test actually executes it (today’s file never runs `CREATE EXTENSION`).
@@ -34,7 +38,7 @@ Implement cipher hooks only in Apache-2.0 paths (`pkg/sql/sem/builtins/pgcrypto/
 | Item | Decision |
 | --- | --- |
 | Mechanism | `feature.pgcrypto_ciphers.enabled` (public `settings.BoolSetting`, default `true`). **`Encrypt` / `EncryptIV` / `Decrypt` / `DecryptIV` remain assigned to real implementations** (not swapped in `init`); each call reads the setting from `eval.Context` and, when false, returns the four **current** stub strings unchanged. |
-| Flag **on** | Hooks run stdlib AES-CBC + PKCS#7 per oracle vector table and type-string parser. |
+| Flag **on** | Hooks run stdlib AES-CBC with PKCS#7 or `pad:none` per oracle vector table and type-string parser. |
 | Flag **off** | Per-call early return with `pgcrypto.go` `XXC01` messages (CRYPT-002). |
 | PAR-001 | Update parity table when that spec lands; flag-off contract is the four quoted messages above. |
 
@@ -66,10 +70,10 @@ Implement cipher hooks only in Apache-2.0 paths (`pkg/sql/sem/builtins/pgcrypto/
 
 | Deliverable | Path | Target size |
 | --- | --- | --- |
-| Cipher implementation | `pkg/sql/sem/builtins/pgcrypto/cipher.go` (new, Apache-2.0 header) | ~150–250 LOC; AES-CBC; PKCS#7 padding; per-call setting check; shared stub error helpers for flag off. |
+| Cipher implementation | `pkg/sql/sem/builtins/pgcrypto/cipher.go` (new, Apache-2.0 header) | ~150–250 LOC; AES-CBC; PKCS#7 and `pad:none`; per-call setting check; shared stub error helpers for flag off. |
 | Hook wiring | `pkg/sql/sem/builtins/pgcrypto/pgcrypto.go` | Replace default stub func bodies with implementations that delegate to `cipher.go` after setting check (do **not** reassign vars from `init` based on setting). |
 | Setting | `pkg/sql/sem/builtins/pgcrypto/settings.go` or adjacent | Register bool setting; init hook from `builtins` package `init` order safe. |
-| Unit tests | `pkg/sql/sem/builtins/pgcrypto/cipher_test.go` | Vectors from stock-full-binary oracle table (not `ccl_functions` literals); `eval.MakeTestingEvalContext(cluster.MakeTestingClusterSettings())` for hook calls. |
+| Unit tests | `pkg/sql/sem/builtins/pgcrypto/cipher_test.go` | Vectors from approved success oracle table (not `ccl_functions` literals); `eval.MakeTestingEvalContext(cluster.MakeTestingClusterSettings())` for hook calls. |
 | Logic test data | `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` (**edit in place**) | Insert cipher success vectors + `CREATE EXTENSION pgcrypto` **after** existing flag-on subtests, **before** `SET feature.pgcrypto_ciphers.enabled = false` and `subtest ccl_functions`. Round-trip assertions when stock `encrypt` is non-deterministic. **Do not** rely on a separate fgdb config block. |
 | Gate tests | Same shared logic file + optional `pkg/fgdbtest/capabilities/pgcrypto.go` | On/off `XXC01` vs oracle success. |
 | BUILD.bazel | `pkg/sql/sem/builtins/pgcrypto/BUILD.bazel` | Add sources; no ccl deps. |
@@ -110,10 +114,12 @@ GOCACHE=/tmp/gocache-par005 GOTMPDIR=/tmp \
 
 (`local-mixed-23.1` bootstraps cluster version 23.1 but still uses this OSS binary and the same `pgcrypto_builtins` file.)
 
-**Conformance (oracle on stock full binary).**
+**TBD oracle gate.** The additional success-oracle source and approval are pending. Before implementation or handoff, the maintainer must approve its provenance and the aligned and unaligned `pad:none` vectors for both directions and `_iv` variants. Record the source, version/distribution, approver, approval date and approval reference in a versioned `fgdb/test/conformance/par005-pgcrypto/README.md`, alongside reproducible inputs and captured results. The gate remains open until the source, approval record and vectors exist.
+
+**Conformance (oracle on approved success oracle).**
 
 1. Oracle-driven round-trips for `encrypt`/`decrypt` and `encrypt_iv`/`decrypt_iv`.
-2. Cipher error cases from vector table (bad type, bad key length, `pad:none`) — **not** digest/hmac `22023` cases.
+2. Cipher cases from the approved vector table (bad type, bad key length, aligned and unaligned `pad:none` encrypt and decrypt, including `_iv` variants) — **not** digest/hmac `22023` cases.
 3. Flag off: four `XXC01` messages from CRYPT-002 (logic test config with `SET CLUSTER SETTING ... = false`).
 
 **Public references.** PostgreSQL pgcrypto `encrypt`/`decrypt` documentation (argument types and algorithm names); do not copy C source from `contrib/pgcrypto` — use as behavioral checklist only.
@@ -140,7 +146,7 @@ GOCACHE=/tmp/gocache-par005 GOTMPDIR=/tmp \
 
 ```yaml
 - id: CRYPT-001
-  claim: pgcrypto cipher builtins match stock-full-binary oracle vectors when feature.pgcrypto_ciphers.enabled is true.
+  claim: pgcrypto cipher builtins match approved success oracle vectors when feature.pgcrypto_ciphers.enabled is true.
   source: docs/fgdb/spec/PAR-005-pgcrypto.md
   category: correctness
   tests:
@@ -176,7 +182,7 @@ GOCACHE=/tmp/gocache-par005 GOTMPDIR=/tmp \
 **PENDING.**
 
 - Full logic test run on build host.
-- Stock-binary oracle ciphertext capture.
+- Stock OSS baseline and approved success oracle ciphertext capture.
 - Security review of IV handling and key length errors vs PostgreSQL.
 
 ## 6. Review checklist
@@ -184,7 +190,7 @@ GOCACHE=/tmp/gocache-par005 GOTMPDIR=/tmp \
 - [ ] No `pkg/ccl` imports; `nogo` clean.
 - [ ] Flag off restores four `pgcrypto.go` `XXC01` messages exactly; hooks read setting per call.
 - [ ] Shared `pgcrypto_builtins` edited: flag-on subtests first; then cipher success + `CREATE EXTENSION`; then `SET` false; then `ccl_functions`; all seven logic configs pass `TestLogic_pgcrypto_builtins`.
-- [ ] CRYPT-001 vectors from stock full binary, not `ccl_functions` success assumptions; cipher type strings follow `cipherSupportedCipherTypeInfo` grammar.
+- [ ] CRYPT-001 vectors from approved success oracle, not `ccl_functions` success assumptions; cipher type strings follow `cipherSupportedCipherTypeInfo` grammar.
 - [ ] `cipher_test.go` uses `eval.MakeTestingEvalContext(cluster.MakeTestingClusterSettings())`.
 - [ ] `crypt`/`digest` paths untouched unless regression proves otherwise.
 - [ ] License headers on new FGL files (Apache-2.0).
