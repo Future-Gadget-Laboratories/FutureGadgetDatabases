@@ -74,7 +74,7 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	}
 	var c *cluster.Cluster
 	defer func() { result = errors.Join(result, cleanup(c, dir, rep)) }()
-	c, err = cluster.Start(ctx, cluster.Spec{Binary: cfg.Binary, Dir: dir, Nodes: 1})
+	c, err = cluster.Start(ctx, cluster.Spec{Binary: cfg.Binary, Dir: dir, Nodes: 1, ExternalIO: true})
 	if err == nil {
 		err = c.Init(ctx)
 	}
