@@ -269,7 +269,11 @@ func TestCipherHooksGate(t *testing.T) {
 	st := cluster.MakeTestingClusterSettings()
 	evalCtx := eval.MakeTestingEvalContext(st)
 
-	// The hooks are enabled by default.
+	// The hooks are disabled by default.
+	_, err := Encrypt(ctx, &evalCtx, []byte("abc"), []byte("key"), "aes")
+	require.EqualError(t, err, "encrypt can only be used with a CCL distribution")
+
+	featurePgcryptoCiphersEnabled.Override(ctx, &st.SV, true)
 	ct, err := Encrypt(ctx, &evalCtx, []byte("abc"), []byte("key"), "aes")
 	require.NoError(t, err)
 	pt, err := Decrypt(ctx, &evalCtx, ct, []byte("key"), "aes")
