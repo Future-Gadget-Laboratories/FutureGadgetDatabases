@@ -151,10 +151,11 @@ func cleanup(c *cluster.Cluster, dir string, rep *report.Report) error {
 	} else {
 		reapErr = errors.New("node termination could not be confirmed")
 	}
-	if reapErr != nil {
-		err = errors.Join(err, fmt.Errorf("work directory %s kept for manual cleanup: %w", dir, reapErr))
+	err = errors.Join(err, reapErr)
+	if err != nil {
+		err = fmt.Errorf("work directory %s kept for manual cleanup: %w", dir, err)
 	} else {
-		err = errors.Join(err, os.RemoveAll(dir))
+		err = os.RemoveAll(dir)
 	}
 	if err != nil {
 		err = fmt.Errorf("OSS capabilities cleanup; work directory %s: %w", dir, err)
