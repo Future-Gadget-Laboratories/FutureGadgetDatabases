@@ -131,7 +131,7 @@ func (ef *execFactory) ConstructExport(
 	}
 
 	if !ef.planner.ExtendedEvalContext().TxnIsSingleStmt {
-		return nil, errors.Errorf("EXPORT cannot be used inside a multi-statement transaction")
+		return nil, pgerror.Newf(pgcode.ActiveSQLTransaction, "EXPORT cannot be used inside a multi-statement transaction")
 	}
 
 	if fileSuffix != csvSuffix && fileSuffix != parquetSuffix {
