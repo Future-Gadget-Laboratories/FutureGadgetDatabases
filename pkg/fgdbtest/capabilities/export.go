@@ -24,6 +24,8 @@ const (
 	ClaimExportParquet  = "EXP-002"
 	ClaimExportDisabled = "EXP-003"
 	ClaimExportGate     = "EXP-004"
+
+	activeSQLTransactionState = "25001"
 )
 
 func runExportChecks(ctx context.Context, conn *pgx.Conn, store string, rep *report.Report) error {
@@ -95,8 +97,9 @@ func runExportChecks(ctx context.Context, conn *pgx.Conn, store string, rep *rep
 		if err == nil {
 			_, exportErr := conn.Exec(ctx, `EXPORT INTO CSV 'nodelocal://1/fgdb-export-txn/' FROM SELECT 1`)
 			_, rollbackErr := conn.Exec(ctx, `ROLLBACK`)
-			if exportErr == nil || !strings.Contains(exportErr.Error(), "EXPORT cannot be used inside a multi-statement transaction") {
-				err = fmt.Errorf("transaction EXPORT error = %v, want multi-statement rejection", exportErr)
+			var pgErr *pgconn.PgError
+			if !errors.As(exportErr, &pgErr) || pgErr.Code != activeSQLTransactionState {
+				err = fmt.Errorf("transaction EXPORT error = %v, want SQLSTATE %s", exportErr, activeSQLTransactionState)
 			}
 			err = errors.Join(err, rollbackErr)
 		}
