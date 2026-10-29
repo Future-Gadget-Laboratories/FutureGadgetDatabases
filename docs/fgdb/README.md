@@ -15,16 +15,21 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [releases.md](releases.md) | Tarball URLs, image names, and digest pins |
 | [version-gating.md](version-gating.md) | Feature flags, release compatibility, and rollback rules |
 | [operations.md](operations.md) | Telemetry, certificates, a crash drill, and a careful note on decommission |
+| [backup-cli.md](backup-cli.md) | Current logical-backup command flags, exit codes, and prune behavior |
 | [backup.md](backup.md) | Logical backup and restore to a directory or S3 |
+| [backup-config.md](backup-config.md) | Backup configuration file and flags |
 | [contributing.md](contributing.md) | A first evening on the project |
 | [security.md](security.md) | How to report a vulnerability |
 | [roadmap.md](roadmap.md) | v23.2.15 pin, then cleanroom work, then naming |
 | [CLEANROOM.md](CLEANROOM.md) | How to rewrite newer behavior without copying proprietary code |
 | [SOURCES.md](SOURCES.md) | Public sources for that cleanroom process |
 | [../agent/CLEANROOM-ENFORCEMENT.md](../agent/CLEANROOM-ENFORCEMENT.md) | Rules for people and agents: refuse contaminated work and discard it |
-| [RELEASING.md](RELEASING.md) | How maintainers publish `v23.2.15-oss`, including the digest-pinned base image |
+| [RELEASING.md](RELEASING.md) | How maintainers publish OSS and FGDb patch releases, including the digest-pinned base image |
 | [RUNNER.md](RUNNER.md) | How maintainers set up the release build machine, including the local-disk Bazel cache |
+| [runner-config.md](runner-config.md) | Runner setup configuration and resource limits |
 | [ISSUES.md](ISSUES.md) | The short Discord note sent when someone opens an issue |
+
+The current release is `v23.2.15-fgdb.1`; `v23.2.15-oss` is the earlier release. See [releases.md](releases.md) for checksums and digest pins. The fast checks run on GitHub-hosted runners; the separate heavy compile is manual, as described in [testing.md](testing.md).
 
 The release workflow and the runner script are not changed by this index. Follow [RELEASING.md](RELEASING.md) and [RUNNER.md](RUNNER.md) when you cut a release.
 

@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	kindClaims    = "check-claims"
-	kindImports   = "check-imports"
-	kindGoTest    = "go-test"
-	kindBazel     = "bazel"
-	kindCluster   = "cluster"
-	kindNotTested = "not-tested"
+	kindClaims       = "check-claims"
+	kindImports      = "check-imports"
+	kindGoTest       = "go-test"
+	kindBazel        = "bazel"
+	kindCluster      = "cluster"
+	kindCapabilities = "oss-capabilities"
+	kindNotTested    = "not-tested"
 )
 
 // Step is one row of a tier file.
@@ -68,7 +69,7 @@ func checkStep(step Step) error {
 		return fmt.Errorf("a tier step is missing an id")
 	}
 	switch step.Kind {
-	case kindClaims, kindImports, kindCluster, kindNotTested, kindGoTest, kindBazel:
+	case kindClaims, kindImports, kindCluster, kindCapabilities, kindNotTested, kindGoTest, kindBazel:
 	default:
 		return fmt.Errorf("step %s has unknown kind %q", step.ID, step.Kind)
 	}

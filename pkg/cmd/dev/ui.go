@@ -425,7 +425,7 @@ Replaces 'make ui-watch'.`,
 	watchCmd.Flags().Int16P(portFlag, "p", 3000, "port to serve UI on")
 	watchCmd.Flags().String(dbTargetFlag, "http://localhost:8080", "url to proxy DB requests to")
 	watchCmd.Flags().Bool(secureFlag, false, "serve via HTTPS")
-	watchCmd.Flags().Bool(ossFlag, false, "build only the open-source parts of the UI")
+	watchCmd.Flags().Bool(ossFlag, true, "build only the open-source parts of the UI (use --oss=false for CCL)")
 	watchCmd.Flags().StringArray(
 		clusterUiDestinationsFlag,
 		[]string{},

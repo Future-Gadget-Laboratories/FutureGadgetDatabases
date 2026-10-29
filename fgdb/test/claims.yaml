@@ -121,3 +121,273 @@
     - pkg/fgdbtest/scenarios/cluster:TestThreeNodeSlice
   tier: interim
   status: partial
+- id: REP-001
+  claim: Each replication manager getter checks its own hook and preserves the hook result or error.
+  source: docs/fgdb/oss-capabilities.md
+  category: correctness
+  tests:
+    - pkg/repstream:TestManagerHooksAreIndependent
+    - pkg/repstream:TestManagerHookErrorsPropagate
+  tier: interim
+  status: partial
+- id: OSS-001
+  claim: The runtime capability slice requires the candidate binary to report Distribution OSS.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-002
+  claim: The runtime capability slice checks CSV IMPORT from a local HTTP fixture and compares both imported rows.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-003
+  claim: The runtime capability slice requires BACKUP to return the OSS statement gate and SQLSTATE XXC01.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestRequireCCLError
+  tier: interim
+  status: partial
+- id: OSS-004
+  claim: Expired rows become eligible for eventual deletion by the TTL job; deletion timing is not guaranteed. With FGDB_TTL_GUARD=1, the guard requires an unfiltered query to return exactly the surviving row from a poll started within its 300-second budget. An in-flight query may return a passing result after that budget, within its 2-second timeout. Without opt-in, the claim is reported not_tested. Fresh-node timing remains an open question.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-005
+  claim: The runtime capability slice verifies GEOS area through the beside-binary lib directory.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLib
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLibRejectsSymlink
+    - pkg/fgdbtest/capabilities:TestMapsGEOSOnlyFrom
+  tier: interim
+  status: partial
+- id: OSS-006
+  claim: The runtime capability slice verifies READ COMMITTED across two SQL connections.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-007
+  claim: The runtime capability slice verifies PostgreSQL-wire COPY FROM and COPY TO.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-008
+  claim: The runtime capability slice verifies CSV, DELIMITED, AVRO and PGCOPY IMPORT plus PARQUET rejection; MYSQLDUMP and PGDUMP are not covered (oracle-pending).
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestImportFixtureHandler
+  tier: interim
+  status: partial
+- id: GATE-001
+  claim: The runtime slice reports the PAR-001 BACKUP statement gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-002
+  claim: The runtime slice reports the PAR-001 RESTORE statement gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-003
+  claim: The runtime slice reports the PAR-001 SHOW BACKUP statement gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-004
+  claim: The runtime slice reports the PAR-001 CREATE CHANGEFEED statement gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-005
+  claim: The runtime slice reports the PAR-001 ALTER CHANGEFEED statement gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-007
+  claim: The runtime slice reports the PAR-001 ALTER BACKUP statement gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-008
+  claim: The runtime slice reports the PAR-001 scheduled changefeed gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-009
+  claim: The runtime slice reports the PAR-001 scheduled backup gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-010
+  claim: The runtime slice reports the PAR-001 ALTER BACKUP SCHEDULE gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-011
+  claim: The runtime slice reports the PAR-001 virtual-cluster replication gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-012
+  claim: The runtime slice reports the PAR-001 multi-region database creation gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-013
+  claim: The runtime slice reports the PAR-001 primary-region alteration gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-015
+  claim: The runtime slice reports the PAR-001 partition creation gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-016
+  claim: The runtime slice reports the PAR-001 partition alteration gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-017
+  claim: The runtime slice reports the PAR-001 PLpgSQL function gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-018
+  claim: The runtime slice reports the PAR-001 PLpgSQL procedure gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-019
+  claim: The runtime slice reports the PAR-001 generic plan-cache gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-020
+  claim: The runtime slice reports the PAR-001 automatic plan-cache gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-021
+  claim: The runtime slice reports the PAR-001 encrypt builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-022
+  claim: The runtime slice reports the PAR-001 encrypt_iv builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-023
+  claim: The runtime slice reports the PAR-001 decrypt builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-024
+  claim: The runtime slice reports the PAR-001 decrypt_iv builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-025
+  claim: The runtime slice reports the PAR-001 with_min_timestamp builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: GATE-026
+  claim: The runtime slice reports the PAR-001 with_max_staleness builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
