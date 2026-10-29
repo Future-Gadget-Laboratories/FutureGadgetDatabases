@@ -391,3 +391,35 @@
     - pkg/fgdbtest/capabilities:TestOSSCapabilities
   tier: interim
   status: partial
+- id: EXP-001
+  claim: EXPORT INTO CSV to nodelocal succeeds on cockroach-oss with default settings.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-002
+  claim: EXPORT INTO PARQUET succeeds on cockroach-oss with default settings.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-003
+  claim: Disabling feature.export.enabled returns operator intervention on EXPORT.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-004
+  claim: EXPORT does not hit the CCL statement gate on cockroach-oss.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
