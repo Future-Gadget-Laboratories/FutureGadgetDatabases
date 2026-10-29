@@ -33,6 +33,10 @@ The manual self-hosted compile runs this target after its existing OSS build and
 
 The HTTP fixture serves a fixed in-memory CSV, supports HEAD and ranges through Go's standard HTTP handler, and listens on loopback. It accepts no external URL or file path. SQL values are read through pgx, including structured PostgreSQL errors.
 
+## PAR-001 CCL gate contract
+
+The runtime slice also records the 24 active PAR-001 gates as separate claims: GATE-001..GATE-005, GATE-007..GATE-013, and GATE-015..GATE-026. These table-driven cases exercise the approved statement, hook, and builtin CCL gates and require SQLSTATE `XXC01` plus the spec's message substring. Setup, transport, parser, permission, and other mismatches fail closed; a setup failure leaves later gate claims `not_tested`. The corrected replication form is runtime-observed against the released OSS binary (spec v1.3). Retired grammar and unreachable OSS rows are excluded from the claim set. CSV and Parquet export parity rows are not gate claims; PARITY-001 is deferred in this slice.
+
 ## Run it
 
 Cluster-free helper/unit checks:
@@ -55,6 +59,16 @@ Use the OSS binary from the verified release archive or an OSS candidate build. 
 
 Set `FGDB_OUTPUT` to retain `result.json` and `summary.md` outside the Go test's temporary directory. Report `source_sha` identifies the suite checkout supplied by the caller; `candidate_sha256` identifies the supplied candidate tarball. They are different provenance fields. Do not describe a pinned-release run as a test of a newly built database candidate.
 
+## PAR-002 guards
+
+The runtime slice also records OSS-004 through OSS-008: row-level TTL expiry,
+GEOS using both beside-binary `lib/` libraries, READ COMMITTED across two
+connections, PostgreSQL-wire COPY in both directions, and the IMPORT matrix.
+CSV, DELIMITED, PGCOPY, and AVRO use loopback fixtures. PARQUET must be
+rejected with SQLSTATE `0A000`; MYSQLDUMP and PGDUMP remain `not_tested` until
+oracle evidence is available. Missing GEOS libraries and unavailable valid
+fixtures are never treated as passes.
+
 `fgdb/test/run.sh interim` (also nightly and weekly) runs the same capability implementation and merges its per-claim outcomes into the tier report. The PR tier runs only its helper tests. The required capability step reports missing setup and omitted checks explicitly, and fails the tier rather than accepting a skipped runtime check.
 
 The patch-test workflow runs `TestOSSCapabilities` against its existing checksum-pinned `v23.2.15-fgdb.1` binary after the backup integration tests. It uploads the capability report on completion. It does not build the changed server; the manual compile and interim candidate run provide that separate evidence.
@@ -63,4 +77,11 @@ The patch-test workflow runs `TestOSSCapabilities` against its existing checksum
 
 All node stores are temporary and owned by this test. SQL and startup have bounded contexts. Shutdown uses the existing stop and final-reap mechanisms; cleanup errors fail the run. A failure before a check leaves that claim `not_tested` rather than marking it successful.
 
-This adds no secure-mode, upgrade, network-partition, disk-fault, TTL, GEOS, auth-fallback, or full statement-coverage claim. The report keeps its existing partition/disk NOT-tested lines. Expand those capabilities in later slices with their own evidence and cleanup constraints.
+PAR-002 adds the TTL (opt-in), GEOS, READ COMMITTED, COPY and IMPORT-format guards described in [spec/PAR-002-oss-guards.md](spec/PAR-002-oss-guards.md). Missing beside-binary GEOS libraries fail the run, and so do symlinked library files or a node that maps any GEOS library from outside that `lib/` (checked through `/proc/<pid>/maps`, so Linux only). IMPORT runs as a detached job and is polled to a terminal status. Each setup statement has a 30s limit. Deferred cleanup uses its own 30s bounded context. This adds no secure-mode, upgrade, network-partition, disk-fault, auth-fallback, or full statement-coverage claim. The report keeps its existing partition/disk NOT-tested lines. Expand those capabilities in later slices with their own evidence and cleanup constraints.
+
+`OSS-004` (row-level TTL) is opt-in. Expired rows become eligible for eventual deletion by the TTL job; deletion timing is not guaranteed. Set `FGDB_TTL_GUARD=1` to run the guard, which passes only when an unfiltered query returns exactly the surviving row from a poll started within its 300-second budget. An in-flight query may return a passing result after that budget, within its 2-second timeout. A passing run establishes observed deletion only for that run, not a general deadline. Without opt-in, it reports `not_tested` with the reason; the fresh-node timing question remains open in `docs/fgdb/spec/PAR-002-oss-guards.md`.
+
+The runtime capability slice also guards CSV and PARQUET EXPORT on OSS,
+including the existing administrator feature flag and transaction restriction.
+EXPORT is not subject to the BACKUP statement gate. Stock-binary output
+comparisons remain pending in `fgdb/test/conformance/par005-export/`.
