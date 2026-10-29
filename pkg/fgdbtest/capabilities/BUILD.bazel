@@ -4,6 +4,7 @@ go_library(
     name = "capabilities",
     testonly = True,
     srcs = [
+        "gates.go",
         "guards.go",
         "run.go",
         "sql.go",
@@ -24,6 +25,7 @@ go_test(
     name = "capabilities_test",
     srcs = [
         "capabilities_test.go",
+        "gates_test.go",
         "guards_test.go",
     ],
     embed = [":capabilities"],
