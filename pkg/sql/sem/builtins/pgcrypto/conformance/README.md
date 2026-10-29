@@ -12,9 +12,10 @@ behavior is the behavior checked against stock. Success vectors currently use
 NIST SP 800-38A; captures from an approved success oracle are pending. PAR-005
 requires those captures and maintainer approval before handoff.
 
-`encrypt` and `decrypt`, without `_iv`, use an all-zero IV as in PostgreSQL
-pgcrypto. Encryption is deterministic and not semantically secure; use
-`encrypt_iv` with a random IV instead.
+The implementation and spec use an all-zero IV for `encrypt` and `decrypt`
+without `_iv`; this behavior awaits confirmation by an approved success oracle.
+Encryption is deterministic and not semantically secure; use `encrypt_iv` with
+a random IV instead.
 
 What is in place instead:
 
@@ -24,7 +25,9 @@ What is in place instead:
 - `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` (`cipher_builtins`
   subtest) checks one NIST vector, round-trips, zero-IV equivalence, and the
   cipher error cases. The flag-on error texts come from the implementation,
-  not from an oracle capture.
+  not from an oracle capture. The `3node-tenant-default-configs` configurations
+  exercise default-on cipher behavior, but skip the flag-off checks because
+  their tenant settings cannot be changed with these SQL statements.
 
 Still to do with an approved success oracle:
 

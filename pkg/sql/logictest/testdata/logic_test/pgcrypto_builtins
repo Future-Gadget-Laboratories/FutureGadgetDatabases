@@ -384,7 +384,9 @@ SELECT decrypt(encrypt('\x00000000000000000000000000000000'::BYTES, 'key'::BYTES
 subtest end
 
 # Flag off: the cipher builtins return the CCL-required errors. Nothing below
-# this statement may depend on the cipher builtins working.
+# this statement may depend on the cipher builtins working. Tenant configs
+# exercise default-on behavior but skip the flag-off checks and reset because
+# these SQL statements cannot change their tenant settings.
 skipif config 3node-tenant-default-configs
 statement ok
 SET CLUSTER SETTING feature.pgcrypto_ciphers.enabled = false

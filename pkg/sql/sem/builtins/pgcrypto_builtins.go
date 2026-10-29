@@ -48,7 +48,7 @@ const cipherSupportedCipherTypeInfo = "The cipher type must have the format `<al
 	"* `<mode>` is `cbc` (default)\n" +
 	"* `<padding>` is `pkcs` (default) or `none`"
 
-const cipherRequiresEnterpriseLicenseInfo = "This function requires an enterprise license on a CCL distribution."
+const cipherAvailabilityInfo = "This function is enabled by default. Set `feature.pgcrypto_ciphers.enabled` to false to disable it; calls then return a CCL-required error."
 
 var pgcryptoBuiltins = map[string]builtinDefinition{
 
@@ -92,7 +92,7 @@ var pgcryptoBuiltins = map[string]builtinDefinition{
 			},
 			Info: "Decrypt `data` with `key` using the cipher method specified by `type` and an all-zero IV." +
 				"\n\n" + cipherSupportedCipherTypeInfo +
-				"\n\n" + cipherRequiresEnterpriseLicenseInfo,
+				"\n\n" + cipherAvailabilityInfo,
 			Volatility: volatility.Immutable,
 		},
 	),
@@ -121,7 +121,7 @@ var pgcryptoBuiltins = map[string]builtinDefinition{
 			Info: "Decrypt `data` with `key` using the cipher method specified by `type`. " +
 				"If the mode is CBC, the provided `iv` will be used. Otherwise, it will be ignored." +
 				"\n\n" + cipherSupportedCipherTypeInfo +
-				"\n\n" + cipherRequiresEnterpriseLicenseInfo,
+				"\n\n" + cipherAvailabilityInfo,
 			Volatility: volatility.Immutable,
 		},
 	),
@@ -190,7 +190,7 @@ var pgcryptoBuiltins = map[string]builtinDefinition{
 			Info: "Encrypt `data` with `key` using the cipher method specified by `type` and an all-zero IV. " +
 				"This is deterministic and not semantically secure; use `encrypt_iv` with a random IV instead." +
 				"\n\n" + cipherSupportedCipherTypeInfo +
-				"\n\n" + cipherRequiresEnterpriseLicenseInfo,
+				"\n\n" + cipherAvailabilityInfo,
 			Volatility: volatility.Immutable,
 		},
 	),
@@ -219,7 +219,7 @@ var pgcryptoBuiltins = map[string]builtinDefinition{
 			Info: "Encrypt `data` with `key` using the cipher method specified by `type`. " +
 				"If the mode is CBC, the provided `iv` will be used. Otherwise, it will be ignored." +
 				"\n\n" + cipherSupportedCipherTypeInfo +
-				"\n\n" + cipherRequiresEnterpriseLicenseInfo,
+				"\n\n" + cipherAvailabilityInfo,
 			Volatility: volatility.Immutable,
 		},
 	),
