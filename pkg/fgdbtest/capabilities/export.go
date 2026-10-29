@@ -25,7 +25,12 @@ const (
 	ClaimExportDisabled = "EXP-003"
 	ClaimExportGate     = "EXP-004"
 
+	// activeSQLTransactionState is returned by builds that include the
+	// SQLSTATE fix for EXPORT inside a transaction. uncategorizedState is
+	// what stock v23.2.15 and earlier FGDb releases return for the same
+	// rejection. The check accepts either code and nothing else.
 	activeSQLTransactionState = "25001"
+	uncategorizedState        = "XXUUU"
 )
 
 func runExportChecks(ctx context.Context, conn *pgx.Conn, store string, rep *report.Report) error {
@@ -98,8 +103,8 @@ func runExportChecks(ctx context.Context, conn *pgx.Conn, store string, rep *rep
 			_, exportErr := conn.Exec(ctx, `EXPORT INTO CSV 'nodelocal://1/fgdb-export-txn/' FROM SELECT 1`)
 			_, rollbackErr := conn.Exec(ctx, `ROLLBACK`)
 			var pgErr *pgconn.PgError
-			if !errors.As(exportErr, &pgErr) || pgErr.Code != activeSQLTransactionState {
-				err = fmt.Errorf("transaction EXPORT error = %v, want SQLSTATE %s", exportErr, activeSQLTransactionState)
+			if !errors.As(exportErr, &pgErr) || (pgErr.Code != activeSQLTransactionState && pgErr.Code != uncategorizedState) {
+				err = fmt.Errorf("transaction EXPORT error = %v, want SQLSTATE %s or %s", exportErr, activeSQLTransactionState, uncategorizedState)
 			}
 			err = errors.Join(err, rollbackErr)
 		}
