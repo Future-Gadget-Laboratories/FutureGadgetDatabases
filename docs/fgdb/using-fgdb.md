@@ -14,11 +14,11 @@ This chart tracks FGDb additions and proposed work alongside a practical introdu
 | Expanded OSS gate contract checks | tentative | [#31](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/31) |
 | Strict CCL checks by default | tentative | [#38](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/38) |
 | EXPORT capability checks | tentative | [#42](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/42) |
-| pgcrypto raw encrypt/decrypt (`sql.defaults.experimental_pgcrypto.enabled`, default off) | tentative | [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) |
+| pgcrypto raw encrypt/decrypt (`feature.pgcrypto_ciphers.enabled`, default on) | tentative | [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) |
 | Workload IMPORT loader | planned | [#41](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/41) |
 | Version-gating and feature-flag contract | planned | [#33](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/33) |
 
-The supported capability suite and replication hook checks were verified on main by the capability suite and CI.
+Rows marked supported are covered by checks that run in the [FGDB checks workflow](../../.github/workflows/fgdb-checks.yml) (`go vet` and the `pr` tier of [fgdb/test/run.sh](../../fgdb/test/run.sh)). The most recent run on main at the time of writing passed: [FGDB checks run 40156037249](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/actions/runs/40156037249) at commit 0ddbad46. Rows marked tentative or planned are not covered on main.
 
 ## Install
 

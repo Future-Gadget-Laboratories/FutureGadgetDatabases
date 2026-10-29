@@ -4,11 +4,18 @@ Licensed under the Apache License, Version 2.0. See licenses/APL.txt. -->
 
 # pgcrypto cipher conformance vectors: PENDING
 
-**Status: PENDING. Stock-binary oracle vectors have not been recorded.**
+**Status: PENDING. Approved success oracle captures have not been recorded.**
 
-PAR-005 (CRYPT-001) calls for an oracle vector table recorded from the stock
-PostgreSQL-compatible v23.2.15 full binary. That recording is not available
-yet, so no oracle output is in this directory or in the tests.
+Stock CockroachDB v23.2.15 OSS returns the CCL-required error for these
+builtins, so it cannot provide the flag-on success oracle. The flag-off
+behavior is the behavior checked against stock. Success vectors currently use
+NIST SP 800-38A; captures from an approved success oracle are pending. PAR-005
+requires those captures and maintainer approval before handoff.
+
+The implementation and spec use an all-zero IV for `encrypt` and `decrypt`
+without `_iv`; this behavior awaits confirmation by an approved success oracle.
+Encryption is deterministic and not semantically secure; use `encrypt_iv` with
+a random IV instead.
 
 What is in place instead:
 
@@ -17,18 +24,20 @@ What is in place instead:
   padding, key-length and IV-length checks.
 - `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` (`cipher_builtins`
   subtest) checks one NIST vector, round-trips, zero-IV equivalence, and the
-  cipher error cases. All error texts in the file come from the implementation,
-  not from a recording.
+  cipher error cases. The flag-on error texts come from the implementation,
+  not from an oracle capture. The `3node-tenant-default-configs` configurations
+  exercise default-on cipher behavior, but skip the flag-off checks because
+  their tenant settings cannot be changed with these SQL statements.
 
-Still to do once the build host can run the stock oracle:
+Still to do with an approved success oracle:
 
 1. Record `encrypt`/`decrypt` and `encrypt_iv`/`decrypt_iv` outputs for the
    supported type strings and key lengths.
 2. Record SQLSTATE and message for bad type, bad key length, and `pad:none`
    with unaligned data, then compare them with the messages in `cipher.go`.
-3. Confirm whether stock `encrypt` is deterministic (the implementation uses a
+3. Confirm whether the oracle `encrypt` is deterministic (the implementation uses a
    zero IV, so it is deterministic and keeps `Immutable`).
 4. Confirm key zero-padding and over-length key behaviour, and IV handling for
    IVs shorter than one block.
 
-Do not add values to this directory that were not produced by the stock binary.
+Record the provenance of each oracle capture as required by PAR-005.
