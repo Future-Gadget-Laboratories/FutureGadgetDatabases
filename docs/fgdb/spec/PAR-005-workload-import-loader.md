@@ -29,7 +29,7 @@ Oracle baseline provenance: stock CockroachDB OSS v23.2.15 binary, with version 
 
 **Acceptance criteria.**
 
-1. **TOOL-001.** On a loopback single-node `cockroach-oss` cluster, `cockroach workload init tpcc --warehouses=1` with default `AUTO` completes without error and leaves a populated `tpcc` schema (row counts consistent with warehouse=1 expectations from the workload generator in this tree). Run the workload `PostLoad` hook after all imports complete; assert that the expected tpcc foreign key constraints exist and are validated, comparing their definitions with the approved oracle.
+1. **TOOL-001.** On a loopback single-node `cockroach-oss` cluster, `cockroach workload init tpcc --warehouses=1` with default `AUTO` completes without error and leaves a populated `tpcc` schema (row counts consistent with warehouse=1 expectations from the workload generator in this tree). Run the workload `PostLoad` hook after all imports complete; assert that the expected tpcc foreign key constraints exist and are unvalidated (`NOT VALID`), comparing their definitions and validation state with the approved oracle.
 2. **GATE-off contract.** For AUTO selecting IMPORT or explicit `--data-loader=import`, read the setting using a connection to an existing database before `runInitImpl` creates the workload database and before `Setup` invokes `PreCreate`. If false, return `loading initial data with IMPORT requires a CCL binary` without creating the database or running hooks, table creation, or IMPORT. This deliberately removes the earlier command’s database/PreCreate side effects. INSERT and AUTO selecting INSERT are unaffected; ad-hoc server IMPORT remains available.
 3. **INSERT unchanged.** `--data-loader=INSERT` behavior and performance characteristics remain unchanged when the flag is on or off.
 4. **Conformance.** FGL conformance cases (recorded oracle from stock v23.2.15 OSS baseline and an approved success oracle for URI shape, job completion, and row fingerprints) pass on FGDb with flag on; flag-off cases match today's error.
@@ -40,7 +40,7 @@ Oracle baseline provenance: stock CockroachDB OSS v23.2.15 binary, with version 
 
 | Item | Decision |
 | --- | --- |
-| Mechanism | Public cluster setting `feature.workload_import_loader.enabled` (name negotiable with maintainer; must be `settings.ApplicationLevel`, default `true`, documented). Register the setting in the **OSS-only wiring package** (below) so `cockroach-oss` still exposes it. The command reads it via SQL on a connection to an existing database after loader selection and before workload database creation or `PreCreate`. Other entry points must enforce the same preflight before those side effects. |
+| Mechanism | Public cluster setting `feature.workload_import_loader.enabled` (name negotiable with maintainer; must be `settings.ApplicationLevel`, default `true`, documented). Register the setting in the **OSS-only wiring package** (below) so `cockroach-oss` still exposes it. In `pkg/workload/cli/run.go` `runInitImpl`, move AUTO resolution and loader selection ahead of the existing `DROP DATABASE` and `CREATE DATABASE` statements; for an IMPORT selection, query the setting through `initDB` connected to an existing database and return the loader error if false. Only then may the command drop or create the workload database and call `workloadsql.Setup` (which invokes `PreCreate`). Workload init and the deprecated workload run initialization path use `runInitImpl`; any fixtures or other entry point that can select this loader must enforce the same preflight before those side effects. |
 | Flag **on** | `workload.ImportDataLoader` runs the cleanroom OSS implementation; server uses existing `IMPORT INTO` + `workload://` support in `pkg/sql/importer`. |
 | Flag **off** | The command returns today's loader error string unchanged before database creation and hooks (`loading initial data with IMPORT requires a CCL binary`) and does not run `IMPORT`. Server `IMPORT` for HTTP/`nodelocal` (OSS-002) stays unaffected. |
 | PAR-001 linkage | This is a **new** PAR-0xx flip for workload-loader only; update PAR-001 maintainer notes when the setting lands. Not a statement-gate `XXC01` row. |
@@ -137,11 +137,13 @@ Use `pkg/fgdbtest/cluster` (disk store, reserved loopback address port per `clus
 ./artifacts/cockroach-oss workload init tpcc --warehouses=1 '<workload-url-from-harness>'
 ```
 
+**TBD oracle gate.** The additional success-oracle source and its approval are not yet identified. Before implementation or handoff, the maintainer must approve the permitted source and its provenance; record the source, version/distribution, approver, approval date and approval reference in a versioned `fgdb/test/conformance/par005-workload-loader/README.md`, alongside the captured inputs and vectors in that directory. Capture URI shape, job completion, row fingerprints and FK definitions/validation state before comparing FGDb. Until the source, approval record and captures exist, this gate is open.
+
 **Conformance cases (record oracle on approved success oracle, then diff FGDb).**
 
 1. `workload init tpcc --warehouses=1` (AUTO) — exit 0; `SELECT count(*) FROM tpcc.warehouse` (and one more fact table) vs oracle.
 2. Same with `--data-loader=import` explicit.
-3. With the setting false, run both AUTO selecting IMPORT and explicit import against an absent workload database, including a tpcc option that exercises `PreCreate`. Assert the exact loader error, that the database remains absent, and that relevant cluster/database configuration is unchanged; verify no hooks ran. Also cover an existing workload database and verify its configuration and schema remain unchanged.
+3. Add a command-level test for `runInitImpl` in `pkg/workload/cli/run_test.go`: use an instrumented fixture-capable generator with `PreCreate` and `PostLoad` counters and a recording SQL connection returning false for the setting. Exercise AUTO selecting IMPORT and explicit import, with absent and existing workload databases and with `--drop` enabled. Assert the exact loader error, zero hook calls, and no DROP, CREATE DATABASE, table creation, or IMPORT statements; verify the simulated existing database schema and configuration remain unchanged. Also exercise INSERT and AUTO selecting INSERT to show the gate does not block them. A cluster conformance case must additionally run tpcc with an option that exercises `PreCreate` and verify the absent database stays absent and relevant configuration is unchanged; repeat against an existing database and verify its schema and configuration remain unchanged.
 4. `workload init bank` (small fixture) — row count oracle.
 5. Negative: workload without fixtures still uses INSERT on AUTO (e.g. generator without `FillBatch`).
 
@@ -205,11 +207,11 @@ easyscan-scan --workspace /tmp/par005-scope \
 - [ ] TOOL-001 test uses `fgdbtest/cluster` (or explicit listen/sql addrs), execs `cockroach-oss workload init`, leaktest/log.Scope per FGDb rules.
 - [ ] `workload.ImportDataLoader` `init` and cluster setting live in `pkg/workload/importoss/`; blank import **only** from `pkg/cmd/cockroach-oss/main.go` (not in `workloadsql`).
 - [ ] Preflight checks the setting before database creation and `PreCreate`; flag-off side-effect tests cover absent and existing databases.
-- [ ] `PostLoad` runs after all imports; tpcc foreign keys are present and validated.
+- [ ] `PostLoad` runs after all imports; tpcc foreign keys are present and unvalidated (`NOT VALID`).
 - [ ] `TestImportDataLoaderOSS` on large Bazel target; `Spec.Binary` from `FGDB_COCKROACH`; skip when unset; `WorkloadURL` not `SQLURL` / `/defaultdb`.
 - [ ] `pkg/cmd/cockroach-oss/BUILD.bazel` lists `//pkg/workload/importoss`.
 - [ ] `IMPORT INTO` URIs match §2.1 (`csv`, `version`, `row-end=NumBatches`, generator flags in query).
 - [ ] Claims.yaml updated; PR states license boundary.
-- [ ] Conformance oracle provenance documented (stock OSS v23.2.15 baseline version, not FGDb candidate).
+- [ ] TBD gate closed: maintainer-approved success-oracle source and approval recorded in the versioned conformance README, with baseline provenance and required captures (not FGDb candidate).
 - [ ] easyscan scope copied to `/tmp/par005-scope` before scan.
 - [ ] No internal hostnames, tokens, or private consumer names in docs or tests.

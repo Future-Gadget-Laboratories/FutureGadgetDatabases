@@ -28,7 +28,7 @@ Same as PAR-005 workload loader: Apache-2.0 v23.2.15 tree only; no `pkg/ccl/`; n
 
 1. **EXP-001 (CSV).** `EXPORT INTO CSV 'nodelocal://1/<testdir>/' FROM SELECT 1` succeeds on a disposable OSS node with default cluster settings; output files exist and contain expected CSV bytes (oracle-recorded).
 2. **EXP-002 (PARQUET).** Same for `EXPORT INTO PARQUET` with a simple typed row; parquet readable per oracle (row count / column value).
-3. **EXP-004 (not CCL gate).** With default `feature.export.enabled` **true**, minimal `EXPORT INTO CSV ... FROM SELECT 1` does **not** return statement-gate `XXC01` / `a CCL binary is required to use this statement type: *tree.Export` on OSS (`*tree.Export` is `cclOnlyStatement` in `pkg/sql/sem/tree/stmt.go` but absent from the opaque list in `pkg/sql/opaque.go`). EXP-004 must run **while the flag is still default-on**, before any disable case — with the flag false, `ConstructExport` returns SQLSTATE `57000` first (`pkg/sql/export.go:116`) and EXP-004 would falsely pass on the wrong error class.
+3. **EXP-004 (not CCL gate).** With default `feature.export.enabled` **true**, minimal `EXPORT INTO CSV ... FROM SELECT 1` succeeds and produces the expected CSV bytes; inspect the actual result and fail on any error, including statement-gate `XXC01` / `a CCL binary is required to use this statement type: *tree.Export`, on OSS (`*tree.Export` is `cclOnlyStatement` in `pkg/sql/sem/tree/stmt.go` but absent from the opaque list in `pkg/sql/opaque.go`). EXP-004 must run **while the flag is still default-on**, before any disable case — with the flag false, `ConstructExport` returns SQLSTATE `57000` first (`pkg/sql/export.go:116`) and EXP-004 would falsely pass on the wrong error class.
 4. **EXP-003 (feature flag).** After EXP-001, EXP-002, and EXP-004 succeed, `SET CLUSTER SETTING feature.export.enabled = FALSE`; EXPORT fails with SQLSTATE `57000` (operator intervention) and message containing `feature EXPORT was disabled by the database administrator` (matches `pkg/sql/export.go` and `TestExportFeatureFlag` at `pkg/sql/importer/exportcsv_test.go:440`). Re-enable the setting (`= true`) before the multi-statement negative case.
 5. **Claims.** New `fgdb/test/capabilities` or conformance rows; claims.yaml entries with tests.
 6. **M-BULK alignment.** Export leg of M-BULK (fixed dataset round-trip) PENDING vs approved success oracle on build host.
@@ -105,7 +105,7 @@ FGDB_REQUIRE_CLUSTER=1 FGDB_COCKROACH=/absolute/path/to/cockroach-oss \
 
 1. Minimal CSV export (single column) — CockroachDB v23.2 EXPORT docs baseline (EXP-001).
 2. PARQUET export with `compression = gzip` option (one case) (EXP-002).
-3. EXP-004: explicitly inspect the minimal CSV export result and assert it is not `XXC01` with `a CCL binary is required to use this statement type: *tree.Export` while `feature.export.enabled` is default **true**.
+3. EXP-004: inspect the minimal CSV export result while `feature.export.enabled` is default **true**; require success and verify the expected output bytes. Fail on every error, including the `XXC01` statement gate.
 4. `SET CLUSTER SETTING feature.export.enabled = false` — SQLSTATE `57000` and operator intervention message (EXP-003).
 5. `SET CLUSTER SETTING feature.export.enabled = true` again, then negative: `EXPORT` inside explicit multi-statement txn — exact error: `EXPORT cannot be used inside a multi-statement transaction` (`pkg/sql/export.go:134`).
 6. Negative control: same session `BACKUP` still `XXC01` (proves suite distinguishes gates).
@@ -126,7 +126,7 @@ FGDB_REQUIRE_CLUSTER=1 FGDB_COCKROACH=/absolute/path/to/cockroach-oss \
 1. Is M-BULK export leg in scope for the same PR as capabilities or a follow-up benchmark PR?
 2. *(Reviewer: dedicated `TestOSSExport` — **declined**; spec requires `runCluster` integration so published `TestOSSCapabilities` exercises EXP-*.)*
 
-**Claim-to-check mapping.** EXP-001 asserts CSV success and expected output bytes; EXP-002 asserts PARQUET success and the expected readable row; EXP-003 asserts SQLSTATE `57000` and the administrator-disabled message with the flag off. EXP-004 explicitly inspects the default-on CSV statement result and asserts it is not SQLSTATE `XXC01` with `a CCL binary is required to use this statement type: *tree.Export`. The same execution may support EXP-001 and EXP-004, but record each assertion separately; absence of that gate alone does not establish export success.
+**Claim-to-check mapping.** EXP-001 asserts CSV success and expected output bytes; EXP-002 asserts PARQUET success and the expected readable row; EXP-003 asserts SQLSTATE `57000` and the administrator-disabled message with the flag off. EXP-004 inspects the default-on CSV statement result, requires success and verifies the expected output bytes; any error, including SQLSTATE `XXC01` with `a CCL binary is required to use this statement type: *tree.Export`, fails the check. The same execution may support EXP-001 and EXP-004, but record each assertion separately; absence of that gate alone does not establish export success.
 
 **Claims registry examples (`EXP-001`..`EXP-004`).** Each row uses `tests: pkg/fgdbtest/capabilities:TestOSSCapabilities` and `source` under `docs/fgdb/` (e.g. this spec or `oss-capabilities.md` once cross-linked).
 
