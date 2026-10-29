@@ -20,6 +20,11 @@
 # targets. //pkg/ui/distoss is a dependency of cockroach-oss, so the UI
 # is built by that target. There is no separate webpack or `dev ui` step.
 #
+# FGDB_STRICT_CCL is ON unless set explicitly to 0. Strict mode rejects
+# CCL targets in the configured OSS dependency graph before building and
+# CCL protobuf/import references in the emitted OSS UI bundle afterward.
+# FGDB_STRICT_CCL=0 skips these additional checks for compatibility.
+#
 # Staged paths match pkg/cmd/dev/build.go stageArtifacts and what
 # verify-oss-binary.sh, package-oss-tarball.sh, and the workflow expect:
 #   SRC/cockroach-oss
@@ -59,6 +64,24 @@ cd "$src"
 # override the flag from failing on a missing directory.
 mkdir -p /artifacts/tmp 2>/dev/null || mkdir -p "${src}/artifacts/tmp"
 
+if [[ "${FGDB_STRICT_CCL:-1}" != 0 ]]; then
+  graph_file=$(mktemp)
+  trap 'rm -f "$graph_file"' EXIT
+  # cquery inherits the build configuration from .bazelrc.user, including
+  # selects and transitions, without compiling any targets.
+  if ! bazel cquery 'deps(set(//pkg/cmd/cockroach-oss:cockroach-oss //c-deps:libgeos))' --output=label >"$graph_file"; then
+    echo "build-oss.sh: strict CCL dependency query failed" >&2
+    exit 1
+  fi
+  if grep -E 'crdb-protobuf-client-ccl|enginepbccl|//pkg/ccl([/:]|$)|//pkg/ui/distccl([/:]|$)' "$graph_file"; then
+    echo "build-oss.sh: strict CCL check found a forbidden OSS dependency" >&2
+    exit 1
+  elif [[ $? -ne 1 ]]; then
+    echo "build-oss.sh: strict CCL scan failed" >&2
+    exit 1
+  fi
+fi
+
 echo "Building //pkg/cmd/cockroach-oss:cockroach-oss and //c-deps:libgeos"
 echo "Not building //pkg/cmd/cockroach."
 # Targets only. Config, stamp, and resources are build lines in
@@ -72,6 +95,21 @@ bazel build //pkg/cmd/cockroach-oss:cockroach-oss //c-deps:libgeos
 # repeated, and repeating them is easy to get wrong. The symlink is
 # the configuration Bazel actually used.
 bazel_bin="${src}/_bazel/bin"
+if [[ "${FGDB_STRICT_CCL:-1}" != 0 ]]; then
+  ui_bundle="${bazel_bin}/pkg/ui/workspaces/db-console/db-console-oss/assets/bundle.js"
+  if [[ ! -s "$ui_bundle" ]]; then
+    echo "build-oss.sh: strict CCL check requires the OSS UI bundle: ${ui_bundle}" >&2
+    exit 1
+  fi
+  if grep -aE 'crdb-protobuf-client-ccl|enginepbccl|pkg/ccl([/:]|$)|pkg/ui/distccl' "$ui_bundle" >/dev/null; then
+    echo "build-oss.sh: strict CCL check found a forbidden reference in the OSS UI bundle" >&2
+    exit 1
+  elif [[ $? -ne 1 ]]; then
+    echo "build-oss.sh: strict CCL scan failed" >&2
+    exit 1
+  fi
+fi
+
 oss_built="${bazel_bin}/pkg/cmd/cockroach-oss/cockroach-oss_/cockroach-oss"
 if [[ ! -f "$oss_built" ]]; then
   echo "build-oss.sh: ${oss_built} is missing after the build" >&2

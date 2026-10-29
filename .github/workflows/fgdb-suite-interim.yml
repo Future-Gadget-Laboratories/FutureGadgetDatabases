@@ -1,9 +1,10 @@
 # Interim slice of the FGDb suite.
 #
 # Trigger: workflow_dispatch only. Pull requests and ordinary pushes do not run it.
-# The job runs on a self-hosted runner labeled fgdb-build. It reads
-# /etc/fgdb/runner.env for the Bazel cache and resource caps, the same way
-# fgdb-oss-release.yml does. It has no secrets.
+# The job runs on the persistent self-hosted build runner. It reads the
+# runner environment file written by build/fgdb/runner/setup-runner.sh for
+# the Bazel cache and resource caps, the same way fgdb-oss-release.yml does.
+# It has no secrets.
 #
 # Pass the candidate tarball URL and its sha256. The previous binary is the
 # v23.2.15-fgdb.1 release. Both checksums are verified before the suite starts.
@@ -31,7 +32,7 @@ concurrency:
 jobs:
   interim:
     name: Interim slice
-    runs-on: [self-hosted, fgdb-build]
+    runs-on: ${{ fromJSON(vars.FGDB_BUILD_RUNS_ON || '["self-hosted"]') }}
     timeout-minutes: 360
     permissions:
       contents: read
@@ -53,19 +54,25 @@ jobs:
           go-version: "1.21.12"
 
       - name: Require the runner cache paths
+        env:
+          FGDB_RUNNER_ENV_FILE: ${{ vars.FGDB_RUNNER_ENV_FILE }}
         run: |
           set -euo pipefail
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
-            if [[ -f /etc/fgdb/runner.env ]]; then
+            env_file="${FGDB_RUNNER_ENV_FILE:-}"
+            if [[ -z "$env_file" ]]; then
+              env_file=$(sed -n 's/^ENV_FILE=//p' build/fgdb/runner/setup-runner.sh | head -n 1)
+            fi
+            if [[ -n "$env_file" && -f "$env_file" ]]; then
               set -a
-              # shellcheck disable=SC1091
-              . /etc/fgdb/runner.env
+              # shellcheck disable=SC1090
+              . "$env_file"
               set +a
             fi
           fi
           if [[ -z "${FGDB_BAZEL_DISK_CACHE:-}" || -z "${FGDB_BAZEL_OUTPUT_BASE:-}" ]]; then
             echo "FGDB_BAZEL_DISK_CACHE and FGDB_BAZEL_OUTPUT_BASE are unset." >&2
-            echo "The self-hosted runner labeled fgdb-build needs /etc/fgdb/runner.env." >&2
+            echo "Provision the build runner with build/fgdb/runner/setup-runner.sh first." >&2
             exit 1
           fi
           {
