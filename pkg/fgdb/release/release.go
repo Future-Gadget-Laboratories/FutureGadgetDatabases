@@ -83,7 +83,7 @@ func ParseTag(tag string) (Release, error) {
 }
 
 func parseNumber(s string) (uint64, error) {
-	n, err := strconv.ParseUint(s, 10, 64)
+	n, err := strconv.ParseUint(s, 10, 31)
 	if err != nil {
 		return 0, fmt.Errorf("invalid FGDb version number %q: %w", s, err)
 	}
