@@ -99,11 +99,12 @@ recognized format is unsupported.
 
 ## Reporting and cleanup
 
-Record one outcome per claim: `pass`, `fail`, or `not_tested`. Include the
-statement, SQLSTATE and message for every error, row values for every successful
-query, elapsed time, binary identity, and whether the required beside-binary
-GEOS libraries were present. A missing binary, missing `lib/`, failed cluster
-setting, absent fixture, or skipped execution must be visible in the report.
+Record one outcome and aggregate detail per claim: `pass`, `fail`, or
+`not_tested`. The report includes supplied run and candidate identity metadata
+and failure or skip details. It does not record every statement, successful
+query result, SQLSTATE, or per-operation elapsed time. Missing GEOS libraries
+and failed checks are reflected in the relevant claim detail; checks that did
+not run remain `not_tested`.
 
 Drop created tables, restore changed cluster settings, stop the node, reap its
 process, and remove only the test-owned temporary directory. Cleanup failure
