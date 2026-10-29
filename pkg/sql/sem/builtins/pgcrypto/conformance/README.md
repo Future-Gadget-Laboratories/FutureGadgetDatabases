@@ -10,7 +10,8 @@ Stock CockroachDB v23.2.15 OSS returns the CCL-required error for these
 builtins, so it cannot provide the flag-on success oracle. The flag-off
 behavior is the behavior checked against stock. Success vectors currently use
 NIST SP 800-38A; captures from an approved success oracle are pending. PAR-005
-requires those captures and maintainer approval before handoff.
+requires those captures and maintainer approval before handoff. The cipher
+setting defaults to off pending those captures and approval.
 
 The implementation and spec use an all-zero IV for `encrypt` and `decrypt`
 without `_iv`; this behavior awaits confirmation by an approved success oracle.
@@ -26,8 +27,8 @@ What is in place instead:
   subtest) checks one NIST vector, round-trips, zero-IV equivalence, and the
   cipher error cases. The flag-on error texts come from the implementation,
   not from an oracle capture. The `3node-tenant-default-configs` configurations
-  exercise default-on cipher behavior, but skip the flag-off checks because
-  their tenant settings cannot be changed with these SQL statements.
+  skip the flag-on cases because their tenant settings cannot be changed with
+  these SQL statements; they exercise the default flag-off checks.
 
 Still to do with an approved success oracle:
 
