@@ -73,7 +73,7 @@ if [[ "${FGDB_STRICT_CCL:-1}" != 0 ]]; then
     echo "build-oss.sh: strict CCL dependency query failed" >&2
     exit 1
   fi
-  if grep -E 'crdb-protobuf-client-ccl|enginepbccl|//pkg/ccl([/:]|$)|//pkg/ui/distccl([/:]|$)' "$graph_file"; then
+  if grep -E 'crdb-protobuf-client-ccl|enginepbccl|//pkg/ccl([/:]|$)|//pkg/ui/distccl([/:]|$)|//pkg/ui/workspaces/db-console/ccl([/:]|$)' "$graph_file"; then
     echo "build-oss.sh: strict CCL check found a forbidden OSS dependency" >&2
     exit 1
   elif [[ $? -ne 1 ]]; then
