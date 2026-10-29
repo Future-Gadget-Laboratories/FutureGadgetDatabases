@@ -103,7 +103,7 @@ class Checker:
         elif (not isinstance(cols, list) or not cols or not all(is_text(c) for c in cols)
               or len(set(cols)) != len(cols)):
             self.err(w, "columns must be null or a non-empty list of unique strings")
-            cols, incomplete = None, True
+            cols = None
         rm, rows = r["row_match"], r["rows"]
         if not isinstance(rm, str) or rm not in ("exact", "contains", "pending"):
             self.err(w, "row_match must be exact, contains or pending")
@@ -114,8 +114,8 @@ class Checker:
         elif not isinstance(rows, list) or not all(isinstance(x, dict) for x in rows):
             self.err(w, "rows must be null or a list of mappings")
         else:
-            if rm == "pending":
-                self.err(w, "row_match pending requires rows null")
+            if rm not in ("exact", "contains"):
+                self.err(w, "non-null rows require row_match exact or contains")
             if cols is None:
                 self.err(w, "rows require known columns")
             for x in rows:
