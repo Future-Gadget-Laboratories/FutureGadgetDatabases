@@ -48,7 +48,7 @@ const cipherSupportedCipherTypeInfo = "The cipher type must have the format `<al
 	"* `<mode>` is `cbc` (default)\n" +
 	"* `<padding>` is `pkcs` (default) or `none`"
 
-const cipherAvailabilityInfo = "This function is enabled by default. Set `feature.pgcrypto_ciphers.enabled` to false to disable it; calls then return a CCL-required error."
+const cipherAvailabilityInfo = "This function is disabled by default. Set `feature.pgcrypto_ciphers.enabled` to true to enable it; calls return a CCL-required error when disabled."
 
 var pgcryptoBuiltins = map[string]builtinDefinition{
 
