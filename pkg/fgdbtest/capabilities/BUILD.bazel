@@ -5,6 +5,7 @@ go_library(
     testonly = True,
     srcs = [
         "run.go",
+        "gates.go",
         "sql.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/capabilities",
@@ -20,7 +21,10 @@ go_library(
 
 go_test(
     name = "capabilities_test",
-    srcs = ["capabilities_test.go"],
+    srcs = [
+        "capabilities_test.go",
+        "gates_test.go",
+    ],
     embed = [":capabilities"],
     deps = [
         "//pkg/fgdbtest/labels",
