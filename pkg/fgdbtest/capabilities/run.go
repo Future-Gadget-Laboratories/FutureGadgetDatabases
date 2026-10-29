@@ -23,7 +23,7 @@ const (
 	ClaimImport  = "OSS-002"
 	ClaimBackup  = "OSS-003"
 	stepSetup    = "OSS-SETUP"
-	suiteTimeout = 10 * time.Minute
+	suiteTimeout = 14 * time.Minute // below the 15m go test budget; covers 24 gates at 30s plus node start (same budget as the OSS guard suite)
 )
 
 // Config supplies the binary and a parent for disposable stores.
@@ -56,7 +56,9 @@ func Run(ctx context.Context, cfg Config) (*report.Report, error) {
 
 func newReport(meta report.Meta) *report.Report {
 	rep := report.New(meta)
-	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup} {
+	ids := []string{ClaimVersion, ClaimImport, ClaimBackup}
+	ids = append(ids, gateClaimIDs()...)
+	for _, id := range ids {
 		rep.Set(id, labels.NotTested, "capability check did not run")
 	}
 	return rep
@@ -98,7 +100,8 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	note(rep, ClaimImport, ClaimImport, importErr)
 	backupErr := rejectBackup(ctx, conn)
 	note(rep, ClaimBackup, ClaimBackup, backupErr)
-	return rep, errors.Join(importErr, backupErr)
+	gateErr := runGateContract(ctx, conn, rep)
+	return rep, errors.Join(importErr, backupErr, gateErr)
 }
 
 func connect(ctx context.Context, c *cluster.Cluster) (*pgx.Conn, error) {
@@ -135,11 +138,17 @@ func cleanup(c *cluster.Cluster, dir string, rep *report.Report) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var err error
+	var reapErr error
 	if c != nil {
-		err = errors.Join(c.Stop(ctx), c.Reap())
+		err = c.Stop(ctx)
+		reapErr = c.Reap()
+	} else {
+		reapErr = errors.New("node termination could not be confirmed")
 	}
-	if err == nil {
-		err = os.RemoveAll(dir)
+	if reapErr != nil {
+		err = errors.Join(err, fmt.Errorf("work directory %s kept for manual cleanup: %w", dir, reapErr))
+	} else {
+		err = errors.Join(err, os.RemoveAll(dir))
 	}
 	if err != nil {
 		err = fmt.Errorf("OSS capabilities cleanup; work directory %s: %w", dir, err)
