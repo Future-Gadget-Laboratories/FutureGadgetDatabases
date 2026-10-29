@@ -3,7 +3,7 @@
 
 # Version gating and feature flags
 
-**Design status:** Proposed; needs maintainer approval  
+**Design status:** Proposed; needs maintainer approval
 **design_approved_by:** _unset_
 
 This note defines how FGDb-only behavior will be introduced while preserving the v23.2.15 `cockroach-oss` behavior when the feature is disabled. It is a design contract; this change does not register cluster settings or wire feature code into the server.
@@ -28,7 +28,9 @@ Before the system tenant enables a feature, every live, non-decommissioned node 
 
 This check uses the existing node membership and liveness semantics. It does not add cluster-version keys or bump the cluster `version` setting. The binary's CRDB compatibility version and active cluster version remain on the `V23_2` line; `ServerVersion` continues to use CRDB `23.2.x` semantics. The binary build tag **must remain a CRDB-shaped version string accepted by this tree's `pkg/util/version.Parse`**. The fixes-only form is `v23.2.15-fgdb.N`; the feature-line form is `v23.2.15-fgdb-vMAJOR.MINOR.PATCH`, with optional `-rc.N`. These preserve the CRDB version prefix and carry the FGDb release identity in the prerelease portion. In this tree, `build.GetInfo().Tag` populates both `NodeDescriptor.build_tag` and `crdb_internal.node_build_info.Version`, so `Version` remains a parser-valid CRDB-shaped version while retaining its build-version meaning. The all-nodes enable check reads and parses `NodeDescriptor.build_tag` from gossip, not the local virtual table.
 
-The system tenant setting transition is the cluster-wide control point: check all live nodes, reject the transition with a clear error if any node fails, then persist the setting through existing cluster settings storage (`system.settings`). Recheck membership and versions when enabling after upgrades; operational guidance for long-lived enabled clusters must describe what happens when an older or unknown node joins. That runtime policy and the error's exact SQLSTATE/message are open for implementation and oracle validation.
+The system tenant setting transition is the cluster-wide control point, but a gossip snapshot followed by a `system.settings` write is not race-safe. Activation must be refused unless a durable, cluster-wide compatibility gate guarantees that the active cluster version and the minimum binary version of **all** nodes meet the feature's required release N. The guarantee must cover nodes joining or restarting during and after activation: admission must reject binaries below N, as well as unknown or unparseable releases, before they can participate. Establish the gate before persisting `true`, and keep it effective after the flag is turned off because activation can leave durable state. Reject activation if the guarantee cannot be established; an enumeration of live nodes alone is insufficient.
+
+The existing `pkg/clusterversion` active-version contract and the fence and membership-stabilization mechanisms in `pkg/upgrade` illustrate the required ordering: establish a durable minimum and ensure future joins observe it before relying on the gate. They do not currently enforce FGDb release N: the proposed tags share the `V23_2` CRDB compatibility version, so the existing CRDB version gate cannot distinguish them. A future implementation must provide an FGDb-aware equivalent, including race-safe admission and restart enforcement, and prove its ordering with activation; until then activation is refused. The exact SQLSTATE/message remains open for implementation and oracle validation.
 
 The helper in `pkg/fgdb/release` parses both CRDB-shaped forms into their FGDb release identity. It does not yet decide cross-line ordering or implement node enumeration.
 
@@ -81,8 +83,8 @@ PAR-004 supplies benchmark baselines and harness; PAR-008 supplies the secure ha
 
 - **D1a:** Select N1, N2, or N3. N1 is the provisional parser grammar, not a final naming decision.
 - Decide whether required release N is global or specified per feature.
-- Decide whether compatibility is checked only when enabling or also on reads and during an enabled cluster's lifetime.
+- Define and validate the FGDb-aware compatibility gate and its admission and restart enforcement.
 - Define the homogeneity rejection error and confirm its SQLSTATE against oracle recordings.
 
-**Maintainer approval:** `design_approved_by: _unset_`  
+**Maintainer approval:** `design_approved_by: _unset_`
 This proposal needs maintainer approval before any risk=yes work depends on it.
