@@ -1,13 +1,29 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pgcrypto",
-    srcs = ["pgcrypto.go"],
+    srcs = [
+        "cipher.go",
+        "pgcrypto.go",
+        "settings.go",
+    ],
     importpath = "github.com/cockroachdb/cockroach/pkg/sql/sem/builtins/pgcrypto",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/settings",
         "//pkg/sql/pgwire/pgcode",
         "//pkg/sql/pgwire/pgerror",
         "//pkg/sql/sem/eval",
+    ],
+)
+
+go_test(
+    name = "pgcrypto_test",
+    srcs = ["cipher_test.go"],
+    embed = [":pgcrypto"],
+    deps = [
+        "//pkg/settings/cluster",
+        "//pkg/sql/sem/eval",
+        "@com_github_stretchr_testify//require",
     ],
 )
