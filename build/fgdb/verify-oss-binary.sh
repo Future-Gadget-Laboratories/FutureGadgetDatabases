@@ -65,7 +65,7 @@ if grep -F 'github.com/cockroachdb/cockroach/pkg/ui/distccl' <<<"$strings_output
 fi
 
 if [[ "${FGDB_STRICT_CCL:-1}" != 0 ]]; then
-  if grep -E 'crdb-protobuf-client-ccl|enginepbccl|pkg/ccl([/:]|$)|pkg/ui/distccl' <<<"${nm_output}
+  if grep -E 'crdb-protobuf-client-ccl|enginepbccl|pkg/ccl(/|:|$)|pkg/ui/distccl' <<<"${nm_output}
 ${strings_output}" >/dev/null; then
     echo "verify-oss-binary: strict CCL reference is present in ${bin}" >&2
     exit 1
@@ -77,7 +77,7 @@ ${strings_output}" >/dev/null; then
     echo "verify-oss-binary: strict CCL check requires the OSS UI bundle: ${ui_bundle}" >&2
     exit 1
   fi
-  if grep -aE 'crdb-protobuf-client-ccl|enginepbccl|pkg/ccl([/:]|$)|pkg/ui/distccl' "$ui_bundle" >/dev/null; then
+  if grep -aE 'crdb-protobuf-client-ccl|enginepbccl|pkg/ccl(/|:|$)|pkg/ui/distccl' "$ui_bundle" >/dev/null; then
     echo "verify-oss-binary: strict CCL reference is present in the OSS UI bundle" >&2
     exit 1
   elif [[ $? -ne 1 ]]; then

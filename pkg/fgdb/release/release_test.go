@@ -25,6 +25,12 @@ func TestParseTag(t *testing.T) {
 		{name: "zero fix number", tag: "v23.2.15-fgdb.0", ok: false},
 		{name: "missing CRDB-shaped prefix", tag: "fgdb-v1.2.3", ok: false},
 		{name: "leading zero", tag: "v23.2.15-fgdb-v01.2.3", ok: false},
+		{name: "maximum component", tag: "v23.2.15-fgdb-v2147483647.2147483647.2147483647-rc.2147483647", want: Release{Line: FeatureLine, Major: 2147483647, Minor: 2147483647, Patch: 2147483647, Prerelease: 2147483647}, ok: true},
+		{name: "fix component exceeds int32", tag: "v23.2.15-fgdb.2147483648", ok: false},
+		{name: "major exceeds int32", tag: "v23.2.15-fgdb-v2147483648.0.0", ok: false},
+		{name: "minor exceeds int32", tag: "v23.2.15-fgdb-v0.2147483648.0", ok: false},
+		{name: "patch exceeds int32", tag: "v23.2.15-fgdb-v0.0.2147483648", ok: false},
+		{name: "rc exceeds int32", tag: "v23.2.15-fgdb-v0.0.0-rc.2147483648", ok: false},
 		{name: "overflow", tag: "v23.2.15-fgdb-v18446744073709551616.0.0", ok: false},
 	}
 	for _, tc := range tests {
