@@ -15,8 +15,8 @@ import (
 var featurePgcryptoCiphersEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"feature.pgcrypto_ciphers.enabled",
-	"set to true to enable the pgcrypto encrypt and decrypt builtins, false to return the CCL-required error; default is true",
-	true,
+	"set to true to enable the pgcrypto encrypt and decrypt builtins, false to return the CCL-required error; default is false",
+	false,
 	settings.WithPublic)
 
 // cipherEnabled reports whether the cipher builtins are enabled for this call.
