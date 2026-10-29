@@ -50,6 +50,12 @@ func TestOSSCapabilities(t *testing.T) {
 	if runErr != nil || rep.Rejected() {
 		t.Fatalf("OSS capabilities failed: %v", runErr)
 	}
+	// A green run must have executed every gate; not_tested is never a pass.
+	for _, id := range gateClaimIDs() {
+		if got := rep.Outcome(id); got != labels.Pass {
+			t.Errorf("claim %s = %s after a successful run, want pass", id, got)
+		}
+	}
 }
 
 func TestMissingBinaryDoesNotPass(t *testing.T) {
@@ -57,7 +63,9 @@ func TestMissingBinaryDoesNotPass(t *testing.T) {
 	if err == nil || rep == nil || !rep.Rejected() {
 		t.Fatalf("missing binary: report=%v error=%v", rep, err)
 	}
-	for _, id := range []string{ClaimVersion, ClaimImport, ClaimBackup} {
+	ids := []string{ClaimVersion, ClaimImport, ClaimBackup, ClaimTTL, ClaimGEOS, ClaimRC, ClaimCopy, ClaimImportMatrix}
+	ids = append(ids, gateClaimIDs()...)
+	for _, id := range ids {
 		if got := rep.Outcome(id); got != labels.NotTested {
 			t.Errorf("claim %s = %s, want not_tested", id, got)
 		}
