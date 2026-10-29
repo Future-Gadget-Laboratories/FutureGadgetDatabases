@@ -52,7 +52,7 @@ bash fgdb/test/run.sh pr
 FGDB_REQUIRE_CLUSTER=1 \
 FGDB_COCKROACH=/absolute/path/to/cockroach \
 FGDB_EXPECT_GO=go1.21.12 \
-go test -count=1 -v -timeout 15m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
+go test -count=1 -v -timeout 50m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
 ```
 
 Use the OSS binary from the verified release archive or an OSS candidate build. Keep its `lib/` directory beside it. The cluster helper applies the existing environment allowlist and release-library handling. The test never connects to a user-supplied live database URL.
