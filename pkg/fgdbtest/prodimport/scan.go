@@ -50,21 +50,31 @@ func Scan(root string) ([]string, error) {
 		if !includeFile(rel) {
 			return nil
 		}
-		imports, err := fileImports(path)
+		imports, err := scanFileImports(path, rel)
 		if err != nil {
-			return fmt.Errorf("%s: %w", rel, err)
+			return err
 		}
-		for _, imp := range imports {
-			if isTestHelper(imp) {
-				found = append(found, rel+" "+imp)
-			}
-		}
+		found = append(found, imports...)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	sort.Strings(found)
+	return found, nil
+}
+
+func scanFileImports(path, rel string) ([]string, error) {
+	imports, err := fileImports(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", rel, err)
+	}
+	var found []string
+	for _, imp := range imports {
+		if isTestHelper(imp) {
+			found = append(found, rel+" "+imp)
+		}
+	}
 	return found, nil
 }
 

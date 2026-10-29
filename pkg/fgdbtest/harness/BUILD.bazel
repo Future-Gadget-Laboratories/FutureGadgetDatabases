@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/cockroachdb/cockroach/pkg/fgdbtest/harness",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/fgdbtest/capabilities",
         "//pkg/fgdbtest/claims",
         "//pkg/fgdbtest/cluster",
         "//pkg/fgdbtest/faults",
