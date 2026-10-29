@@ -291,7 +291,7 @@ func cleanupConnector(c *cluster.Cluster) func(context.Context) (cleanupConnecti
 }
 
 // cleanupStatements switches to a fresh connection when forced or when the
-// primary is closed or not idle. Each operation has an independent cleanup budget.
+// primary is closed or not idle, or after an execution error. Each operation has an independent cleanup budget.
 func cleanupStatements(primary cleanupConnection, connect func(context.Context) (cleanupConnection, error), forceFresh bool, statements ...string) (err error) {
 	conn := primary
 	var fresh []cleanupConnection
@@ -313,7 +313,9 @@ func cleanupStatements(primary cleanupConnection, connect func(context.Context) 
 			fresh = append(fresh, conn)
 			forceFresh = false
 		}
-		err = errors.Join(err, conn.exec(stmt))
+		execErr := conn.exec(stmt)
+		err = errors.Join(err, execErr)
+		forceFresh = execErr != nil
 	}
 	return err
 }
