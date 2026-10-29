@@ -27,27 +27,29 @@ const (
 // Spec describes one local cluster.
 // SQL and HTTP ports are chosen when the cluster starts.
 type Spec struct {
-	Binary    string
-	Dir       string
-	Nodes     int
-	Cache     string
-	SQLMemory string
+	Binary     string
+	Dir        string
+	Nodes      int
+	Cache      string
+	SQLMemory  string
+	ExternalIO bool
 }
 
 // Node is one cockroach-oss process.
 type Node struct {
-	Index    int
-	Binary   string
-	Listen   string
-	HTTP     string
-	StoreDir string
-	PidFile  string
-	Cache    string
-	SQLMem   string
-	ID       Identity
-	proc     *os.Process
-	pidfd    int
-	tracked  bool
+	Index      int
+	Binary     string
+	Listen     string
+	HTTP       string
+	StoreDir   string
+	PidFile    string
+	Cache      string
+	SQLMem     string
+	ExternalIO bool
+	ID         Identity
+	proc       *os.Process
+	pidfd      int
+	tracked    bool
 }
 
 // Cluster is a group of nodes that share one join list.
@@ -133,14 +135,15 @@ func (c *Cluster) layout() error {
 	for i := 0; i < c.spec.Nodes; i++ {
 		listen := fmt.Sprintf(listenFormat, sqlPorts[i])
 		n := Node{
-			Index:    i,
-			Binary:   c.spec.Binary,
-			Listen:   listen,
-			HTTP:     fmt.Sprintf(listenFormat, httpPorts[i]),
-			StoreDir: filepath.Join(c.spec.Dir, fmt.Sprintf("node%d", i+1)),
-			PidFile:  filepath.Join(c.spec.Dir, fmt.Sprintf("node%d.pid", i+1)),
-			Cache:    c.spec.Cache,
-			SQLMem:   c.spec.SQLMemory,
+			Index:      i,
+			Binary:     c.spec.Binary,
+			Listen:     listen,
+			HTTP:       fmt.Sprintf(listenFormat, httpPorts[i]),
+			StoreDir:   filepath.Join(c.spec.Dir, fmt.Sprintf("node%d", i+1)),
+			PidFile:    filepath.Join(c.spec.Dir, fmt.Sprintf("node%d.pid", i+1)),
+			Cache:      c.spec.Cache,
+			SQLMem:     c.spec.SQLMemory,
+			ExternalIO: c.spec.ExternalIO,
 		}
 		if err := os.MkdirAll(n.StoreDir, 0o755); err != nil {
 			return err
@@ -225,7 +228,7 @@ func captureFailed(index, pid int, tracked bool, err error) error {
 }
 
 func startArgs(n Node, join string) []string {
-	return []string{
+	args := []string{
 		"start",
 		insecureFlag,
 		"--store=" + n.StoreDir,
@@ -238,6 +241,10 @@ func startArgs(n Node, join string) []string {
 		"--max-sql-memory=" + n.SQLMem,
 		"--background",
 	}
+	if n.ExternalIO {
+		args = append(args, "--external-io-dir="+filepath.Join(n.StoreDir, "extern"))
+	}
+	return args
 }
 
 // Stop signals every node and waits for it to exit.

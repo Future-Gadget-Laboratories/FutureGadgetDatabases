@@ -34,7 +34,11 @@ WEBPACK_SRCS = [
 
 WEBPACK_DATA_OSS = WEBPACK_DATA_COMMON
 
-WEBPACK_DATA_CCL = WEBPACK_DATA_COMMON + glob(["ccl/**"])
+# FENCE: Both variants shared the npm links, which pulled CCL protos into OSS.
+# Keep the existing protobuf bundle as an explicit input only for CCL consumers.
+WEBPACK_DATA_CCL = WEBPACK_DATA_COMMON + glob(["ccl/**"]) + [
+    "//pkg/ui/workspaces/db-console/ccl/src/js:crdb-protobuf-client-ccl-lib",
+]
 
 # We want to perform only type-checking (with absolutely no files emitted).
 # The ts_project rule from rules_ts doesn't support that, and instead recommends
@@ -244,6 +248,7 @@ jest_test(
         "tsconfig.json",
         "tsconfig.linting.json",
         ":node_modules",
+        "//pkg/ui/workspaces/db-console/ccl/src/js:crdb-protobuf-client-ccl-lib",
     ] + glob([
         "src/**",
         "ccl/**",

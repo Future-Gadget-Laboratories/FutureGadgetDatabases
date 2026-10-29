@@ -7,6 +7,7 @@ steps:
   - id: UNIT
     kind: go-test
     packages:
+      - ./pkg/fgdbtest/capabilities
       - ./pkg/fgdbtest/claims
       - ./pkg/fgdbtest/cluster
       - ./pkg/fgdbtest/faults
@@ -43,3 +44,9 @@ steps:
   - id: LOGICTEST-REST
     kind: not-tested
     detail: The other logictest configs are not in this first slice.
+  - id: REPSTREAM-HOOKS
+    kind: bazel
+    claim: REP-001
+    target: //pkg/repstream:repstream_test
+  - id: OSS-CAPABILITIES
+    kind: oss-capabilities
