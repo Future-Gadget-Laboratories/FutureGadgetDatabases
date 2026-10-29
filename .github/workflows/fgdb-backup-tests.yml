@@ -1,4 +1,4 @@
-# Cluster-backed fgdb-backup tests.
+# Cluster-backed fgdb-backup tests and the initial OSS capability matrix.
 #
 # Unit tests, go vet, and the build/fgdb script tests run in fgdb-checks.yml.
 # This workflow downloads the published v23.2.15-fgdb.1 tarball and runs the
@@ -12,6 +12,12 @@ on:
     paths:
       - ".github/workflows/fgdb-backup-tests.yml"
       - "pkg/cmd/fgdb-backup/**"
+      - "pkg/fgdbtest/capabilities/**"
+      - "pkg/fgdbtest/cluster/**"
+      - "pkg/fgdbtest/labels/**"
+      - "pkg/fgdbtest/report/**"
+      - "go.mod"
+      - "go.sum"
 
 permissions:
   contents: read
@@ -19,9 +25,13 @@ permissions:
 jobs:
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       FGDB_COCKROACH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/cockroach
+      FGDB_REQUIRE_CLUSTER: "1"
+      FGDB_EXPECT_GO: go1.21.12
+      FGDB_SOURCE_SHA: ${{ github.sha }}
+      FGDB_CANDIDATE_SHA256: 5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379
       LD_LIBRARY_PATH: ${{ github.workspace }}/cockroach-oss-v23.2.15.linux-amd64/lib
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -30,7 +40,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.21.12"
-          cache-dependency-path: pkg/cmd/fgdb-backup/go.sum
+          cache-dependency-path: |
+            go.sum
+            pkg/cmd/fgdb-backup/go.sum
       - name: Download and verify the pinned OSS binary
         working-directory: ${{ github.workspace }}
         run: |
@@ -44,3 +56,17 @@ jobs:
       - name: Run cluster-backed integration tests
         working-directory: pkg/cmd/fgdb-backup
         run: go test -count=1 -v ./...
+      - name: Check OSS runtime capabilities
+        env:
+          FGDB_OUTPUT: ${{ runner.temp }}/fgdb-oss-capabilities
+        run: go test -count=1 -v -timeout 15m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
+      - name: Upload OSS capability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fgdb-oss-capabilities
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/fgdb-oss-capabilities/result.json
+            ${{ runner.temp }}/fgdb-oss-capabilities/summary.md
