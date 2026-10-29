@@ -89,6 +89,35 @@ class Malformed(unittest.TestCase):
         d["expect"]["result"]["surprise"] = True
         self.assertRejected(dump(d), "unknown key 'surprise'")
 
+    def test_result_comparator_validation(self):
+        for columns in ([], "bad", ["a", "a"], [1]):
+            with self.subTest(columns=columns):
+                d = base()
+                d["expect"]["result"] = {
+                    "columns": columns, "rows": None, "row_match": "pending"
+                }
+                self.assertRejected(dump(d), "columns must be null")
+
+        for row_match in ("bad", None, "pending"):
+            with self.subTest(row_match=row_match):
+                d = base()
+                d["expect"]["result"] = {
+                    "columns": ["a"], "rows": [{"a": 1}], "row_match": row_match
+                }
+                self.assertRejected(dump(d), "non-null rows require row_match")
+
+        d = base()
+        d["expect"].pop("masks", None)
+        d["expect"]["result"] = {
+            "columns": None, "rows": None, "row_match": "pending"
+        }
+        self.assertEqual(check(dump(d)), [])
+        for row_match in ("exact", "contains"):
+            d["expect"]["result"] = {
+                "columns": ["a"], "rows": [{"a": 1}], "row_match": row_match
+            }
+            self.assertEqual(check(dump(d)), [])
+
     def test_message_pattern_must_compile(self):
         d = base()
         d["expect"] = {"error": {"sqlstate": "42P01", "message_pattern": "^bad[($"}}
