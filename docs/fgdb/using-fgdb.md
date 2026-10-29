@@ -37,9 +37,9 @@ With `BIN` set to the executable:
 ```bash
 mkdir -p "$HOME/fgdb-lab"
 "$BIN" start-single-node --insecure \
-  --store="$HOME/fgdb-lab/lab-single" \
+  --store="$HOME/fgdb-lab/demo-single" \
   --listen-addr=localhost:26257 --http-addr=localhost:8080 \
-  --pid-file="$HOME/fgdb-lab/lab-single.pid"
+  --pid-file="$HOME/fgdb-lab/demo-single.pid"
 ```
 
 This initializes a single-replica cluster. Leave it running and use another terminal to connect.
@@ -49,7 +49,7 @@ This initializes a single-replica cluster. Leave it running and use another term
 Stop the single node first, then start three processes with separate stores and ports:
 
 ```bash
-kill "$(cat "$HOME/fgdb-lab/lab-single.pid")"
+kill "$(cat "$HOME/fgdb-lab/demo-single.pid")"
 # Wait for the process to exit before reusing its ports.
 "$BIN" start --insecure --store="$HOME/fgdb-lab/node1" --listen-addr=localhost:26257 --http-addr=localhost:8080 --join=localhost:26257,localhost:26258,localhost:26259 --background --pid-file="$HOME/fgdb-lab/node1.pid"
 "$BIN" start --insecure --store="$HOME/fgdb-lab/node2" --listen-addr=localhost:26258 --http-addr=localhost:8081 --join=localhost:26257,localhost:26258,localhost:26259 --background --pid-file="$HOME/fgdb-lab/node2.pid"
@@ -81,20 +81,20 @@ Use certificates and a secured connection outside the lab; see [operations.md](o
 Run these statements in the SQL shell:
 
 ```sql
-CREATE DATABASE lab;
-CREATE TABLE lab.sensors (id INT PRIMARY KEY, name STRING NOT NULL, reading FLOAT);
-INSERT INTO lab.sensors VALUES (1, 'temperature', 21.5);
-SELECT * FROM lab.sensors;
-UPDATE lab.sensors SET reading = 22.0 WHERE id = 1;
-DELETE FROM lab.sensors WHERE id = 1;
+CREATE DATABASE demo;
+CREATE TABLE demo.sensors (id INT PRIMARY KEY, name STRING NOT NULL, reading FLOAT);
+INSERT INTO demo.sensors VALUES (1, 'temperature', 21.5);
+SELECT * FROM demo.sensors;
+UPDATE demo.sensors SET reading = 22.0 WHERE id = 1;
+DELETE FROM demo.sensors WHERE id = 1;
 ```
 
 Group related operations in a transaction:
 
 ```sql
 BEGIN;
-INSERT INTO lab.sensors VALUES (2, 'temperature', 22.0);
-UPDATE lab.sensors SET reading = 22.5 WHERE id = 2;
+INSERT INTO demo.sensors VALUES (2, 'temperature', 22.0);
+UPDATE demo.sensors SET reading = 22.5 WHERE id = 2;
 COMMIT;
 ```
 
@@ -109,7 +109,7 @@ In a secured cluster, an administrator can create a user and role, grant the rol
 ```sql
 CREATE USER reader;
 CREATE ROLE sensor_readers;
-GRANT SELECT ON TABLE lab.sensors TO sensor_readers;
+GRANT SELECT ON TABLE demo.sensors TO sensor_readers;
 GRANT sensor_readers TO reader;
 ```
 
@@ -118,8 +118,8 @@ Configure authentication for the user before connecting; see [operations.md](ope
 ### Indexes and query plans
 
 ```sql
-CREATE INDEX sensors_name_idx ON lab.sensors (name);
-EXPLAIN SELECT * FROM lab.sensors WHERE name = 'temperature';
+CREATE INDEX sensors_name_idx ON demo.sensors (name);
+EXPLAIN SELECT * FROM demo.sensors WHERE name = 'temperature';
 ```
 
 Use the plan to inspect how a query accesses data, and measure the effect of an index on your workload.
@@ -129,7 +129,7 @@ Use the plan to inspect how a query accesses data, and measure the effect of an 
 For a small local CSV, a PostgreSQL client can stream rows using `COPY FROM STDIN` (for example, `psql`'s `\copy` command). Match the file's column order to the table:
 
 ```text
-\copy lab.sensors (id, name, reading) FROM 'sensors.csv' WITH (FORMAT csv, HEADER true)
+\copy demo.sensors (id, name, reading) FROM 'sensors.csv' WITH (FORMAT csv, HEADER true)
 ```
 
 The OSS capability suite also checks CSV `IMPORT` using an HTTP fixture reachable by the database node; see [oss-capabilities.md](oss-capabilities.md). For larger loads, ensure nodes can reach the source and consult the applicable import syntax for this version. The planned workload loader below is separate from these existing paths.
@@ -137,7 +137,7 @@ The OSS capability suite also checks CSV `IMPORT` using an HTTP fixture reachabl
 ### Change a schema
 
 ```sql
-ALTER TABLE lab.sensors ADD COLUMN unit STRING;
+ALTER TABLE demo.sensors ADD COLUMN unit STRING;
 ```
 
 Schema changes may run as jobs; inspect them with `SHOW JOBS`. Plan changes around application compatibility and wait for completion before depending on the new schema.
@@ -150,7 +150,7 @@ For the local examples, send SIGTERM using each node's pid file and wait for the
 kill "$(cat "$HOME/fgdb-lab/node1.pid")"
 ```
 
-Repeat for the other nodes when ending the three-node lab. Keep the store directories to retain data. For restart and operational considerations, see [operations.md](operations.md).
+Repeat for the other nodes when ending the three-node demo. Keep the store directories to retain data. For restart and operational considerations, see [operations.md](operations.md).
 
 ## FGDb features
 
