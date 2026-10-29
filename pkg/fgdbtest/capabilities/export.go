@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/apache/arrow/go/v11/parquet/file"
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/labels"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/report"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -62,7 +63,17 @@ func runExportChecks(ctx context.Context, conn *pgx.Conn, store string, rep *rep
 	check(ClaimExportParquet, err)
 
 	_, err = conn.Exec(ctx, `EXPORT INTO CSV 'nodelocal://1/fgdb-export-gate/' FROM SELECT 1`)
-	check(ClaimExportGate, err)
+	var gateErr *pgconn.PgError
+	if errors.As(err, &gateErr) && gateErr.Code == cclState && strings.Contains(gateErr.Message, cclMessage) {
+		err = fmt.Errorf("EXPORT hit CCL statement gate: %w", err)
+	}
+	if err != nil {
+		check(ClaimExportGate, err)
+	} else {
+		detail := "CSV EXPORT succeeded without SQLSTATE XXC01 and the CCL statement-gate message"
+		rep.Set(ClaimExportGate, labels.Pass, detail)
+		rep.AddStep(report.StepResult{ID: ClaimExportGate, Outcome: labels.Pass, Detail: detail, Required: true})
+	}
 
 	_, err = conn.Exec(ctx, `SET CLUSTER SETTING feature.export.enabled = false`)
 	if err == nil {
