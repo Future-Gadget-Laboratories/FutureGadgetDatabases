@@ -260,15 +260,54 @@ func TestCleanupReadCommitted(t *testing.T) {
 				wantFresh = []string{rcDrop, rcRestore}
 				wantConnections = 1
 			}
+			if tc.failures[rcDrop] != nil {
+				if !tc.wantFresh {
+					wantPrimary = []string{rcDrop}
+					wantFresh = []string{rcRestore}
+				} else {
+					wantConnections++
+				}
+				if !tc.wantFresh {
+					wantConnections++
+				}
+			}
 			if tc.wantRollback {
 				wantPrimary = append([]string{"ROLLBACK"}, wantPrimary...)
 			}
 			requireCleanupCalls(t, "primary", primary.calls, wantPrimary...)
 			requireCleanupCalls(t, "fresh", fresh.calls, wantFresh...)
-			requireFreshLifecycle(t, &fresh, wantConnections, tc.wantFresh)
+			requireFreshLifecycle(t, &fresh, wantConnections, wantConnections > 0)
 			requireCleanupErrors(t, err, tc.failures)
 		})
 	}
+}
+
+func TestCleanupReadCommittedDropErrorForcesFreshConnection(t *testing.T) {
+	dropErr := errors.New("drop timed out")
+	failed := false
+	primary := cleanupConnection{
+		closed: func() bool { return false },
+		txStatus: func() byte {
+			if failed {
+				t.Fatal("probed connection after cleanup error")
+			}
+			return 'I'
+		},
+		exec: func(stmt string) error {
+			if stmt != rcDrop {
+				t.Fatalf("unexpected primary statement: %s", stmt)
+			}
+			failed = true
+			return dropErr
+		},
+	}
+	fresh := cleanupTestConnection{status: 'I'}
+	err := cleanupReadCommitted(primary, "false", fresh.connector(t, nil), nil)
+	if !errors.Is(err, dropErr) {
+		t.Fatalf("cleanup error=%v, want %v", err, dropErr)
+	}
+	requireCleanupCalls(t, "fresh", fresh.calls, rcRestore)
+	requireFreshLifecycle(t, &fresh, 1, true)
 }
 
 func TestCleanupReadCommittedFailedBegin(t *testing.T) {
