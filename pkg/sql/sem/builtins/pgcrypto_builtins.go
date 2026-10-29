@@ -90,7 +90,7 @@ var pgcryptoBuiltins = map[string]builtinDefinition{
 				}
 				return tree.NewDBytes(tree.DBytes(decryptedData)), nil
 			},
-			Info: "Decrypt `data` with `key` using the cipher method specified by `type`." +
+			Info: "Decrypt `data` with `key` using the cipher method specified by `type` and an all-zero IV." +
 				"\n\n" + cipherSupportedCipherTypeInfo +
 				"\n\n" + cipherRequiresEnterpriseLicenseInfo,
 			Volatility: volatility.Immutable,
@@ -187,7 +187,8 @@ var pgcryptoBuiltins = map[string]builtinDefinition{
 				}
 				return tree.NewDBytes(tree.DBytes(encryptedData)), nil
 			},
-			Info: "Encrypt `data` with `key` using the cipher method specified by `type`." +
+			Info: "Encrypt `data` with `key` using the cipher method specified by `type` and an all-zero IV. " +
+				"This is deterministic and not semantically secure; use `encrypt_iv` with a random IV instead." +
 				"\n\n" + cipherSupportedCipherTypeInfo +
 				"\n\n" + cipherRequiresEnterpriseLicenseInfo,
 			Volatility: volatility.Immutable,
