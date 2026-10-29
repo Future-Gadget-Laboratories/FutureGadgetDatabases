@@ -14,7 +14,7 @@ This chart tracks FGDb additions and proposed work alongside a practical introdu
 | Expanded OSS gate contract checks | tentative | [#31](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/31) |
 | Strict CCL checks by default | tentative | [#38](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/38) |
 | EXPORT capability checks | tentative | [#42](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/42) |
-| pgcrypto raw encrypt/decrypt (`feature.pgcrypto_ciphers.enabled`, default on) | tentative | [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) |
+| pgcrypto raw encrypt/decrypt (`feature.pgcrypto_ciphers.enabled`, default off) | tentative | [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) |
 | Workload IMPORT loader | planned | [#41](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/41) |
 | Version-gating and feature-flag contract | planned | [#33](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/33) |
 
@@ -163,7 +163,7 @@ The following open PRs are **experimental and may change**:
 - [#32](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/32) proposes additional guards for TTL, GEOS, READ COMMITTED, wire-protocol COPY and import formats. TTL is opt-in and its deletion timing remains an open question.
 - [#31](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/31) proposes expanded OSS gate contract checks. [#38](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/38) proposes stricter default build and artifact checks; full build validation remains outstanding.
 - [#42](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/42) proposes EXPORT capability checks, with parity evidence still pending.
-- [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) proposes AES-CBC raw pgcrypto encrypt/decrypt controlled by the `feature.pgcrypto_ciphers.enabled` cluster setting, which defaults to on; set it to false to return the CCL-required error. See the PR for the current scope; compatibility evidence remains pending.
+- [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) proposes AES-CBC raw pgcrypto encrypt/decrypt controlled by the `feature.pgcrypto_ciphers.enabled` cluster setting, which defaults to off (gated on success-oracle vectors and maintainer approval); while off the functions return the CCL-required error. See the PR for the current scope; compatibility evidence remains pending.
 
 [#41](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/41) plans a workload IMPORT loader; it is not an implementation. [#33](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/33) proposes a version-gating and feature-flag contract, pending approval and decisions; it does not wire settings into the server.
 
