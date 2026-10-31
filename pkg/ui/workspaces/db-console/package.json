@@ -14,7 +14,6 @@
     "@babel/runtime": "7.12.13",
     "@cockroachlabs/cluster-ui": "link:../cluster-ui",
     "@cockroachlabs/crdb-protobuf-client": "link:./src/js",
-    "@cockroachlabs/crdb-protobuf-client-ccl": "link:./ccl/src/js",
     "@cockroachlabs/design-tokens": "0.4.5",
     "@cockroachlabs/eslint-plugin-crdb": "link:../eslint-plugin-crdb",
     "@cockroachlabs/icons": "0.5.2",
