@@ -156,7 +156,7 @@
   tier: interim
   status: partial
 - id: OSS-004
-  claim: When FGDB_TTL_GUARD=1, the runtime capability slice observes row-level TTL deleting an expired row; otherwise the claim is reported not_tested.
+  claim: Expired rows become eligible for eventual deletion by the TTL job; deletion timing is not guaranteed. With FGDB_TTL_GUARD=1, the guard requires an unfiltered query to return exactly the surviving row from a poll started within its 300-second budget. An in-flight query may return a passing result after that budget, within its 2-second timeout. Without opt-in, the claim is reported not_tested. Fresh-node timing remains an open question.
   source: docs/fgdb/spec/PAR-002-oss-guards.md
   category: capabilities
   tests:
