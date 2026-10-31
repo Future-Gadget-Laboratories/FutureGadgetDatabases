@@ -155,6 +155,50 @@
     - pkg/fgdbtest/capabilities:TestRequireCCLError
   tier: interim
   status: partial
+- id: OSS-004
+  claim: When FGDB_TTL_GUARD=1, the runtime capability slice observes row-level TTL deleting an expired row; otherwise the claim is reported not_tested.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-005
+  claim: The runtime capability slice verifies GEOS area through the beside-binary lib directory.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLib
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLibRejectsSymlink
+    - pkg/fgdbtest/capabilities:TestMapsGEOSOnlyFrom
+  tier: interim
+  status: partial
+- id: OSS-006
+  claim: The runtime capability slice verifies READ COMMITTED across two SQL connections.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-007
+  claim: The runtime capability slice verifies PostgreSQL-wire COPY FROM and COPY TO.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-008
+  claim: The runtime capability slice verifies CSV, DELIMITED, AVRO and PGCOPY IMPORT plus PARQUET rejection; MYSQLDUMP and PGDUMP are not covered (oracle-pending).
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestImportFixtureHandler
+  tier: interim
+  status: partial
 - id: GATE-001
   claim: The runtime slice reports the PAR-001 BACKUP statement gate.
   source: docs/fgdb/oss-capabilities.md
