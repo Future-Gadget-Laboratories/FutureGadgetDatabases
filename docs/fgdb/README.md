@@ -8,6 +8,7 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | Page | What it covers |
 | --- | --- |
 | [PROJECT.md](PROJECT.md) | Short description of the project |
+| [using-fgdb.md](using-fgdb.md) | Feature status and common database tasks |
 | [getting-started.md](getting-started.md) | Build `cockroach-oss`, run one node, run three nodes, create a table |
 | [testing.md](testing.md) | Run the suite locally, and what a run does not prove yet |
 | [architecture.md](architecture.md) | SQL, ranges, copies, and what a crash means |
