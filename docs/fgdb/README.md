@@ -21,6 +21,7 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [contributing.md](contributing.md) | A first evening on the project |
 | [security.md](security.md) | How to report a vulnerability |
 | [roadmap.md](roadmap.md) | v23.2.15 pin, then cleanroom work, then naming |
+| [spec/PAR-004-benchmark-harness.md](spec/PAR-004-benchmark-harness.md) | Proposed benchmark harness, result schema, and baseline gates |
 | [parity/PAR-207-v23.2.16-29-triage.md](parity/PAR-207-v23.2.16-29-triage.md) | Public v23.2.16–v23.2.29 fix-note triage against the v23.2.15 OSS pin |
 | [CLEANROOM.md](CLEANROOM.md) | How to rewrite newer behavior without copying proprietary code |
 | [SOURCES.md](SOURCES.md) | Public sources for that cleanroom process |
