@@ -31,13 +31,13 @@ Implement cipher hooks only in Apache-2.0 paths (`pkg/sql/sem/builtins/pgcrypto/
 3. **CRYPT-003.** Existing subtests for `digest`, `hmac`, `gen_salt`, `crypt`, `gen_random_bytes` in `pgcrypto_builtins` remain passing — no regressions.
 4. **CRYPT-004.** `CREATE EXTENSION pgcrypto` still allowed (`pkg/sql/create_extension.go` lists `pgcrypto` and returns success). The shared logic file must include `statement ok` / `CREATE EXTENSION pgcrypto` so the claim’s cited test actually executes it (today’s file never runs `CREATE EXTENSION`).
 5. **Conformance.** Oracle vector table (see CRYPT-001) with at least two AES key lengths and IV-length cases; FGDb diff with flag on.
-6. **Claims + tests.** Full `fgdb/test/claims.yaml` rows (§5). Default flag **on** requires **editing** `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` in this order: existing `digest` / `hmac` / `gen_salt` / `crypt` / `gen_random_bytes` (and any other flag-on cases) **unchanged and above the gate flip**; then cipher **success** vectors and `statement ok` + `CREATE EXTENSION pgcrypto` (CRYPT-004) while the setting is still default **true**; then `SET CLUSTER SETTING feature.pgcrypto_ciphers.enabled = false`; then subtest `ccl_functions` with the four existing `XXC01` strings. `setup` runs once per file — a `SET` immediately before `ccl_functions` stays false for any statements **after** that subtest, so nothing that requires flag-on may appear below the `SET`. A new logic file or fgdb-only config does **not** stop `TestLogic_pgcrypto_builtins` from running the shared file — no alternate to editing the shared file.
+6. **Claims + tests.** Full `fgdb/test/claims.yaml` rows (§5). The shared `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` file explicitly enables the setting for cipher success vectors, resets it afterward, and checks the four `XXC01` strings with the default setting. Tenant configurations that cannot change the setting skip the flag-on cases.
 
 **GATE contract decision: yes — cluster setting checked inside hook implementations.**
 
 | Item | Decision |
 | --- | --- |
-| Mechanism | `feature.pgcrypto_ciphers.enabled` (public `settings.BoolSetting`, default `true`). **`Encrypt` / `EncryptIV` / `Decrypt` / `DecryptIV` remain assigned to real implementations** (not swapped in `init`); each call reads the setting from `eval.Context` and, when false, returns the four **current** stub strings unchanged. |
+| Mechanism | `feature.pgcrypto_ciphers.enabled` (public `settings.BoolSetting`, default `false`, pending success-oracle vectors and maintainer approval). **`Encrypt` / `EncryptIV` / `Decrypt` / `DecryptIV` remain assigned to real implementations** (not swapped in `init`); each call reads the setting from `eval.Context` and, when false, returns the four **current** stub strings unchanged. |
 | Flag **on** | Hooks run stdlib AES-CBC with PKCS#7 or `pad:none` per oracle vector table and type-string parser. |
 | Flag **off** | Per-call early return with `pgcrypto.go` `XXC01` messages (CRYPT-002). |
 | PAR-001 | Update parity table when that spec lands; flag-off contract is the four quoted messages above. |
@@ -74,7 +74,7 @@ Implement cipher hooks only in Apache-2.0 paths (`pkg/sql/sem/builtins/pgcrypto/
 | Hook wiring | `pkg/sql/sem/builtins/pgcrypto/pgcrypto.go` | Replace default stub func bodies with implementations that delegate to `cipher.go` after setting check (do **not** reassign vars from `init` based on setting). |
 | Setting | `pkg/sql/sem/builtins/pgcrypto/settings.go` or adjacent | Register bool setting; init hook from `builtins` package `init` order safe. |
 | Unit tests | `pkg/sql/sem/builtins/pgcrypto/cipher_test.go` | Vectors from approved success oracle table (not `ccl_functions` literals); `eval.MakeTestingEvalContext(cluster.MakeTestingClusterSettings())` for hook calls. |
-| Logic test data | `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` (**edit in place**) | Insert cipher success vectors + `CREATE EXTENSION pgcrypto` **after** existing flag-on subtests, **before** `SET feature.pgcrypto_ciphers.enabled = false` and `subtest ccl_functions`. Round-trip assertions when stock `encrypt` is non-deterministic. **Do not** rely on a separate fgdb config block. |
+| Logic test data | `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` (**edit in place**) | Explicitly enable the setting for cipher success vectors, reset it afterward, and exercise `subtest ccl_functions` with the default setting; include `CREATE EXTENSION pgcrypto`. Round-trip assertions when stock `encrypt` is non-deterministic. **Do not** rely on a separate fgdb config block. |
 | Gate tests | Same shared logic file + optional `pkg/fgdbtest/capabilities/pgcrypto.go` | On/off `XXC01` vs oracle success. |
 | BUILD.bazel | `pkg/sql/sem/builtins/pgcrypto/BUILD.bazel` | Add sources; no ccl deps. |
 
@@ -139,8 +139,8 @@ GOCACHE=/tmp/gocache-par005 GOTMPDIR=/tmp \
 **Maintainer questions.**
 
 1. Are additional algorithms beyond the `aes` / `cbc` / `pkcs` / `none` grammar in scope for v1?
-2. *(Reviewer: shared `pgcrypto_builtins` only — **accepted**; dedicated file or fgdb config block **declined** — must edit shared file and gate `ccl_functions` via `SET` before that subtest.)*
-3. *(Reviewer default `true` — **accepted**; default on with `ccl_functions` `XXC01` rows behind `SET ... = false` immediately before that subtest.)*
+2. *(Reviewer: shared `pgcrypto_builtins` only — **accepted**; dedicated file or fgdb config block **declined** — must edit the shared file and explicitly enable the setting for flag-on cases.)*
+3. *(Reviewer default `false`, pending success-oracle vectors and maintainer approval — **accepted**; `ccl_functions` checks the default-off `XXC01` behavior after the setting is reset.)*
 
 **Claims registry examples (`CRYPT-001`..`CRYPT-004`).**
 
