@@ -79,6 +79,15 @@ A1–A9 fail on FGDb main `dd1b1579` (stale composite value on the primary read;
 observed passing through an unhinted read that used the secondary index, and the logic test's
 primary read shows it fails too); R1–R8 pass on main and must keep passing.
 
+## Known limitation (found while testing PAR-208, out of scope)
+
+Under the logic-test config `local-legacy-schema-changer` (ALTER PRIMARY KEY run by the legacy
+schema changer), FGDb main `dd1b1579` also returns stale values for controls R1/R2 on the secondary
+index (`t@t_k_key` returns `1` after `1 -> 1.00` / `1.00 -> 1.0`) and for R4 on both indexes (`Ab`
+after `'Ab' -> 'ab'`). They fail identically with and without the PAR-208 change, so they are a
+separate, pre-existing defect. Those four reads carry `skipif config local-legacy-schema-changer`
+and are tracked as a follow-up item; A1–A9 pass under that config with the change.
+
 ## Status
 
 Repro: see the PAR-208 REPRO notes (all six conditions confirmed; one bug). Implementation: clean
