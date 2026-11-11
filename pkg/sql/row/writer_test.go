@@ -47,29 +47,7 @@ func TestCompactPrimaryKeyFamilyOverwrite(t *testing.T) {
 		{"family-not-updated", nonComposite, true, false, true, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			primaryKeyCol := descpb.ColumnID(1)
-			if tc.primaryKey {
-				primaryKeyCol = 2
-			}
-			var storedCols []descpb.ColumnID
-			if tc.stored {
-				storedCols = []descpb.ColumnID{2}
-			}
-			// Model the retained DefaultColumnID after b joins the primary key.
-			desc := tabledesc.NewBuilder(&descpb.TableDescriptor{
-				ID: 100,
-				Columns: []descpb.ColumnDescriptor{
-					{ID: 1, Name: "k", Type: tree.NewDInt(1).ResolvedType()},
-					{ID: 2, Name: "b", Type: tc.value.ResolvedType()},
-				},
-				PrimaryIndex: descpb.IndexDescriptor{
-					ID: 1, KeyColumnIDs: []descpb.ColumnID{primaryKeyCol}, StoreColumnIDs: storedCols,
-				},
-				Families: []descpb.ColumnFamilyDescriptor{
-					{ID: 0, ColumnIDs: []descpb.ColumnID{1}},
-					{ID: 1, ColumnIDs: []descpb.ColumnID{2}, DefaultColumnID: 2},
-				},
-			}).BuildImmutableTable()
+			desc := compactPrimaryKeyFamilyTestDesc(tc.value, tc.primaryKey, tc.stored)
 			helper := RowHelper{Codec: keys.SystemSQLCodec, TableDesc: desc}
 			helper.Init()
 			cols := desc.PublicColumns()
@@ -104,4 +82,32 @@ func TestCompactPrimaryKeyFamilyOverwrite(t *testing.T) {
 			}
 		})
 	}
+}
+
+func compactPrimaryKeyFamilyTestDesc(
+	value tree.Datum, primaryKey, stored bool,
+) catalog.TableDescriptor {
+	primaryKeyCol := descpb.ColumnID(1)
+	if primaryKey {
+		primaryKeyCol = 2
+	}
+	var storedCols []descpb.ColumnID
+	if stored {
+		storedCols = []descpb.ColumnID{2}
+	}
+	// Model the retained DefaultColumnID after b joins the primary key.
+	return tabledesc.NewBuilder(&descpb.TableDescriptor{
+		ID: 100,
+		Columns: []descpb.ColumnDescriptor{
+			{ID: 1, Name: "k", Type: tree.NewDInt(1).ResolvedType()},
+			{ID: 2, Name: "b", Type: value.ResolvedType()},
+		},
+		PrimaryIndex: descpb.IndexDescriptor{
+			ID: 1, KeyColumnIDs: []descpb.ColumnID{primaryKeyCol}, StoreColumnIDs: storedCols,
+		},
+		Families: []descpb.ColumnFamilyDescriptor{
+			{ID: 0, ColumnIDs: []descpb.ColumnID{1}},
+			{ID: 1, ColumnIDs: []descpb.ColumnID{2}, DefaultColumnID: 2},
+		},
+	}).BuildImmutableTable()
 }
