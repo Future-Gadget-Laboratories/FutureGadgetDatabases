@@ -6,7 +6,6 @@ package capabilities
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -72,15 +70,5 @@ func rejectBackup(ctx context.Context, conn *pgx.Conn) error {
 }
 
 func requireCCLError(err error) error {
-	if err == nil {
-		return errors.New("BACKUP unexpectedly succeeded on the OSS binary")
-	}
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		return fmt.Errorf("BACKUP did not return a PostgreSQL error: %w", err)
-	}
-	if pgErr.Code != cclState || !strings.Contains(pgErr.Message, cclMessage) {
-		return fmt.Errorf("BACKUP SQLSTATE=%s message=%q; want %s and the OSS statement gate", pgErr.Code, pgErr.Message, cclState)
-	}
-	return nil
+	return classifyGateError(err, backupSQL, cclState, cclMessage)
 }
