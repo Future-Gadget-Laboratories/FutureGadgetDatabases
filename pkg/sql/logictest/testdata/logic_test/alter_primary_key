@@ -1963,3 +1963,565 @@ CREATE TABLE public.table_w0_66 (
 )
 
 subtest end
+
+# PAR-208: preserve primary-key representations across family layouts.
+# A1-A8 regressions fail on main; A9 and R1-R8 are passing controls.
+
+
+# PAR-208 A1
+subtest par208_a1
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A2
+subtest par208_a2
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b FLOAT8 NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, '-0'::FLOAT8);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 0 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+0
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+0
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A3
+subtest par208_a3
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b FLOAT4 NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, '-0'::FLOAT4);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 0 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+0
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+0
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A4
+subtest par208_a4
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b JSONB NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, '{"x": 1.00}'::JSONB);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = '{"x": 1}'::JSONB WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+{"x": 1}
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+{"x": 1}
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A5
+subtest par208_a5
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL[] NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, '{1.00}'::DECIMAL[]);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = '{1}'::DECIMAL[] WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+{1}
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+{1}
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A6
+subtest par208_a6
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b FLOAT8[] NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, '{-0}'::FLOAT8[]);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = '{0}'::FLOAT8[] WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+{0}
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+{0}
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A7
+subtest par208_a7
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b, k);
+
+statement ok
+UPDATE t SET b = 1 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A8
+subtest par208_a8
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1, a = 11 WHERE k = 1;
+
+query TT
+SELECT a::STRING, b::STRING FROM t@t_pkey;
+----
+11  1
+
+query TT
+SELECT a::STRING, b::STRING FROM t@t_k_key;
+----
+11  1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 A9
+subtest par208_a9
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1) ON CONFLICT (b) DO UPDATE SET b = excluded.b;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R1
+subtest par208_r1
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1.00 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1.00
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1.00
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R2
+subtest par208_r2
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1.0 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1.0
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1.0
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R3
+subtest par208_r3
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 2 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+2
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+2
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R4
+subtest par208_r4
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b STRING COLLATE en_u_ks_level2 NOT NULL, FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 'Ab');
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 'ab' WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+ab
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+ab
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R5
+subtest par208_r5
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k, a, b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R6
+subtest par208_r6
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f0 (k), FAMILY f1 (b, a));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R7
+subtest par208_r7
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT PRIMARY KEY, a INT, b DECIMAL NOT NULL, FAMILY f1 (b), FAMILY f0 (k, a));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+ALTER TABLE t ALTER PRIMARY KEY USING COLUMNS (b);
+
+statement ok
+UPDATE t SET b = 1 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
+
+# PAR-208 R8
+subtest par208_r8
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (k INT NOT NULL, a INT, b DECIMAL PRIMARY KEY, UNIQUE INDEX t_k_key (k), FAMILY f0 (k, a), FAMILY f1 (b));
+
+statement ok
+INSERT INTO t VALUES (1, 10, 1.00);
+
+statement ok
+UPDATE t SET b = 1 WHERE k = 1;
+
+query T
+SELECT b::STRING FROM t@t_pkey;
+----
+1
+
+query T
+SELECT b::STRING FROM t@t_k_key;
+----
+1
+
+statement ok
+DROP TABLE t;
+
+subtest end
