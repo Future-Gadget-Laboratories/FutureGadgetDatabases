@@ -140,7 +140,7 @@ go test -count=1 ./...
 go vet ./...
 ```
 
-`go test -count=1 ./...` is the command in the `backup-unit` job. It runs the in-process tests: config parsing, SQL rewrite, the local store, the backup lease, and S3 against an in-process fake server. It also runs the seed inputs of `FuzzArrayStreamMatchesReference`. Tests in `roundtrip_test.go`, `review_test.go`, and `safety_test.go` start real `cockroach-oss` processes. They skip unless `FGDB_COCKROACH` is set, or unless `/tmp/fgdb-bin/cockroach` is present. A skip is not a failure. `FGDB_REQUIRE_CLUSTER` is not read by these tests. `fgdb-checks.yml` does not set `FGDB_COCKROACH`, so those tests skip there.
+`go test -count=1 ./...` is the command in the `backup-unit` job. It runs the in-process tests: config parsing, SQL rewrite, the local store, the backup lease, and S3 against an in-process fake server. It also runs the seed inputs of `FuzzArrayStreamMatchesReference`. Tests in `roundtrip_test.go`, `review_test.go`, `safety_test.go`, `cli_fixes_test.go`, and `restore_listener_order_test.go` start real `cockroach-oss` processes. They skip unless `FGDB_COCKROACH` is set, or unless `/tmp/fgdb-bin/cockroach` is present. A skip is not a failure. `FGDB_REQUIRE_CLUSTER` is not read by these tests. `fgdb-checks.yml` does not set `FGDB_COCKROACH`, so those tests skip there.
 
 The same workflow also runs these from the repository root. `gofmt -l` has to print nothing.
 
