@@ -155,6 +155,50 @@
     - pkg/fgdbtest/capabilities:TestRequireCCLError
   tier: interim
   status: partial
+- id: OSS-004
+  claim: Expired rows become eligible for eventual deletion by the TTL job; deletion timing is not guaranteed. With FGDB_TTL_GUARD=1, the guard requires an unfiltered query to return exactly the surviving row from a poll started within its 300-second budget. An in-flight query may return a passing result after that budget, within its 2-second timeout. Without opt-in, the claim is reported not_tested. Fresh-node timing remains an open question.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-005
+  claim: The runtime capability slice verifies GEOS area through the beside-binary lib directory.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLib
+    - pkg/fgdbtest/capabilities:TestBesideBinaryLibRejectsSymlink
+    - pkg/fgdbtest/capabilities:TestMapsGEOSOnlyFrom
+  tier: interim
+  status: partial
+- id: OSS-006
+  claim: The runtime capability slice verifies READ COMMITTED across two SQL connections.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-007
+  claim: The runtime capability slice verifies PostgreSQL-wire COPY FROM and COPY TO.
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: OSS-008
+  claim: The runtime capability slice verifies CSV, DELIMITED, AVRO and PGCOPY IMPORT plus PARQUET rejection; MYSQLDUMP and PGDUMP are not covered (oracle-pending).
+  source: docs/fgdb/spec/PAR-002-oss-guards.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+    - pkg/fgdbtest/capabilities:TestImportFixtureHandler
+  tier: interim
+  status: partial
 - id: GATE-001
   claim: The runtime slice reports the PAR-001 BACKUP statement gate.
   source: docs/fgdb/oss-capabilities.md
@@ -341,6 +385,38 @@
   status: partial
 - id: GATE-026
   claim: The runtime slice reports the PAR-001 with_max_staleness builtin gate.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-001
+  claim: EXPORT INTO CSV to nodelocal succeeds on cockroach-oss with default settings.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-002
+  claim: EXPORT INTO PARQUET succeeds on cockroach-oss with default settings.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-003
+  claim: Disabling feature.export.enabled returns operator intervention on EXPORT.
+  source: docs/fgdb/oss-capabilities.md
+  category: capabilities
+  tests:
+    - pkg/fgdbtest/capabilities:TestOSSCapabilities
+  tier: interim
+  status: partial
+- id: EXP-004
+  claim: EXPORT does not hit the CCL statement gate on cockroach-oss.
   source: docs/fgdb/oss-capabilities.md
   category: capabilities
   tests:

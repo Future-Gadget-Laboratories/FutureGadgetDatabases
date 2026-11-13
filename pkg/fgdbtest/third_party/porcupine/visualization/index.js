@@ -139,8 +139,6 @@ function render(data) {
     }
   }
 
-  let sortedTimestamps = [...allTimestamps].toSorted((a, b) => a - b)
-
   // If one event has the same end time as another's start time, that means that
   // they are concurrent, and we need to display them with overlap. We do this
   // by tweaking the events that share the end time, updating the time to
@@ -209,8 +207,8 @@ function render(data) {
     }
   }
 
-  // Update sortedTimestamps, because we created some new timestamps.
-  sortedTimestamps = [...allTimestamps].toSorted((a, b) => a - b)
+  // Sort after endpoint adjustments so the layout includes epsilon timestamps.
+  const sortedTimestamps = [...allTimestamps].toSorted((a, b) => a - b)
 
   // Compute layout.
   //

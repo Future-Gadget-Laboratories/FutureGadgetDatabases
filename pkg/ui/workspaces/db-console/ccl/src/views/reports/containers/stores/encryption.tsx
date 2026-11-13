@@ -12,7 +12,7 @@ import Long from "long";
 import moment from "moment-timezone";
 
 import * as protos from "src/js/protos";
-import * as protosccl from "@cockroachlabs/crdb-protobuf-client-ccl";
+import * as protosccl from "ccl/src/js/protos";
 import { EncryptionStatusProps } from "oss/src/views/reports/containers/stores/encryption";
 import { util } from "@cockroachlabs/cluster-ui";
 import { FixLong } from "src/util/fixLong";

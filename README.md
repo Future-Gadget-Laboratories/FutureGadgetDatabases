@@ -76,6 +76,7 @@ These pages were written by Future Gadget Laboratories. They are marked in the p
 | Page | Read it when you want to |
 | --- | --- |
 | [Product brief](docs/fgdb/PROJECT.md) | Paste a short description into chat or a design note |
+| [Using FGDb](docs/fgdb/using-fgdb.md) | Feature status and common database tasks |
 | [Getting started](docs/fgdb/getting-started.md) | Unpack `v23.2.15-fgdb.1` or build `cockroach-oss`, then run one node and three |
 | [Testing](docs/fgdb/testing.md) | Run `fgdb/test/run.sh pr` and read what a 3-node run does and does not prove |
 | [Architecture](docs/fgdb/architecture.md) | See how a query, a range, and a crash fit together |

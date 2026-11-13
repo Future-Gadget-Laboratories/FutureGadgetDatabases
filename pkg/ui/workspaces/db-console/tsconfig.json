@@ -29,7 +29,7 @@
         "./node_modules/@cockroachlabs/crdb-protobuf-client"
       ],
       "ccl/src/js/protos": [
-        "./node_modules/@cockroachlabs/crdb-protobuf-client-ccl"
+        "./ccl/src/js"
       ],
       "src/*": [
         "ccl/src/*",

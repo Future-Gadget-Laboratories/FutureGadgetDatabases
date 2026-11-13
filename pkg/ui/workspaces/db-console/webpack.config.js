@@ -34,6 +34,12 @@ module.exports = (env, argv) => {
   env = env || {};
   const isBazelBuild = !!process.env.BAZEL_TARGET;
 
+  const cclProtos = path.resolve(__dirname, "ccl/src/js");
+  const cclAliases = env.dist === "ccl" ? {
+    ccl: path.resolve(__dirname, "ccl"),
+    "ccl/src/js/protos": cclProtos,
+  } : {};
+
   let localRoots = [path.resolve(__dirname)];
   if (env.dist === "ccl") {
     // CCL modules shadow OSS modules.
@@ -86,9 +92,8 @@ module.exports = (env, argv) => {
       modules: modules,
       alias: {
         oss: __dirname,
-        ccl: path.resolve(__dirname, "ccl"),
         "src/js/protos": "@cockroachlabs/crdb-protobuf-client",
-        "ccl/src/js/protos": "@cockroachlabs/crdb-protobuf-client-ccl",
+        ...cclAliases,
       },
     },
 

@@ -19,11 +19,16 @@ import (
 )
 
 const (
-	ClaimVersion = "OSS-001"
-	ClaimImport  = "OSS-002"
-	ClaimBackup  = "OSS-003"
-	stepSetup    = "OSS-SETUP"
-	suiteTimeout = 14 * time.Minute // below the 15m go test budget; covers 24 gates at 30s plus node start (same budget as the OSS guard suite)
+	ClaimVersion      = "OSS-001"
+	ClaimImport       = "OSS-002"
+	ClaimBackup       = "OSS-003"
+	ClaimTTL          = "OSS-004"
+	ClaimGEOS         = "OSS-005"
+	ClaimRC           = "OSS-006"
+	ClaimCopy         = "OSS-007"
+	ClaimImportMatrix = "OSS-008"
+	stepSetup         = "OSS-SETUP"
+	suiteTimeout      = 45 * time.Minute // below the 50m go test budget for the combined capability suite
 )
 
 // Config supplies the binary and a parent for disposable stores.
@@ -56,7 +61,7 @@ func Run(ctx context.Context, cfg Config) (*report.Report, error) {
 
 func newReport(meta report.Meta) *report.Report {
 	rep := report.New(meta)
-	ids := []string{ClaimVersion, ClaimImport, ClaimBackup}
+	ids := []string{ClaimVersion, ClaimImport, ClaimBackup, ClaimTTL, ClaimGEOS, ClaimRC, ClaimCopy, ClaimImportMatrix, ClaimExportCSV, ClaimExportParquet, ClaimExportDisabled, ClaimExportGate}
 	ids = append(ids, gateClaimIDs()...)
 	for _, id := range ids {
 		rep.Set(id, labels.NotTested, "capability check did not run")
@@ -76,7 +81,7 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	}
 	var c *cluster.Cluster
 	defer func() { result = errors.Join(result, cleanup(c, dir, rep)) }()
-	c, err = cluster.Start(ctx, cluster.Spec{Binary: cfg.Binary, Dir: dir, Nodes: 1})
+	c, err = cluster.Start(ctx, cluster.Spec{Binary: cfg.Binary, Dir: dir, Nodes: 1, ExternalIO: true})
 	if err == nil {
 		err = c.Init(ctx)
 	}
@@ -101,7 +106,14 @@ func runCluster(ctx context.Context, cfg Config, rep *report.Report) (_ *report.
 	backupErr := rejectBackup(ctx, conn)
 	note(rep, ClaimBackup, ClaimBackup, backupErr)
 	gateErr := runGateContract(ctx, conn, rep)
-	return rep, errors.Join(importErr, backupErr, gateErr)
+	guardErr := runGuards(ctx, cfg, conn, c, rep)
+	exportErr := runExportChecks(ctx, conn, c.Nodes()[0].StoreDir, rep)
+	for _, id := range []string{ClaimExportCSV, ClaimExportParquet, ClaimExportDisabled, ClaimExportGate} {
+		if rep.Outcome(id) != labels.Pass {
+			exportErr = errors.Join(exportErr, fmt.Errorf("required capability %s did not pass", id))
+		}
+	}
+	return rep, errors.Join(importErr, backupErr, gateErr, guardErr, exportErr)
 }
 
 func connect(ctx context.Context, c *cluster.Cluster) (*pgx.Conn, error) {
