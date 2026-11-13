@@ -1,0 +1,46 @@
+# FGL documentation case data. Apache-2.0. Draft; not executed.
+schema_version: 1
+id: s2-existing-database-error
+slice: S2
+description: Database restore without rename conflicts with source database
+fixtures:
+  source: fresh isolated cluster, SQL user root
+variables:
+  collection: nodelocal://1/par031/s2-existing-database-error
+setup:
+- 'on': source
+  sql: CREATE DATABASE par031_src
+- 'on': source
+  sql: CREATE TABLE par031_src.public.t (id INT PRIMARY KEY, v STRING, INDEX (v))
+- 'on': source
+  sql: INSERT INTO par031_src.public.t VALUES (1, 'one'), (2, NULL), (3, '')
+- 'on': source
+  sql: BACKUP DATABASE par031_src INTO '${collection}'
+statement:
+  'on': source
+  sql: RESTORE DATABASE par031_src FROM LATEST IN '${collection}'
+expect:
+  error:
+    sqlstate: null
+    message_pattern: null
+    pending: 'UNVERIFIED — needs black-box run: capture existing-database SQLSTATE and anchored message.'
+post:
+- 'on': source
+  sql: SELECT count(*) AS n FROM par031_src.public.t
+  expect:
+    result:
+      columns:
+      - n
+      rows:
+      - n: 3
+      row_match: exact
+oracle:
+  stock_version: v23.2.15
+  doc_urls:
+  - https://www.cockroachlabs.com/docs/v23.2/restore
+  verification: unverified
+  recorded_at: null
+  license_key_state: not_checked
+  evidence_note: UNVERIFIED — needs black-box run
+  pending_fields:
+  - Runtime results and SQL result types have not been recorded.
