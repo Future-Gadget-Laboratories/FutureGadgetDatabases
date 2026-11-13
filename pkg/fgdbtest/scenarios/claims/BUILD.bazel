@@ -3,7 +3,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "claims_test",
     srcs = ["registry_test.go"],
+    data = [
+        "//fgdb/test:claims.yaml",
+        "//fgdb/test:skips.yaml",
+    ],
     deps = [
+        "//pkg/build/bazel",
         "//pkg/fgdbtest/claims",
         "//pkg/fgdbtest/harness",
     ],

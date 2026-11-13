@@ -7,6 +7,7 @@ steps:
   - id: UNIT
     kind: go-test
     packages:
+      - ./pkg/fgdbtest/capabilities
       - ./pkg/fgdbtest/claims
       - ./pkg/fgdbtest/cluster
       - ./pkg/fgdbtest/faults
@@ -40,3 +41,9 @@ steps:
     target: //pkg/kv/kvnemesis:kvnemesis_test
   - id: CLUSTER
     kind: cluster
+  - id: REPSTREAM-HOOKS
+    kind: bazel
+    claim: REP-001
+    target: //pkg/repstream:repstream_test
+  - id: OSS-CAPABILITIES
+    kind: oss-capabilities

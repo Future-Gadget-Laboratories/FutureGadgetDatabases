@@ -12,6 +12,7 @@ test_suite(
     name = "pr_tier",
     tests = [
         "//pkg/cmd/fgdb-test:fgdb-test_test",
+        "//pkg/fgdbtest/capabilities:capabilities_test",
         "//pkg/fgdbtest/claims:claims_test",
         "//pkg/fgdbtest/cluster:cluster_test",
         "//pkg/fgdbtest/faults:faults_test",

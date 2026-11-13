@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cockroachdb/cockroach/pkg/build/bazel"
 )
 
 func TestReleaseLibIsOnlyTheExtractedDir(t *testing.T) {
@@ -45,14 +47,14 @@ func TestReleaseLibRejectsSymlink(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	real := filepath.Join(dir, "real")
-	if err := os.Mkdir(real, 0o755); err != nil {
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(real, geosLibrary), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(realDir, geosLibrary), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(dir, "lib")); err != nil {
+	if err := os.Symlink(realDir, filepath.Join(dir, "lib")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ProcessEnv(bin); err == nil || !strings.Contains(err.Error(), "symlink") {
@@ -178,6 +180,22 @@ func envMap(text string) map[string]string {
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
+	if bazel.BuiltWithBazel() {
+		script, err := bazel.Runfile("fgdb/test/scripts/scrub-credentials.sh")
+		if err != nil {
+			t.Fatalf("locate scrub-credentials.sh runfile: %v", err)
+		}
+		script, err = filepath.EvalSymlinks(script)
+		if err != nil {
+			t.Fatalf("resolve scrub-credentials.sh runfile: %v", err)
+		}
+		root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(script))))
+		if _, err := os.Stat(filepath.Join(root, "fgdb", "test", "scripts", "scrub-credentials.sh")); err != nil {
+			t.Fatalf("derived repository root %q does not contain scrub-credentials.sh: %v", root, err)
+		}
+		// This runs the script from the real source tree; it needs a local or linux-sandbox run with the source tree visible, not remote execution.
+		return root
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)

@@ -41,7 +41,7 @@ func GetReplicationStreamManager(
 func GetStreamIngestManager(
 	ctx context.Context, evalCtx *eval.Context, txn isql.Txn, sessionID clusterunique.ID,
 ) (eval.StreamIngestManager, error) {
-	if GetReplicationStreamManagerHook == nil {
+	if GetStreamIngestManagerHook == nil {
 		return nil, errors.New("replication streaming requires a CCL binary")
 	}
 	return GetStreamIngestManagerHook(ctx, evalCtx, txn, sessionID)

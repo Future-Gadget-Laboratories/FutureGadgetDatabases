@@ -1,13 +1,10 @@
 # Self-hosted Actions runner
 
-This guide sets up a self-hosted GitHub Actions runner for the
-`cockroach-oss` compile with labels `self-hosted` and `fgdb-build`.
-
+The `cockroach-oss` compile runs on a self-hosted GitHub Actions build runner.
 The release workflow's `FGDB_BUILD_RUNS_ON` repository variable is optional.
-If the variable is unset, the build job can run on any self-hosted runner.
-Set the variable to a JSON array of labels that selects release-only runners.
-The two-label routing described here assumes the variable is set to
-`["self-hosted","fgdb-build"]`.
+When the variable is unset, the job uses `["self-hosted","fgdb-build"]`, the
+same labels main uses today. Set the variable to a JSON array to select
+different release-only runners.
 
 The script is `build/fgdb/runner/setup-runner.sh`. It is idempotent.
 It prints a plan, then applies it. `--dry-run` stops after the plan.
@@ -15,11 +12,12 @@ Optional settings live in a small config file. See
 [runner-config.md](runner-config.md). The installed runner is allowed to
 update itself. That stays on unless the config file sets `auto_update: false`.
 
-Register that runner on a machine with at least 30 GiB of RAM and 150 GiB
-free on a local disk. The script refuses a smaller machine unless you pass
+Register that runner on a machine with enough RAM and free local disk for a
+full Bazel build; `setup-runner.sh` enforces its own minimums. The script refuses a smaller machine unless you pass
 `--allow-small-host` to test the script itself. Do not point the compile at
-`ubuntu-latest`. When `FGDB_BUILD_RUNS_ON` is set to
-`["self-hosted","fgdb-build"]`, the workflow requires both labels.
+`ubuntu-latest`. The default `runs-on` asks for `self-hosted` plus the
+`fgdb-build` label, so a runner that only has `self-hosted` will not pick
+up the job unless `FGDB_BUILD_RUNS_ON` is set to a broader list.
 
 ## What it sets up
 
@@ -52,7 +50,7 @@ other local services still have CPU and RAM. Defaults:
 | `MemoryHigh` | `80G` | soft pressure above this |
 | `MemoryMax` | `96G` | hard cap |
 
-The same budget is written to `/etc/fgdb/runner.env` as `FGDB_LOCAL_CPU`
+The same budget is written to the runner environment file as `FGDB_LOCAL_CPU`
 (default `24`) and `FGDB_LOCAL_RAM_MB` (default `81920`) so Bazel does not
 schedule more work than the slice allows. Change them together.
 
@@ -61,7 +59,7 @@ Environment variables, read before the flags:
 | Variable | Flag |
 | --- | --- |
 | `FGDB_RUNNER_NAME` | `--name` (default is `<short hostname>-fgdb`) |
-| `FGDB_RUNNER_LABELS` | `--labels` (default `fgdb-build`) |
+| `FGDB_RUNNER_LABELS` | `--labels` (default: the build label the release workflow asks for) |
 | `FGDB_CPU_QUOTA` | `--cpu-quota` |
 | `FGDB_MEMORY_HIGH` | `--memory-high` |
 | `FGDB_MEMORY_MAX` | `--memory-max` |
@@ -191,17 +189,18 @@ sudo ./build/fgdb/runner/setup-runner.sh \
 A different runner name:
 
 ```bash
-sudo FGDB_RUNNER_NAME=fgdb-build ./build/fgdb/runner/setup-runner.sh \
+sudo FGDB_RUNNER_NAME=my-build-runner ./build/fgdb/runner/setup-runner.sh \
   --token-file /root/runner.token
 ```
 
-A later run without a token is safe once
-`/opt/fgdb-actions-runner/.runner` exists. Pass `--replace` to register
+A later run without a token is safe once the runner's `.runner`
+registration file exists in its install directory. Pass `--replace` to register
 again; that needs a new token. `--dry-run` prints the plan only.
 
-Confirm in GitHub that the runner is Idle and has labels `self-hosted` and
-`fgdb-build`. When `FGDB_BUILD_RUNS_ON` is set to
-`["self-hosted","fgdb-build"]`, the workflow requires both labels.
+Confirm in GitHub that the runner is Idle and has `self-hosted` and the
+build label from the workflow's default `runs-on` (`fgdb-build`) or from
+`FGDB_BUILD_RUNS_ON` if that variable is set. A runner that only has
+`self-hosted` will not pick up the job under the default labels.
 
 The runner needs outbound HTTPS to `github.com` (source, Actions, Bazelisk,
 the `cockroachdb/bazel` release), `storage.googleapis.com` (public Bazel
@@ -226,4 +225,6 @@ those do not match the download, the script stops and leaves
 
 Cut the release as described in [RELEASING.md](RELEASING.md). The first
 compile is a `workflow_dispatch` with `publish` left false, or a push of
-tag `v23.2.15-oss` on a commit that already contains this workflow.
+tag `v23.2.15-oss` or `v23.2.15-fgdb.N` on a commit that already contains
+`.github/workflows/fgdb-oss-release.yml`. Both of those tags are already
+published. The current release is `v23.2.15-fgdb.1`.

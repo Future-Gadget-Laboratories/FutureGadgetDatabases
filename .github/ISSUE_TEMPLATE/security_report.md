@@ -28,4 +28,4 @@ If you opened this issue because the advisory form was unavailable, stop after t
 
 **Version line**
 
-`v23.2.15` / `v23.2.15-oss` / other:
+`v23.2.15` / `v23.2.15-fgdb.1` / `v23.2.15-oss` / other:

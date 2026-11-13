@@ -4,7 +4,7 @@ Future Gadget Laboratories maintains FutureGadgetDatabases. Report vulnerabiliti
 
 ## Supported line
 
-The line this project publishes is the CCL-free `cockroach-oss` build of CockroachDB v23.2.15 (release tag `v23.2.15-oss`, when that release exists).
+The line this project publishes is the CCL-free `cockroach-oss` build of CockroachDB v23.2.15. The current release tag is `v23.2.15-fgdb.1`. The earlier tag is `v23.2.15-oss`. Digests are in [docs/fgdb/releases.md](docs/fgdb/releases.md).
 
 **CCL** is the CockroachDB Community License. Official CockroachDB images include CCL code. A finding that exists only in CCL code is outside the binary this project ships. Say which binary you ran. `cockroach-oss version` prints a `Distribution` line. `OSS` means you are on the binary this policy covers.
 

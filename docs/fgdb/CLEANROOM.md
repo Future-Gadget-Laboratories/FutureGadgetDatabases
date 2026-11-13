@@ -94,7 +94,7 @@ A hobby project may not hire an independent third-party monitor. That is a known
 
 ### Bad (refuse / discard)
 
-- Contributor opens a PR titled “Port backup encryption from crl-enterprise” with files clearly derived from a CSL tree.
+- Contributor opens a PR titled “Port backup encryption from the proprietary tree” with files clearly derived from a CSL tree.
 - Chat paste: “Here’s the enterprise function, just change the package name.”
 - An implementer is handed proprietary source, or notes copied from it, and told to “clean it up into FGDb style.”
 - Spec contains a 40-line block that is recognizably the same control flow and variable names as proprietary source.
@@ -114,5 +114,7 @@ When that happens: **stop**, mark the branch or workspace contaminated, **do not
 
 ## Related docs
 
+- What a pull request should say: [contributing.md](contributing.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md)
+- The binary you implement against: [releases.md](releases.md) and [getting-started.md](getting-started.md)
 - Agent mandatory rules: [`docs/agent/CLEANROOM-ENFORCEMENT.md`](../agent/CLEANROOM-ENFORCEMENT.md)
 - Research citations: [`docs/fgdb/SOURCES.md`](SOURCES.md)

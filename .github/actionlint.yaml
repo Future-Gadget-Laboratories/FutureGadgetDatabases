@@ -1,6 +1,6 @@
 # Labels requested by FGDB workflows. These are not GitHub-hosted runners.
-# fgdb-build: persistent release runner (.github/workflows/fgdb-oss-release.yml).
-# fgdb-pr-ephemeral: pull-request build label (.github/workflows/fgdb-pr-build.yml).
+# Persistent self-hosted build runner label (.github/workflows/fgdb-oss-release.yml).
+# Ephemeral self-hosted build runner label (.github/workflows/fgdb-pr-build.yml).
 self-hosted-runner:
   labels:
     - fgdb-build

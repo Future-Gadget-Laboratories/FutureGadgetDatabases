@@ -7,8 +7,8 @@
 # Ordinary pushes and pull requests do not build.
 #
 # The compile runs on a self-hosted build runner. The runs-on labels come from
-# the FGDB_BUILD_RUNS_ON repository variable (a JSON array); when it is unset
-# the job targets any self-hosted runner.
+# the FGDB_BUILD_RUNS_ON repository variable (a JSON array). When it is unset
+# the job uses ["self-hosted","fgdb-build"], matching main's current routing.
 # Release upload and the image push run on ubuntu-latest.
 #
 # Knobs (edit here):
@@ -144,9 +144,9 @@ jobs:
     name: Build cockroach-oss
     needs: gate
     if: needs.gate.outputs.skip != 'true'
-    # If FGDB_BUILD_RUNS_ON is unset, the build job can run on any self-hosted runner.
+    # If FGDB_BUILD_RUNS_ON is unset, the build job uses ["self-hosted","fgdb-build"].
     # Set the variable to a JSON array of labels that selects release-only runners.
-    runs-on: ${{ fromJSON(vars.FGDB_BUILD_RUNS_ON || '["self-hosted"]') }}
+    runs-on: ${{ fromJSON(vars.FGDB_BUILD_RUNS_ON || '["self-hosted","fgdb-build"]') }}
     timeout-minutes: 480
     permissions:
       contents: read

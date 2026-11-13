@@ -21,7 +21,7 @@
 # Host-specific values are parameters. The runner name defaults to
 # "<short hostname>-fgdb". Override it with FGDB_RUNNER_NAME or --name.
 # Slice and Bazel limits default as below; override them with the FGDB_*
-# variables or the matching flags. The label stays fgdb-build.
+# variables or the matching flags. The label defaults to the one the release workflow asks for.
 #
 # Token (one hour, do not commit it). Repo runner, default:
 #   gh api --method POST \

@@ -5,6 +5,8 @@
 
 This page is for someone running the suite on a laptop or on a self-hosted runner. It covers the first slice: a 3-node cluster on one Linux machine, a few upstream tests, and a written list of claims.
 
+Fast `fgdb-backup` tests and the `build/fgdb` shell tests are in the Fast checks section. They run in `.github/workflows/fgdb-checks.yml`, added by merged pull request #19. Cluster-backed backup tests and the initial OSS capability matrix run in `.github/workflows/fgdb-backup-tests.yml`.
+
 The product claims live in `fgdb/test/claims.yaml`. Each claim names at least one test. The checker fails if a claim has no test, if that test is not in the tree, or if the status is `untested`. A waived claim needs an owner, a reason, and an expiry date.
 
 The registry has no field for a downstream product. A downstream need arrives as a feature or fix request issue. If it is accepted, it gets its own claim and its own test.
@@ -124,6 +126,114 @@ A doc line under `docs/fgdb/` that says "always", "guarantees", "survives", or "
 
 `//pkg/cmd/cockroach-oss:cockroach-oss` also rejects an import of `pkg/fgdbtest`.
 
+## Fast checks
+
+[Pull request #19](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/19) added `.github/workflows/fgdb-checks.yml` for fast checks and left `.github/workflows/fgdb-backup-tests.yml` for the tests that start `cockroach-oss`. Both workflows are on `main`. The sections below describe that layout.
+
+### On a laptop
+
+From the repository root. The Go version in the workflow is 1.21.12.
+
+```bash
+cd pkg/cmd/fgdb-backup
+go test -count=1 ./...
+go vet ./...
+```
+
+`go test -count=1 ./...` is the command in the `backup-unit` job. It runs the in-process tests: config parsing, SQL rewrite, the local store, the backup lease, and S3 against an in-process fake server. It also runs the seed inputs of `FuzzArrayStreamMatchesReference`. Tests in `roundtrip_test.go`, `review_test.go`, and `safety_test.go` start real `cockroach-oss` processes. They skip unless `FGDB_COCKROACH` is set, or unless `/tmp/fgdb-bin/cockroach` is present. A skip is not a failure. `FGDB_REQUIRE_CLUSTER` is not read by these tests. `fgdb-checks.yml` does not set `FGDB_COCKROACH`, so those tests skip there.
+
+The same workflow also runs these from the repository root. `gofmt -l` has to print nothing.
+
+```bash
+gofmt -l pkg/fgdbtest pkg/cmd/fgdb-test pkg/cmd/fgdb-backup
+go vet ./pkg/fgdbtest/... ./pkg/cmd/fgdb-test/...
+bash fgdb/test/run.sh pr
+```
+
+`fgdb/test/run.sh pr` is the pr tier described above. The separate boundary check added by #19 is also in the tree:
+
+```bash
+bash fgdb/test/scripts/check-boundary.sh
+```
+
+The script exits 1 if a file under `pkg/fgdbtest`, `pkg/cmd/fgdb-test`, `pkg/cmd/fgdb-backup`, `fgdb`, or `build/fgdb` imports `pkg/ccl`, lists `//pkg/ccl` in a Bazel file, or starts with a CockroachDB Software License header.
+
+Most shell tests use fixtures. They do not build Cockroach, and they do not need a GitHub token. `require-repo-commit_test.sh` queries the public GitHub API and needs network access; it is not an offline fixture test. From the repository root, each one exits 0 when its checks pass:
+
+```bash
+bash build/fgdb/release-tag_test.sh
+bash build/fgdb/skip-duplicate-tag-build_test.sh
+bash build/fgdb/verify-oss-binary_test.sh
+bash build/fgdb/runner/check-cache-dir_test.sh
+bash build/fgdb/runner/checksums_test.sh
+bash build/fgdb/runner/token-input_test.sh
+bash build/fgdb/runner/read-config_test.sh
+bash build/fgdb/runner/update-checksums_test.sh
+bash build/fgdb/runner/runner-unit_test.sh
+bash build/fgdb/require-repo-commit_test.sh
+```
+
+- `release-tag_test.sh` checks `build/fgdb/release-tag.sh`: which git tag is published, and which image tags that publish pushes.
+- `skip-duplicate-tag-build_test.sh` checks `build/fgdb/skip-duplicate-tag-build.sh` with a fixture in place of `curl`.
+- `verify-oss-binary_test.sh` checks `build/fgdb/verify-oss-binary.sh` against a stand-in binary that prints `Distribution: OSS`.
+- `check-cache-dir_test.sh` checks `build/fgdb/runner/check-cache-dir.sh` with stand-in `findmnt` and `stat` programs.
+- `checksums_test.sh` checks `build/fgdb/runner/checksums.txt`: five fields per row, a 64-character hash, no duplicate keys, and rows for `actions-runner 2.338.0 linux-x64` and `bazelisk 1.29.0 linux-amd64`.
+- `token-input_test.sh` checks `build/fgdb/runner/token-input.sh`. An empty token and a symlink are refused. A token from a file or from stdin is trimmed.
+- `read-config_test.sh` checks `build/fgdb/runner/read-config.sh`, the parser for the runner setup file.
+- `update-checksums_test.sh` checks `build/fgdb/runner/update-checksums.sh` and `checksum-notes.sh`. A downloaded file is refused when the publisher hash does not match.
+- `runner-unit_test.sh` checks `build/fgdb/runner/runner-unit.sh`, including the cache-check command line and the refusal of a missing or broken check script.
+- `require-repo-commit_test.sh` checks `build/fgdb/require-repo-commit.py`: a requested commit must belong to a branch or tag of this repository before the manual compile checks out its source.
+
+### `.github/workflows/fgdb-checks.yml`
+
+The workflow is named FGDB checks. It runs on GitHub-hosted `ubuntu-latest`. A pull request runs it when the change touches `.github/workflows/**`, `fgdb/**`, `build/fgdb/**`, `pkg/fgdbtest/**`, `pkg/repstream/**`, `pkg/cmd/fgdb-test/**`, `pkg/cmd/fgdb-backup/**`, `go.mod`, or `go.sum`. Every push to `main` runs it, without a path filter, including docs-only pushes. It has no secrets. The workflow permission set is empty, and each job sets `contents: read`. Checkouts set `persist-credentials: false`. A change under `pkg/repstream/**` starts these jobs. It does not test the hook. `gofmt-vet` formats and vets `pkg/fgdbtest`, `pkg/cmd/fgdb-test`, and `pkg/cmd/fgdb-backup`, not `pkg/repstream`. The `pr` tier does not list `./pkg/repstream`. The hook regression is `bazel test //pkg/repstream:repstream_test`, and these hosted jobs do not run it. A green FGDB checks result is not a hook pass.
+
+- `actionlint` (10 minutes) installs actionlint 1.7.7 and runs `actionlint -color`.
+- `shellcheck` (10 minutes) installs ShellCheck 0.10.0 and runs it at warning severity on every `*.sh` file under `fgdb/` and `build/fgdb/`.
+- `gofmt-vet` (15 minutes) installs Go 1.21.12, fails if `gofmt -l` prints a file under `pkg/fgdbtest`, `pkg/cmd/fgdb-test`, or `pkg/cmd/fgdb-backup`, and runs `go vet` on those trees. `go vet` for `fgdb-backup` uses that module's directory.
+- `pr-tier` (15 minutes) runs `bash fgdb/test/run.sh pr`. No Bazel and no cluster.
+- `backup-unit` (15 minutes) runs `go test -count=1 ./...` in `pkg/cmd/fgdb-backup`, then the ten shell scripts above.
+- `boundary` (10 minutes) runs `bash fgdb/test/scripts/check-boundary.sh`.
+
+### Cluster-backed patch tests
+
+`.github/workflows/fgdb-backup-tests.yml` is named FGDB patch tests, and it has one job, `integration`. A pull request runs it when the change touches that workflow, `pkg/cmd/fgdb-backup/**`, `pkg/fgdbtest/capabilities/**`, `pkg/fgdbtest/cluster/**`, `pkg/fgdbtest/labels/**`, `pkg/fgdbtest/report/**`, `go.mod`, or `go.sum`. It does not run on a push. It does not run `go vet` or the shell scripts. Those moved to `fgdb-checks.yml`.
+
+The job limit is 45 minutes. It downloads the public `v23.2.15-fgdb.1` linux-amd64 tarball, checks the sha256 written in the workflow, and unpacks it. It sets `FGDB_COCKROACH` to `cockroach` in that tree and `LD_LIBRARY_PATH` to the `lib` directory beside it. It also sets `FGDB_REQUIRE_CLUSTER=1`, `FGDB_EXPECT_GO=go1.21.12`, `FGDB_SOURCE_SHA` to `github.sha` (the tested checkout; for a `pull_request` run that is the synthetic merge commit, not the pull-request head), and `FGDB_CANDIDATE_SHA256` to that published tarball hash. The capability step sets `FGDB_OUTPUT` to a directory under the runner temporary space, and the upload reads `result.json` and `summary.md` from that directory. In `pkg/cmd/fgdb-backup` it runs:
+
+```bash
+go test -count=1 -v ./...
+```
+
+It then runs the capability step against that same pinned binary:
+
+```bash
+go test -count=1 -v -timeout 50m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
+```
+
+The job uploads `result.json` and `summary.md` from `FGDB_OUTPUT` as the `fgdb-oss-capabilities` artifact, including when the capability step fails. `FGDB_SOURCE_SHA` is the suite checkout. `FGDB_CANDIDATE_SHA256` is the published tarball. This job does not build the changed server.
+
+To run that on a laptop, point the variables at a binary that prints `Distribution: OSS`. When the binary comes from the release tarball, `LD_LIBRARY_PATH` is that tarball's `lib` directory. The test process passes its environment through to `cockroach`.
+
+```bash
+export FGDB_COCKROACH=/path/to/cockroach
+export LD_LIBRARY_PATH=/path/to/lib
+cd pkg/cmd/fgdb-backup
+go test -count=1 -v ./...
+```
+
 ## Where CI runs it
 
-`.github/workflows/fgdb-suite-interim.yml` is manual (`workflow_dispatch` only). It does not run on pull requests. It runs on a self-hosted runner labeled `fgdb-build`, reads `/etc/fgdb/runner.env` for the Bazel cache and the 24-thread / 96 GB limits, and has no secrets. You pass the candidate tarball URL and its sha256. The previous binary is the `v23.2.15-fgdb.1` release, checked against its published sha256.
+The laptop command, the GitHub-hosted checks, and the heavy compile are separate. A pull request that changes the checked paths runs the fast checks on `ubuntu-latest`. A pull request does not start a self-hosted job.
+
+`fgdb/test/run.sh pr` is the check you can run on a laptop. It needs Go 1.21. It does not need Bazel, and it does not start a cluster. The claims check, the production-import baseline, and the Go tests in `fgdb/test/tiers/pr.yaml` are the whole tier.
+
+`.github/workflows/fgdb-checks.yml` runs that tier, plus actionlint, ShellCheck, `gofmt`, `go vet`, the `fgdb-backup` unit tests, and a scan that FGDb paths do not import `pkg/ccl`. Every job uses GitHub-hosted `ubuntu-latest`. Every pull request runs actionlint; the other checks run when the pull request changes the checked paths. Every push to `main` runs all checks, including a push that only changes docs. The workflow has no secrets and does not use a self-hosted runner. This file was added by the merged CI hygiene change (#19).
+
+`.github/workflows/fgdb-pr-build.yml` compiles `cockroach-oss` when a maintainer starts it from the Actions tab (`workflow_dispatch`). The input is the 40-character SHA of a commit that is already on a branch or tag in this repository. The workflow has no repository-name input, so a commit that exists only on a fork is refused before checkout. Opening, updating, or marking a pull request ready leaves this workflow idle. The job asks for an ephemeral self-hosted build runner. It does not use the persistent self-hosted build runner. The checkout has no credentials and the job has no secrets. Each commit gets its own Bazel output directory, named with that SHA. Registering the ephemeral runner is a separate step. The workflow file does not do it. After the disallowed-imports check, the job runs `bazel test //pkg/repstream:repstream_test` when the selected commit contains `pkg/repstream/api_test.go`. If that file is missing, the step fails. The dispatch input `allow_missing_hook_test` defaults to false. Set it to true only to compile an older commit that predates the test. The step then prints `repstream regression NOT tested` and adds a job summary line that this green compile is not a hook pass. How to send a change is [contributing.md](contributing.md).
+
+`.github/workflows/fgdb-suite-interim.yml` is manual (`workflow_dispatch` only). It does not run on pull requests. It runs on the persistent self-hosted build runner and reads the runner's environment file. Bazel's CPU and memory limits and the runner's resource cap are set when the runner is installed. See [RUNNER.md](RUNNER.md). The job has no secrets. You pass the candidate tarball URL and its sha256. The previous binary is the `v23.2.15-fgdb.1` release from [releases.md](releases.md), checked against sha256 `5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379`.
+
+## Initial OSS capability matrix
+
+[oss-capabilities.md](oss-capabilities.md) describes the independent replication-hook regression and the first version/CSV-import/unsupported-BACKUP checks, plus the PAR-001 CCL gate contract (claims `GATE-0NN`, see [spec/PAR-001-gate-contract.md](spec/PAR-001-gate-contract.md)). The interim, nightly, and weekly tiers require these checks; the PR tier remains cluster-free. The patch-test workflow also checks the runtime matrix against its pinned published OSS binary and uploads the capability report. This does not establish that a newly built database candidate passed. The hook regression itself runs as `bazel test //pkg/repstream:repstream_test`. Adding `pkg/repstream/**` to the fast-check filter starts the hosted jobs and does not run, format, or vet that package.
