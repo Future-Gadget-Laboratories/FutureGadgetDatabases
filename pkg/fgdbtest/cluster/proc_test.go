@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +44,32 @@ func TestStartField(t *testing.T) {
 	}
 }
 
+func TestSameExe(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "coreutils")
+	other := filepath.Join(dir, "distinct")
+	writeExe(t, exe)
+	writeExe(t, other)
+	symlink := filepath.Join(dir, "sleep")
+	if err := os.Symlink(exe, symlink); err != nil {
+		t.Fatal(err)
+	}
+	hardlink := filepath.Join(dir, "false")
+	if err := os.Link(exe, hardlink); err != nil {
+		t.Fatal(err)
+	}
+	for _, left := range []string{exe, symlink, hardlink} {
+		for _, right := range []string{exe, symlink, hardlink} {
+			if !sameExe(left, right) {
+				t.Errorf("sameExe(%q, %q) = false for the same file", left, right)
+			}
+		}
+		if sameExe(left, other) || sameExe(other, left) {
+			t.Errorf("sameExe matched distinct files %q and %q", left, other)
+		}
+	}
+}
+
 func TestSignalRejectsMismatchedStartTime(t *testing.T) {
 	cmd := exec.Command("sleep", "60")
 	if err := cmd.Start(); err != nil {
@@ -65,7 +92,7 @@ func TestSignalRejectsMismatchedStartTime(t *testing.T) {
 		t.Fatal("a mismatched identity was signaled")
 	}
 	bad.Start = id.Start
-	bad.Exe = "/bin/false"
+	bad.Exe = distinctExe(t, id.Exe)
 	if err := Signal(bad, unix.SIGTERM); !errors.Is(err, ErrMismatch) {
 		t.Fatalf("mismatched exe: %v", err)
 	}
@@ -128,7 +155,7 @@ func TestCaptureFailureIsStillReaped(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Cluster{nodes: []Node{{
-		Index: 0, Binary: "/bin/false", PidFile: pidPath, StoreDir: dir,
+		Index: 0, Binary: distinctExe(t, live.Exe), PidFile: pidPath, StoreDir: dir,
 	}}}
 	err = c.noteStarted(0, c.nodes[0])
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d", live.PID)) {
@@ -145,6 +172,23 @@ func TestCaptureFailureIsStillReaped(t *testing.T) {
 	}
 	if err := Match(live); !errors.Is(err, ErrGone) {
 		t.Fatalf("reap left the process: %v", err)
+	}
+}
+
+func distinctExe(t *testing.T, live string) string {
+	t.Helper()
+	decoy := filepath.Join(t.TempDir(), "distinct")
+	writeExe(t, decoy)
+	if sameExe(decoy, live) {
+		t.Fatalf("decoy %q matches live executable %q", decoy, live)
+	}
+	return decoy
+}
+
+func writeExe(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 
