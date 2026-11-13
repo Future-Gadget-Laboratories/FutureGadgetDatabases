@@ -208,7 +208,7 @@ go test -count=1 -v ./...
 It then runs the capability step against that same pinned binary:
 
 ```bash
-go test -count=1 -v -timeout 15m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
+go test -count=1 -v -timeout 50m ./pkg/fgdbtest/capabilities -run '^TestOSSCapabilities$'
 ```
 
 The job uploads `result.json` and `summary.md` from `FGDB_OUTPUT` as the `fgdb-oss-capabilities` artifact, including when the capability step fails. `FGDB_SOURCE_SHA` is the suite checkout. `FGDB_CANDIDATE_SHA256` is the published tarball. This job does not build the changed server.

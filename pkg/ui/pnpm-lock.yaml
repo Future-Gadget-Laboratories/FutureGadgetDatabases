@@ -470,9 +470,6 @@ importers:
       '@cockroachlabs/crdb-protobuf-client':
         specifier: link:./src/js
         version: link:src/js
-      '@cockroachlabs/crdb-protobuf-client-ccl':
-        specifier: link:./ccl/src/js
-        version: link:ccl/src/js
       '@cockroachlabs/design-tokens':
         specifier: 0.4.5
         version: 0.4.5

@@ -8,11 +8,13 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | Page | What it covers |
 | --- | --- |
 | [PROJECT.md](PROJECT.md) | Short description of the project |
+| [using-fgdb.md](using-fgdb.md) | Feature status and common database tasks |
 | [getting-started.md](getting-started.md) | Build `cockroach-oss`, run one node, run three nodes, create a table |
 | [testing.md](testing.md) | Run the suite locally, and what a run does not prove yet |
 | [architecture.md](architecture.md) | SQL, ranges, copies, and what a crash means |
 | [license.md](license.md) | BSL change date, CCL, CSL, and what not to ship |
 | [releases.md](releases.md) | Tarball URLs, image names, and digest pins |
+| [version-gating.md](version-gating.md) | Feature flags, release compatibility, and rollback rules |
 | [operations.md](operations.md) | Telemetry, certificates, a crash drill, and a careful note on decommission |
 | [backup-cli.md](backup-cli.md) | Current logical-backup command flags, exit codes, and prune behavior |
 | [backup.md](backup.md) | Logical backup and restore to a directory or S3 |
@@ -20,6 +22,8 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [contributing.md](contributing.md) | A first evening on the project |
 | [security.md](security.md) | How to report a vulnerability |
 | [roadmap.md](roadmap.md) | v23.2.15 pin, then cleanroom work, then naming |
+| [spec/PAR-004-benchmark-harness.md](spec/PAR-004-benchmark-harness.md) | Proposed benchmark harness, result schema, and baseline gates |
+| [parity/PAR-207-v23.2.16-29-triage.md](parity/PAR-207-v23.2.16-29-triage.md) | Public v23.2.16–v23.2.29 fix-note triage against the v23.2.15 OSS pin |
 | [CLEANROOM.md](CLEANROOM.md) | How to rewrite newer behavior without copying proprietary code |
 | [SOURCES.md](SOURCES.md) | Public sources for that cleanroom process |
 | [../agent/CLEANROOM-ENFORCEMENT.md](../agent/CLEANROOM-ENFORCEMENT.md) | Rules for people and agents: refuse contaminated work and discard it |
