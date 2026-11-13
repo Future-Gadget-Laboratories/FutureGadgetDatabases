@@ -1967,6 +1967,271 @@ func TestStoreSplitGCThreshold(t *testing.T) {
 	repl.AssertState(ctx, store.TODOEngine())
 }
 
+type storeSplitGCSpanGuardCase struct {
+	name, start, end  string
+	rangeKeys, points bool
+	reject            bool
+}
+
+// TestStoreSplitGCSpanGuard exercises stale GC bodies with the header that
+// replicaGCer.template builds from the current, post-split LHS descriptor.
+func TestStoreSplitGCSpanGuard(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	s := serverutils.StartServerOnly(t, base.TestServerArgs{Knobs: base.TestingKnobs{
+		Store: &kvserver.StoreTestingKnobs{
+			DisableMergeQueue: true, DisableSplitQueue: true, DisableGCQueue: true,
+			DisableCanAckBeforeApplication: true,
+		},
+	}})
+	defer s.Stopper().Stop(ctx)
+	store, err := s.GetStores().(*kvserver.Stores).GetStore(s.GetFirstStoreID())
+	require.NoError(t, err)
+	scratch, err := s.ScratchRange()
+	require.NoError(t, err)
+
+	for i, tc := range []storeSplitGCSpanGuardCase{
+		{name: "A2-clear-crossing-split", start: "c", end: "u", reject: true},
+		{name: "A3-clear-in-RHS", start: "t", end: "u", reject: true},
+		{name: "A4-range-keys-crossing-split", start: "c", end: "u", rangeKeys: true, reject: true},
+		{name: "A4-range-keys-in-RHS", start: "m", end: "u", rangeKeys: true, reject: true},
+		{name: "A5-clear-before-LHS", start: "a", end: "d", reject: true},
+		{name: "A5-range-keys-before-LHS", start: "a", end: "d", rangeKeys: true, reject: true},
+		{name: "R1-clear-in-LHS", start: "c", end: "m"},
+		{name: "R2-range-keys-in-LHS", start: "c", end: "m", rangeKeys: true},
+		{name: "R3-point-keys-on-both-sides", points: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runStoreSplitGCSpanGuardCase(t, ctx, s, store, scratch, i, tc)
+		})
+	}
+}
+
+// Read physical versions, including tombstones, since the garbage is no
+// longer visible to ordinary reads after advancing the GC threshold.
+func readStoreSplitGCSpanGuardData(t *testing.T, store *kvserver.Store, start, end roachpb.Key) []string {
+	t.Helper()
+	iter, err := store.TODOEngine().NewMVCCIterator(storage.MVCCKeyAndIntentsIterKind, storage.IterOptions{
+		LowerBound: start, UpperBound: end, KeyTypes: storage.IterKeyTypePointsAndRanges,
+	})
+	require.NoError(t, err)
+	defer iter.Close()
+	var data []string
+	for iter.SeekGE(storage.MVCCKey{Key: start}); ; iter.Next() {
+		ok, err := iter.Valid()
+		require.NoError(t, err)
+		if !ok {
+			break
+		}
+		hasPoint, hasRange := iter.HasPointAndRange()
+		if hasRange && iter.RangeKeyChanged() {
+			data = append(data, "range "+iter.RangeKeys().String())
+		}
+		if hasPoint {
+			value, err := iter.UnsafeValue()
+			require.NoError(t, err)
+			data = append(data, fmt.Sprintf("point %s=%x", iter.UnsafeKey(), value))
+		}
+	}
+	return data
+}
+
+// Exclude range-local metadata, which can change as split intents resolve.
+func storeSplitGCSpanGuardUserStats(repl *kvserver.Replica) []int64 {
+	ms := repl.GetMVCCStats()
+	return []int64{ms.LiveBytes, ms.LiveCount, ms.KeyBytes, ms.KeyCount, ms.ValBytes, ms.ValCount,
+		ms.RangeKeyBytes, ms.RangeKeyCount, ms.RangeValBytes, ms.RangeValCount}
+}
+
+func runStoreSplitGCSpanGuardCase(
+	t *testing.T, ctx context.Context, s serverutils.TestServerInterface,
+	store *kvserver.Store, scratch roachpb.Key, i int, tc storeSplitGCSpanGuardCase,
+) {
+	t.Helper()
+	prefix := testutils.MakeKey(scratch, roachpb.Key(fmt.Sprintf("/gc-span/%02d/", i)))
+	key := func(suffix string) roachpb.Key { return testutils.MakeKey(prefix, roachpb.Key(suffix)) }
+	start, split, end := key("b"), key("m"), key("z")
+	left, right := key("c"), key("t")
+	_, _, err := s.SplitRange(start)
+	require.NoError(t, err)
+	_, _, err = s.SplitRange(end)
+	require.NoError(t, err)
+	if tc.rangeKeys {
+		_, pErr := kv.SendWrapped(ctx, store.TestSender(), &kvpb.DeleteRangeRequest{
+			RequestHeader:     kvpb.RequestHeader{Key: left, EndKey: key("u")},
+			UseRangeTombstone: true, UpdateRangeDeleteGCHint: true,
+		})
+		require.Nil(t, pErr)
+	} else {
+		for _, k := range []roachpb.Key{left, right} {
+			require.NoError(t, store.DB().Put(ctx, k, "old"))
+			_, err := store.DB().Del(ctx, k)
+			require.NoError(t, err)
+		}
+	}
+	_, _, err = s.SplitRange(split)
+	require.NoError(t, err)
+	lhs, rhs := store.LookupReplica(roachpb.RKey(left)), store.LookupReplica(roachpb.RKey(right))
+	require.NotEqual(t, lhs.RangeID, rhs.RangeID)
+	threshold := store.Clock().Now()
+	// Threshold-only GC also covers R4, without the unsafe combined
+	// threshold-and-keys testing knob.
+	for _, repl := range []*kvserver.Replica{lhs, rhs} {
+		desc := repl.Desc()
+		_, pErr := kv.SendWrappedWith(ctx, repl,
+			kvpb.Header{RangeID: desc.RangeID, Timestamp: store.Clock().Now()}, &kvpb.GCRequest{
+				RequestHeader: kvpb.RequestHeader{Key: desc.StartKey.AsRawKey(), EndKey: desc.EndKey.AsRawKey()},
+				Threshold:     threshold,
+			})
+		require.Nil(t, pErr)
+	}
+	beforeLHS, beforeRHS := readStoreSplitGCSpanGuardData(t, store, start, split), readStoreSplitGCSpanGuardData(t, store, split, end)
+	require.NotEmpty(t, beforeLHS)
+	require.NotEmpty(t, beforeRHS)
+	lhsStats, rhsStats := storeSplitGCSpanGuardUserStats(lhs), storeSplitGCSpanGuardUserStats(rhs)
+	lhsHint, rhsHint := lhs.GetGCHint(), rhs.GetGCHint()
+	desc := lhs.Desc()
+	req := &kvpb.GCRequest{RequestHeader: kvpb.RequestHeader{
+		Key: desc.StartKey.AsRawKey(), EndKey: desc.EndKey.AsRawKey(),
+	}}
+	switch {
+	case tc.points:
+		req.Keys = []kvpb.GCRequest_GCKey{{Key: left, Timestamp: threshold}, {Key: right, Timestamp: threshold}}
+	case tc.rangeKeys:
+		req.RangeKeys = []kvpb.GCRequest_GCRangeKey{{StartKey: key(tc.start), EndKey: key(tc.end), Timestamp: threshold}}
+	default:
+		req.ClearRange = &kvpb.GCRequest_GCClearRange{
+			StartKey: key(tc.start), EndKey: key(tc.end), StartKeyTimestamp: threshold,
+		}
+	}
+	_, pErr := kv.SendWrappedWith(ctx, lhs,
+		kvpb.Header{RangeID: desc.RangeID, Timestamp: store.Clock().Now()}, req)
+	if tc.reject {
+		require.NotNil(t, pErr, "out-of-bounds GC body must be rejected")
+		require.False(t, errors.IsAssertionFailure(pErr.GoError()))
+		require.Contains(t, pErr.GoError().Error(), (roachpb.Span{Key: key(tc.start), EndKey: key(tc.end)}).String())
+		require.Contains(t, pErr.GoError().Error(), (roachpb.Span{Key: req.Key, EndKey: req.EndKey}).String())
+		require.Equal(t, beforeLHS, readStoreSplitGCSpanGuardData(t, store, start, split))
+		require.Equal(t, lhsStats, storeSplitGCSpanGuardUserStats(lhs))
+		require.Equal(t, lhsHint, lhs.GetGCHint())
+	} else {
+		require.Nil(t, pErr)
+		require.Empty(t, readStoreSplitGCSpanGuardData(t, store, start, split), "in-bounds garbage must be collected")
+	}
+	require.Equal(t, beforeRHS, readStoreSplitGCSpanGuardData(t, store, split, end))
+	require.Equal(t, rhsStats, storeSplitGCSpanGuardUserStats(rhs))
+	require.Equal(t, rhsHint, rhs.GetGCHint())
+	require.Equal(t, threshold, lhs.GetGCThreshold())
+	require.Equal(t, threshold, rhs.GetGCThreshold())
+}
+
+func TestStoreSplitGCSpanGuardLostWrite(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	evaluated, resume := make(chan struct{}, 1), make(chan struct{})
+	s := serverutils.StartServerOnly(t, base.TestServerArgs{Knobs: base.TestingKnobs{
+		Store: &kvserver.StoreTestingKnobs{
+			DisableMergeQueue: true, DisableSplitQueue: true, DisableGCQueue: true,
+			DisableCanAckBeforeApplication: true,
+			EvalKnobs: kvserverbase.BatchEvalTestingKnobs{
+				TestingPostEvalFilter: func(args kvserverbase.FilterArgs) *kvpb.Error {
+					if req, ok := args.Req.(*kvpb.GCRequest); ok && req.ClearRange != nil {
+						select {
+						case evaluated <- struct{}{}:
+						default:
+						}
+						// Also pause a rejected evaluation so the same interleaving
+						// exercises A1 with and without the guard.
+						select {
+						case <-resume:
+						case <-args.Ctx.Done():
+							return kvpb.NewError(args.Ctx.Err())
+						}
+					}
+					return nil
+				},
+			},
+		},
+	}})
+	defer s.Stopper().Stop(context.Background())
+	store, err := s.GetStores().(*kvserver.Stores).GetStore(s.GetFirstStoreID())
+	require.NoError(t, err)
+	start, err := s.ScratchRange()
+	require.NoError(t, err)
+	left := testutils.MakeKey(start, roachpb.Key("c"))
+	split := testutils.MakeKey(start, roachpb.Key("m"))
+	right := testutils.MakeKey(start, roachpb.Key("t"))
+	end := testutils.MakeKey(start, roachpb.Key("u"))
+	for _, key := range []roachpb.Key{left, right} {
+		require.NoError(t, store.DB().Put(ctx, key, "old"))
+		_, err := store.DB().Del(ctx, key)
+		require.NoError(t, err)
+	}
+	_, _, err = s.SplitRange(split)
+	require.NoError(t, err)
+	lhs, rhs := store.LookupReplica(roachpb.RKey(left)), store.LookupReplica(roachpb.RKey(right))
+	require.NotEqual(t, lhs.RangeID, rhs.RangeID)
+	threshold := store.Clock().Now()
+	for _, repl := range []*kvserver.Replica{lhs, rhs} {
+		desc := repl.Desc()
+		_, pErr := kv.SendWrappedWith(ctx, repl,
+			kvpb.Header{RangeID: desc.RangeID, Timestamp: store.Clock().Now()}, &kvpb.GCRequest{
+				RequestHeader: kvpb.RequestHeader{Key: desc.StartKey.AsRawKey(), EndKey: desc.EndKey.AsRawKey()},
+				Threshold:     threshold,
+			})
+		require.Nil(t, pErr)
+	}
+	desc := lhs.Desc()
+	req := &kvpb.GCRequest{
+		RequestHeader: kvpb.RequestHeader{Key: desc.StartKey.AsRawKey(), EndKey: desc.EndKey.AsRawKey()},
+		ClearRange:    &kvpb.GCRequest_GCClearRange{StartKey: left, EndKey: end, StartKeyTimestamp: threshold},
+	}
+	var gcErr *kvpb.Error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, gcErr = kv.SendWrappedWith(ctx, lhs,
+			kvpb.Header{RangeID: desc.RangeID, Timestamp: store.Clock().Now()}, req)
+	}()
+	released := false
+	defer func() {
+		if !released {
+			close(resume)
+		}
+		cancel()
+		<-done
+	}()
+	select {
+	case <-evaluated:
+	case <-done:
+		t.Fatalf("GC returned before the post-evaluation barrier: %v", gcErr)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	// The RHS has its own latch manager, so this write must finish while the
+	// LHS GC is paused after recording its storage batch but before applying it.
+	require.NoError(t, store.DB().Put(ctx, right, "survives"))
+	close(resume)
+	released = true
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	value, err := store.DB().Get(ctx, right)
+	require.NoError(t, err)
+	// Assert the value before the GC error: on main, A1 fails here with a lost
+	// RHS write, rather than only reporting that the malformed GC succeeded.
+	require.Equal(t, []byte("survives"), value.ValueBytes(), "A1: LHS GC erased a post-split RHS write")
+	require.NotNil(t, gcErr, "the stale GC body must be rejected")
+	require.False(t, errors.IsAssertionFailure(gcErr.GoError()))
+}
+
 func TestStoreSplitGCHint(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
