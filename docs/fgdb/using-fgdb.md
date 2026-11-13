@@ -152,6 +152,16 @@ kill "$(cat "$HOME/fgdb-lab/node1.pid")"
 
 Repeat for the other nodes when ending the three-node demo. Keep the store directories to retain data. For restart and operational considerations, see [operations.md](operations.md).
 
+### Certificates on Kubernetes
+
+The FGDb `cockroach` binary has the same `cert` commands as v23.2.15 (see [operations.md](operations.md#certificates)). In the usual single-CA setup the output is ordinary X.509 files: `ca.crt`, `node.crt` and `node.key`, and `client.<user>.crt` and `client.<user>.key`. A separate client CA adds `ca-client.crt` and `client.node.crt`. Certificates made with another CockroachDB release's `cert` command generally work if the names and file layout match. Making them with the FGDb binary avoids the question.
+
+A node certificate must list every name a client or peer uses. In Kubernetes, that usually means the public Service as `<service>`, `<service>.<namespace>`, `<service>.<namespace>.svc` and `<service>.<namespace>.svc.<cluster-domain>`, plus the StatefulSet pod names under the headless Service (`*.<headless-service>.<namespace>.svc.<cluster-domain>`). The cluster domain is `cluster.local` unless the cluster sets another. Do not rely on one fixed IP address in the certificate; pod and node addresses change.
+
+FGDb itself sets no Kubernetes labels. The chart or manifest that deploys it chooses the Service and pod labels. Anything that finds the database by label, such as a secret or certificate reconciler, has to match the labels that chart sets. Certificates can be identical while label matching still fails. A StatefulSet's selector cannot be changed in place, so changing its labels means recreating the StatefulSet.
+
+FGDb is v23.2.15. Running it on a store written by a newer CockroachDB release is a downgrade, and downgrades are not supported. Do not just swap the image on an existing newer cluster. Move the user databases with a logical export and restore instead. [`fgdb-backup`](backup.md) covers the user databases it supports; it does not copy full cluster state.
+
 ## FGDb features
 
 `fgdb-backup` is the supported interim logical backup and restore tool. It copies schema and rows through ordinary SQL to local storage or S3. Read [backup-cli.md](backup-cli.md) for the current commands and restore behavior and [backup.md](backup.md) for format and limitations; test restores before relying on them.
