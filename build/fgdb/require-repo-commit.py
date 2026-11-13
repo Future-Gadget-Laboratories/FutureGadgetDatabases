@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,12 +38,25 @@ def auth_headers():
 
 def request(url):
     req = urllib.request.Request(url, headers=auth_headers())
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read()
-            link = resp.headers.get("Link")
-    except urllib.error.HTTPError as exc:
-        raise LookupError(str(exc.code)) from exc
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = resp.read()
+                link = resp.headers.get("Link")
+            break
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            # GitHub's commits API returns 422 "No commit found for SHA"
+            # for a well-formed hex SHA that is not in this repository
+            # (404 is also possible). Only these mean the commit is missing.
+            if exc.code in (404, 422):
+                raise LookupError(str(exc.code)) from exc
+            if exc.code in (429, 502, 503) and attempt < 2:
+                time.sleep(0.5 * 2**attempt)
+                continue
+            fail(f"GitHub API HTTP {exc.code} for {url}")
+        except OSError as exc:
+            fail(f"GitHub API request failed for {url}: {exc}")
     return json.loads(body.decode()), link
 
 
@@ -112,7 +126,7 @@ def main():
     except LookupError:
         fail(f"commit {sha} is not in {repo}")
     if commit.get("sha") != sha:
-        fail(f"commit {sha} is not in {repo}")
+        fail("GitHub API returned a different commit SHA")
     branches = get_pages(f"{API_BASE}/repos/{repo}/branches?per_page=100")
     if on_named_ref(repo, sha, "branch", branches):
         return
