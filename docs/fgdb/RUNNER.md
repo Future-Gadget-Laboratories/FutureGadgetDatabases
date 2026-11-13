@@ -1,7 +1,10 @@
 # Self-hosted Actions runner
 
 The `cockroach-oss` compile runs on a self-hosted GitHub Actions build runner.
-The workflow's `runs-on` line names the labels that runner must carry.
+The release workflow's `FGDB_BUILD_RUNS_ON` repository variable is optional.
+When the variable is unset, the job uses `["self-hosted","fgdb-build"]`, the
+same labels main uses today. Set the variable to a JSON array to select
+different release-only runners.
 
 The script is `build/fgdb/runner/setup-runner.sh`. It is idempotent.
 It prints a plan, then applies it. `--dry-run` stops after the plan.
@@ -12,8 +15,9 @@ update itself. That stays on unless the config file sets `auto_update: false`.
 Register that runner on a machine with enough RAM and free local disk for a
 full Bazel build; `setup-runner.sh` enforces its own minimums. The script refuses a smaller machine unless you pass
 `--allow-small-host` to test the script itself. Do not point the compile at
-`ubuntu-latest`. The workflow asks for `self-hosted` plus a build label,
-so a runner that only has `self-hosted` will not pick up the job.
+`ubuntu-latest`. The default `runs-on` asks for `self-hosted` plus the
+`fgdb-build` label, so a runner that only has `self-hosted` will not pick
+up the job unless `FGDB_BUILD_RUNS_ON` is set to a broader list.
 
 ## What it sets up
 
@@ -194,8 +198,9 @@ registration file exists in its install directory. Pass `--replace` to register
 again; that needs a new token. `--dry-run` prints the plan only.
 
 Confirm in GitHub that the runner is Idle and has `self-hosted` and the
-build label from the workflow's `runs-on` line. The workflow asks for both labels, so a runner that only has
-`self-hosted` will not pick up the job.
+build label from the workflow's default `runs-on` (`fgdb-build`) or from
+`FGDB_BUILD_RUNS_ON` if that variable is set. A runner that only has
+`self-hosted` will not pick up the job under the default labels.
 
 The runner needs outbound HTTPS to `github.com` (source, Actions, Bazelisk,
 the `cockroachdb/bazel` release), `storage.googleapis.com` (public Bazel
