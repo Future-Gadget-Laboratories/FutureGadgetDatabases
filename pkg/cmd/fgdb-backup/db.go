@@ -340,11 +340,11 @@ func typeModifier(formatted string) string {
 	if open < 0 {
 		return ""
 	}
-	close := strings.IndexByte(formatted[open:], ')')
-	if close < 0 {
+	closeParen := strings.IndexByte(formatted[open:], ')')
+	if closeParen < 0 {
 		return ""
 	}
-	inner := formatted[open+1 : open+close]
+	inner := formatted[open+1 : open+closeParen]
 	parts := strings.Split(inner, ",")
 	if len(parts) > 2 {
 		return ""
