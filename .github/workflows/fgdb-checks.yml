@@ -1,7 +1,7 @@
 # Fast checks for FGDb-owned code.
 #
-# Pull requests run when FGDb paths change. Every push to main runs the
-# same jobs, with no path filter. Both use GitHub-hosted ubuntu-latest.
+# Every pull request runs actionlint; other jobs run when FGDb paths change.
+# Every push to main runs all jobs. Both use GitHub-hosted ubuntu-latest.
 # This file does not use a self-hosted runner, Bazel, or a lab host.
 # It has no secrets.
 # The pr tier is fgdb/test/run.sh pr: claims, the production-import baseline,
@@ -13,15 +13,6 @@ name: FGDB checks
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/**"
-      - "fgdb/**"
-      - "build/fgdb/**"
-      - "pkg/fgdbtest/**"
-      - "pkg/cmd/fgdb-test/**"
-      - "pkg/cmd/fgdb-backup/**"
-      - "go.mod"
-      - "go.sum"
   push:
     branches:
       - main
@@ -39,13 +30,40 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      fgdb: ${{ steps.changes.outputs.fgdb }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 1
+          fetch-depth: 2
           persist-credentials: false
           submodules: false
+
+      # FENCE: Keep the original FGDb path scope for downstream jobs, while
+      # actionlint always reports a check instead of leaving docs PRs pending.
+      - name: Detect FGDb changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          fgdb=true
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            fgdb=false
+            # The PR merge commit's first parent is its base. Disable rename
+            # detection so moves out of an FGDb path also trigger the checks.
+            git diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/fgdb-changed-files"
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                .github/workflows/*|fgdb/*|build/fgdb/*|pkg/fgdbtest/*|pkg/repstream/*|pkg/cmd/fgdb-test/*|pkg/cmd/fgdb-backup/*|go.mod|go.sum)
+                  fgdb=true
+                  break
+                  ;;
+              esac
+            done < "$RUNNER_TEMP/fgdb-changed-files"
+          fi
+          echo "fgdb=$fgdb" >> "$GITHUB_OUTPUT"
 
       - name: Install actionlint
         env:
@@ -64,6 +82,8 @@ jobs:
 
   shellcheck:
     name: ShellCheck
+    needs: actionlint
+    if: needs.actionlint.outputs.fgdb == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -101,6 +121,8 @@ jobs:
 
   gofmt-vet:
     name: gofmt and go vet
+    needs: actionlint
+    if: needs.actionlint.outputs.fgdb == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -140,6 +162,8 @@ jobs:
 
   pr-tier:
     name: pr tier
+    needs: actionlint
+    if: needs.actionlint.outputs.fgdb == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -163,6 +187,8 @@ jobs:
 
   backup-unit:
     name: fgdb-backup unit and script tests
+    needs: actionlint
+    if: needs.actionlint.outputs.fgdb == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -201,6 +227,8 @@ jobs:
 
   boundary:
     name: CCL and CSL boundary
+    needs: actionlint
+    if: needs.actionlint.outputs.fgdb == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

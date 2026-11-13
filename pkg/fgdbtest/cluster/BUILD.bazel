@@ -24,6 +24,10 @@ go_test(
         "proc_test.go",
         "url_test.go",
     ],
+    data = ["//fgdb/test:scripts/scrub-credentials.sh"],
     embed = [":cluster"],
-    deps = ["@org_golang_x_sys//unix"],
+    deps = [
+        "//pkg/build/bazel",
+        "@org_golang_x_sys//unix",
+    ],
 )

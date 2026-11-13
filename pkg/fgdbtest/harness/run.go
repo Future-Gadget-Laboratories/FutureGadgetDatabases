@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cockroachdb/cockroach/pkg/fgdbtest/capabilities"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/claims"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/cluster"
 	"github.com/cockroachdb/cockroach/pkg/fgdbtest/faults"
@@ -92,6 +93,8 @@ func (h *Harness) execute(ctx context.Context, step Step) error {
 		return h.bazel(ctx, step)
 	case kindCluster:
 		return h.cluster(ctx)
+	case kindCapabilities:
+		return h.capabilities(ctx)
 	case kindNotTested:
 		return errNotTested
 	default:
@@ -190,6 +193,20 @@ func (h *Harness) cluster(ctx context.Context) error {
 	return err
 }
 
+// capabilities records each observable OSS check in the normal suite report.
+func (h *Harness) capabilities(ctx context.Context) error {
+	rep, err := capabilities.Run(ctx, capabilities.Config{
+		Binary:   os.Getenv("FGDB_COCKROACH"),
+		WorkDir:  filepath.Join(h.Output, "capabilities-work"),
+		ExpectGo: os.Getenv("FGDB_EXPECT_GO"),
+		Meta:     h.rep.Meta,
+	})
+	if rep != nil {
+		h.merge(rep)
+	}
+	return err
+}
+
 func (h *Harness) merge(rep *report.Report) {
 	for _, claim := range rep.Claims {
 		h.rep.Set(claim.ID, claim.Outcome, claim.Detail)
@@ -209,6 +226,8 @@ func (h *Harness) ensureFaultLines() {
 }
 
 func runCommand(ctx context.Context, name string, args ...string) error {
+	// name and args come from the checked-in tier definitions and fixed harness commands, not network input.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd := exec.CommandContext(ctx, name, args...)
 	env, err := cluster.CommandEnv()
 	if err != nil {
