@@ -260,7 +260,7 @@ func columnNames(cols []columnInfo) []string {
 // a string that happens to look like ARRAY[...].
 func arraySQLColumns(cols []columnInfo) ([]string, error) {
 	out := make([]string, len(cols))
-	any := false
+	hasAny := false
 	for i, c := range cols {
 		if !strings.HasPrefix(c.TypeName, "_") {
 			continue
@@ -270,9 +270,9 @@ func arraySQLColumns(cols []columnInfo) ([]string, error) {
 			return nil, fmt.Errorf("column %s: %w", c.Name, err)
 		}
 		out[i] = cast
-		any = true
+		hasAny = true
 	}
-	if !any {
+	if !hasAny {
 		return nil, nil
 	}
 	return out, nil
