@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func pruneOldCopies(ctx context.Context, db *database, name string, keep int) ([]string, error) {
+func pruneOldCopies(ctx context.Context, db *database, name string, keep int, dryRun bool) ([]string, error) {
 	if keep < 0 {
 		return nil, fmt.Errorf("retention must not be negative")
 	}
@@ -40,10 +40,20 @@ func pruneOldCopies(ctx context.Context, db *database, name string, keep int) ([
 	}
 	var removed []string
 	for _, database := range copies[keep:] {
-		if _, err := db.exec(ctx, "DROP DATABASE "+quoteIdent(database)+" CASCADE"); err != nil {
-			return removed, fmt.Errorf("drop old copy %s: %w", database, err)
+		if err := dropPrunedCopy(ctx, db, database, dryRun); err != nil {
+			return removed, err
 		}
 		removed = append(removed, database)
 	}
 	return removed, nil
+}
+
+func dropPrunedCopy(ctx context.Context, db *database, database string, dryRun bool) error {
+	if dryRun {
+		return nil
+	}
+	if _, err := db.exec(ctx, "DROP DATABASE "+quoteIdent(database)+" CASCADE"); err != nil {
+		return fmt.Errorf("drop old copy %s: %w", database, err)
+	}
+	return nil
 }

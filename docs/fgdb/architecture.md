@@ -76,6 +76,8 @@ The DB Console at <http://localhost:8080> (or 8081 and 8082 for the other local 
 
 ## What this page leaves out
 
+The package-level map — statement flow, KV and Raft, storage, startup, and what the CCL-free binary does not include — is [architecture/README.md](architecture/README.md).
+
 Multi-region survival, backup files, and admission control have upstream write-ups that are still useful at v23.2:
 
 - [CockroachDB v23.2 architecture overview](https://www.cockroachlabs.com/docs/v23.2/architecture/overview.html)

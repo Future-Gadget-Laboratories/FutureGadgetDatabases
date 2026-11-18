@@ -203,9 +203,9 @@ func (l *backupLease) create(ctx context.Context) error {
 		}
 		return err
 	}
-	s, ok := l.locStore(ctx)
-	if !ok {
-		return errors.New("backup lock requires a local or S3 destination")
+	s, err := l.locStore(ctx)
+	if err != nil {
+		return err
 	}
 	w, err := s.Create(ctx, l.rel)
 	if err != nil {
@@ -231,9 +231,9 @@ func (l *backupLease) read(ctx context.Context) (backupLeaseRecord, error) {
 		}
 		return out, json.Unmarshal(body, &out)
 	}
-	s, ok := l.locStore(ctx)
-	if !ok {
-		return out, errors.New("backup lock requires a local or S3 destination")
+	s, err := l.locStore(ctx)
+	if err != nil {
+		return out, err
 	}
 	if s3s := s; s3s != nil {
 		object, err := s3s.client.GetObject(ctx, &s3.GetObjectInput{
@@ -263,9 +263,9 @@ func (l *backupLease) remove(ctx context.Context) error {
 		}
 		return err
 	}
-	s, ok := l.locStore(ctx)
-	if !ok {
-		return errors.New("backup lock requires a local or S3 destination")
+	s, err := l.locStore(ctx)
+	if err != nil {
+		return err
 	}
 	return s.delete(ctx, l.rel)
 }
@@ -310,9 +310,9 @@ func (l *backupLease) writeRenewal() error {
 		return err
 	}
 	if l.loc.Kind == "s3" {
-		s, ok := l.locStore(context.Background())
-		if !ok {
-			return errors.New("backup lock requires a local or S3 destination")
+		s, err := l.locStore(context.Background())
+		if err != nil {
+			return err
 		}
 		in := &s3.PutObjectInput{
 			Bucket: aws.String(s.bucket),
@@ -353,15 +353,16 @@ func (l *backupLease) writeRenewal() error {
 	return os.Rename(tmpName, path)
 }
 
-func (l *backupLease) locStore(ctx context.Context) (*s3Store, bool) {
+const lockNeedsObjectStore = "backup lock requires a local or S3 destination"
+
+func (l *backupLease) locStore(ctx context.Context) (*s3Store, error) {
 	if l.loc.Kind != "s3" {
-		return nil, false
+		return nil, errors.New(lockNeedsObjectStore)
 	}
 	if s, ok := l.store.(*s3Store); ok {
-		return s, true
+		return s, nil
 	}
-	s, err := newS3Store(ctx, l.loc)
-	return s, err == nil
+	return newS3Store(ctx, l.loc)
 }
 
 func leaseExpired(record backupLeaseRecord) bool {

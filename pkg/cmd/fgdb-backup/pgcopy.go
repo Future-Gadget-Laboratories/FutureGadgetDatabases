@@ -173,18 +173,18 @@ func stripMaterializedRowid(sql string) string {
 	if open < 0 {
 		return sql
 	}
-	close, ok := matchingParen(sql, open)
+	closeParen, ok := matchingParen(sql, open)
 	if !ok {
 		return sql
 	}
-	body := sql[close+1:]
+	body := sql[closeParen+1:]
 	if !strings.Contains(strings.ToUpper(body), " AS ") {
 		return sql
 	}
 	if strings.Contains(strings.ToLower(body), "rowid") {
 		return sql
 	}
-	cols := splitCommaDepth(sql[open+1 : close])
+	cols := splitCommaDepth(sql[open+1 : closeParen])
 	var kept []string
 	removed := false
 	for _, col := range cols {
@@ -201,7 +201,7 @@ func stripMaterializedRowid(sql string) string {
 	if len(kept) == 0 {
 		return strings.TrimRight(sql[:open], " \t\n") + body
 	}
-	return sql[:open+1] + strings.Join(kept, ",") + sql[close:]
+	return sql[:open+1] + strings.Join(kept, ",") + sql[closeParen:]
 }
 
 func matchingParen(s string, open int) (int, bool) {
@@ -268,11 +268,11 @@ func splitNameArgs(s string) (string, string, bool) {
 	if open < 0 {
 		return "", "", false
 	}
-	close, ok := matchingParen(s, open)
+	closeParen, ok := matchingParen(s, open)
 	if !ok {
 		return "", "", false
 	}
-	return strings.TrimSpace(s[:open]), s[open+1 : close], true
+	return strings.TrimSpace(s[:open]), s[open+1 : closeParen], true
 }
 
 func findOpenParen(s string) int {

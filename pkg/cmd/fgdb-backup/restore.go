@@ -9,6 +9,7 @@ import (
 	"compress/gzip"
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -26,24 +28,25 @@ import (
 
 // RestoreOptions is the restore command.
 type RestoreOptions struct {
-	URL          string
-	Src          string
-	Location     Location
-	Databases    []string
-	Force        bool
-	InPlace      bool
-	Load         string
-	ImportListen string
-	ServeAddr    string
-	ServeTLSCert string
-	ServeTLSKey  string
-	JSON         bool
-	Plan         bool
-	PlanFormat   string
-	SwapRestore  bool
-	Retention    int
-	TestingMode  bool
-	ConfigPath   string
+	URL            string
+	Src            string
+	Location       Location
+	Databases      []string
+	Force          bool
+	InPlace        bool
+	Load           string
+	ImportListen   string
+	ServeAddr      string
+	ServeAdvertise string
+	ServeTLSCert   string
+	ServeTLSKey    string
+	JSON           bool
+	Plan           bool
+	PlanFormat     string
+	SwapRestore    bool
+	Retention      int
+	TestingMode    bool
+	ConfigPath     string
 }
 
 // Problem is one object that could not be restored. These are never skipped silently.
@@ -126,6 +129,12 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	}
 	res.Plan = &plan
 	if opt.Plan {
+		// The database plan is read-only. The listener check binds and closes
+		// a socket when a served import needs one, and it does not start the
+		// file server or change the cluster.
+		if err := reviewImportListener(&plan, bundle.store, opt); err != nil {
+			return res, err
+		}
 		if opt.PlanFormat == "text" {
 			printRestorePlan(plan)
 		}
@@ -138,26 +147,51 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	if !plan.OK {
 		return res, fmt.Errorf("restore preflight refused: %s", strings.Join(plan.Reasons, "; "))
 	}
+	// Swap restores into a new database and renames only after the load
+	// succeeds, so a late listener failure still leaves the original in place.
+	// That path keeps its own listen timing.
 	if len(plan.Swap) > 0 && !opt.InPlace {
 		return restoreAsideAndSwap(ctx, db, bundle, selected, opt, res, plan)
 	}
+	return restoreKeepingListener(ctx, db, bundle, selected, opt, res)
+}
+
+// restoreKeepingListener is the path that can drop existing objects before IMPORT.
+// IMPORT cannot share the drop transaction used by --load=copy, so a listener
+// opened only at load time can refuse after that drop has committed. The
+// listener is opened, checked, and held here, and the same socket is used for
+// the load.
+func restoreKeepingListener(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions, res RestoreResult) (out RestoreResult, err error) {
+	out = res
+	var hold listenerHold
+	if servedImport(bundle.store, opt) {
+		hold.ln, err = listenImport(opt)
+		if err != nil {
+			return out, err
+		}
+	}
+	defer func() {
+		if cerr := hold.close(); cerr != nil {
+			err = joinCloseErr(err, "close import listener", cerr)
+		}
+	}()
 	restore := func(ctx context.Context) error {
 		if err := guardRestoreTargets(ctx, db, bundle.objects, selected, opt.Force && opt.InPlace, opt.InPlace && opt.Load == "copy"); err != nil {
 			return err
 		}
-		if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &res); stopped {
+		if stopped, err := restoreSchema(ctx, db, bundle.objects, selected, &out); stopped {
 			return err
 		}
 		if err := prepareTargets(ctx, db, bundle.manifest, selected); err != nil {
 			return err
 		}
-		warnings, err := loadSelected(ctx, db, bundle, selected, opt)
+		warnings, err := loadSelected(ctx, db, bundle, selected, opt, hold.take())
 		if err != nil {
 			return err
 		}
-		res.Warnings = append(res.Warnings, warnings...)
+		out.Warnings = append(out.Warnings, warnings...)
 		var finishErr error
-		res, finishErr = finishRestore(ctx, db, bundle, selected, &res)
+		out, finishErr = finishRestore(ctx, db, bundle, selected, &out)
 		return finishErr
 	}
 	if opt.InPlace && opt.Load == "copy" {
@@ -165,7 +199,7 @@ func runRestore(ctx context.Context, opt RestoreOptions) (RestoreResult, error) 
 	} else {
 		err = restore(ctx)
 	}
-	return res, err
+	return out, err
 }
 
 type restorePlanOptions struct {
@@ -439,9 +473,19 @@ func normalizeRestoreOptions(opt RestoreOptions) (RestoreOptions, error) {
 		return opt, fmt.Errorf("--load must be import or copy")
 	}
 	if opt.ImportListen == "" {
-		opt.ImportListen = "127.0.0.1:0"
+		opt.ImportListen = defaultImportListen
+	}
+	if err := checkServeTLS(opt.ServeTLSCert, opt.ServeTLSKey); err != nil {
+		return opt, err
 	}
 	return opt, nil
+}
+
+func checkServeTLS(cert, key string) error {
+	if (cert == "") == (key == "") {
+		return nil
+	}
+	return fmt.Errorf("HTTPS for the import file server needs both --%s and --%s", flagServeTLSCert, flagServeTLSKey)
 }
 
 func openRestoreBundle(ctx context.Context, opt RestoreOptions) (restoreBundle, error) {
@@ -651,13 +695,16 @@ func nonEmptyTables(ctx context.Context, db *database, manifest Manifest, select
 	return nonEmpty, nil
 }
 
-func loadSelected(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions) ([]string, error) {
+func loadSelected(ctx context.Context, db *database, bundle restoreBundle, selected map[string]bool, opt RestoreOptions, ln net.Listener) ([]string, error) {
 	if opt.Load == "copy" {
+		if err := closeListener(ln, nil); err != nil {
+			return nil, err
+		}
 		return loadCopy(ctx, db, bundle.store, bundle.base, bundle.manifest, selected)
 	}
 	return loadImport(ctx, importRequest{
 		db: db, store: bundle.store, root: bundle.root, base: bundle.base,
-		manifest: bundle.manifest, selected: selected, opt: opt,
+		manifest: bundle.manifest, selected: selected, opt: opt, listener: ln,
 	})
 }
 
@@ -802,28 +849,72 @@ type importRequest struct {
 	manifest Manifest
 	selected map[string]bool
 	opt      RestoreOptions
+	listener net.Listener
 }
 
-func loadImport(ctx context.Context, req importRequest) ([]string, error) {
-	var warnings []string
+func loadImport(ctx context.Context, req importRequest) (warnings []string, err error) {
 	if req.opt.TestingMode {
-		if err := testingImportProbe(ctx, req.db); err != nil {
-			return nil, err
+		if err = testingImportProbe(ctx, req.db); err != nil {
+			return nil, closeListener(req.listener, err)
 		}
 	}
-	httpBase, closer, err := serveLocalBackup(req)
+	httpBase, closer, serveErr, err := serveLocalBackup(req)
 	if err != nil {
 		return nil, err
 	}
 	if closer != nil {
-		defer closer()
+		defer func() {
+			if cerr := closer(); cerr != nil {
+				err = joinCloseErr(err, "close import file server", cerr)
+			}
+		}()
+	}
+	if err = serveFailure(serveErr); err != nil {
+		return nil, err
 	}
 	for _, table := range req.manifest.Tables {
-		if err := importTable(ctx, req, httpBase, table); err != nil {
+		if err = importLoadedTable(ctx, req, httpBase, serveErr, table); err != nil {
 			return warnings, err
 		}
 	}
+	if err = serveFailure(serveErr); err != nil {
+		return warnings, err
+	}
 	return warnings, nil
+}
+
+func importLoadedTable(ctx context.Context, req importRequest, httpBase string, serveErr <-chan error, table TableEntry) error {
+	if err := serveFailure(serveErr); err != nil {
+		return err
+	}
+	err := importTable(ctx, req, httpBase, table)
+	if err == nil {
+		return nil
+	}
+	if startErr := serveFailure(serveErr); startErr != nil {
+		return startErr
+	}
+	return err
+}
+
+func serveFailure(errs <-chan error) error {
+	err := takeServeError(errs)
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("import file server: %w", err)
+}
+
+func takeServeError(errs <-chan error) error {
+	if errs == nil {
+		return nil
+	}
+	select {
+	case err := <-errs:
+		return err
+	default:
+		return nil
+	}
 }
 
 func testingImportProbe(ctx context.Context, db *database) error {
@@ -842,40 +933,242 @@ func testingImportProbe(ctx context.Context, db *database) error {
 	return nil
 }
 
-func serveLocalBackup(req importRequest) (string, func(), error) {
+func serveLocalBackup(req importRequest) (string, func() error, <-chan error, error) {
 	if s3s, ok := req.store.(*s3Store); ok && s3s.implicitImport() {
-		return "", nil, nil
+		if err := closeListener(req.listener, nil); err != nil {
+			return "", nil, nil, err
+		}
+		return "", nil, nil, nil
 	}
-	ln, err := listenForImport(req.opt)
-	if err != nil {
-		return "", nil, fmt.Errorf("listen for IMPORT: %w", err)
+	ln := req.listener
+	if ln == nil {
+		var err error
+		ln, err = listenImport(req.opt)
+		if err != nil {
+			return "", nil, nil, err
+		}
 	}
 	token, err := serveToken()
 	if err != nil {
-		_ = ln.Close()
-		return "", nil, err
+		return "", nil, nil, closeListener(ln, err)
 	}
-	prefix := "/" + token + "/"
-	srv := &http.Server{Handler: importHandler(req, prefix)}
-	go func() {
-		serveImportHTTP(srv, ln, req.opt)
-	}()
-	closer := func() {
-		shut, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shut)
-	}
-	httpBase := importScheme(req.opt) + "://" + ln.Addr().String() + prefix
-	logf("serving the backup at %s for IMPORT", httpBase)
-	return httpBase, closer, nil
+	return startImportServer(ln, token, req)
 }
 
-func listenForImport(opt RestoreOptions) (net.Listener, error) {
-	addr := opt.ServeAddr
-	if addr == "" {
-		addr = opt.ImportListen
+// reviewImportListener records whether this restore would serve files.
+// A served import is bound and then closed so --plan can report the same
+// wildcard, TLS, and bind result as a real restore without leaving a server
+// running. COPY and implicit S3 do not bind.
+func reviewImportListener(plan *RestorePlan, store Store, opt RestoreOptions) error {
+	if !servedImport(store, opt) {
+		plan.Checks = append(plan.Checks, "import file server not required")
+		return nil
 	}
-	return net.Listen("tcp", addr)
+	ln, err := listenImport(opt)
+	if err != nil {
+		plan.Reasons = append(plan.Reasons, err.Error())
+		plan.OK = false
+		return nil
+	}
+	bound := ln.Addr().String()
+	if cerr := ln.Close(); cerr != nil {
+		return fmt.Errorf("close import listener: %w", cerr)
+	}
+	plan.Checks = append(plan.Checks, "import listener "+bound)
+	return nil
+}
+
+// servedImport reports whether load will start the local import file server.
+// Implicit S3 is read by the database node, and COPY streams over the SQL
+// connection, so neither needs a listener.
+func servedImport(store Store, opt RestoreOptions) bool {
+	if opt.Load == "copy" {
+		return false
+	}
+	if s3s, ok := store.(*s3Store); ok && s3s.implicitImport() {
+		return false
+	}
+	return true
+}
+
+// listenerHold keeps the socket acquired before a destructive restore until
+// the load takes ownership of it.
+type listenerHold struct {
+	ln net.Listener
+}
+
+func (h *listenerHold) take() net.Listener {
+	ln := h.ln
+	h.ln = nil
+	return ln
+}
+
+func (h *listenerHold) close() error {
+	if h.ln == nil {
+		return nil
+	}
+	err := h.ln.Close()
+	h.ln = nil
+	return err
+}
+
+func closeListener(ln net.Listener, err error) error {
+	if ln == nil {
+		return err
+	}
+	return joinCloseErr(err, "close import listener", ln.Close())
+}
+
+func joinCloseErr(err error, what string, cerr error) error {
+	if cerr == nil {
+		return err
+	}
+	if err == nil {
+		return fmt.Errorf("%s: %w", what, cerr)
+	}
+	return fmt.Errorf("%w; %s: %v", err, what, cerr)
+}
+
+// listenTCP opens the import file server socket. Tests replace it so a
+// hostname can resolve to an unspecified address without a DNS lookup.
+var listenTCP = net.Listen
+
+func listenImport(opt RestoreOptions) (net.Listener, error) {
+	addr := bindAddress(opt)
+	if err := refuseWildcardBind(addr, opt.ServeAdvertise); err != nil {
+		return nil, err
+	}
+	ln, err := listenTCP("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen for IMPORT: %w", err)
+	}
+	if err := refuseListenedWildcard(ln, addr, opt.ServeAdvertise); err != nil {
+		return nil, closeListener(ln, err)
+	}
+	wrapped, err := maybeTLSListener(ln, opt)
+	if err != nil {
+		return nil, closeListener(ln, err)
+	}
+	return wrapped, nil
+}
+
+func bindAddress(opt RestoreOptions) string {
+	if opt.ServeAddr != "" {
+		return opt.ServeAddr
+	}
+	if opt.ImportListen != "" {
+		return opt.ImportListen
+	}
+	return defaultImportListen
+}
+
+func refuseWildcardBind(addr, advertise string) error {
+	if advertise != "" || !wildcardHost(bindHost(addr)) {
+		return nil
+	}
+	return wildcardBindError(addr)
+}
+
+func refuseListenedWildcard(ln net.Listener, addr, advertise string) error {
+	if advertise != "" || !listenedUnspecified(ln) {
+		return nil
+	}
+	return wildcardBindError(addr)
+}
+
+func listenedUnspecified(ln net.Listener) bool {
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	return ok && tcp != nil && tcp.IP.IsUnspecified()
+}
+
+func wildcardBindError(addr string) error {
+	return fmt.Errorf("refusing to bind %s; pass --%s with an address the database nodes can reach", addr, flagServeAdvertise)
+}
+
+func bindHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return strings.Trim(addr, "[]")
+	}
+	return host
+}
+
+// wildcardHost reports whether host is an unspecified bind. An empty host is
+// the :port form, which net.Listen treats as every interface. The host "0"
+// is the same bind written as 0:port. Zoned forms such as ::%lo are included
+// because ParseIP rejects the zone.
+func wildcardHost(host string) bool {
+	if host == "" || host == "0" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsUnspecified()
+	}
+	return zonedUnspecified(host)
+}
+
+func zonedUnspecified(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return net.IP(addr.WithZone("").AsSlice()).IsUnspecified()
+}
+
+func maybeTLSListener(ln net.Listener, opt RestoreOptions) (net.Listener, error) {
+	if opt.ServeTLSCert == "" && opt.ServeTLSKey == "" {
+		return ln, nil
+	}
+	if err := checkServeTLS(opt.ServeTLSCert, opt.ServeTLSKey); err != nil {
+		return nil, err
+	}
+	cert, err := tls.LoadX509KeyPair(opt.ServeTLSCert, opt.ServeTLSKey)
+	if err != nil {
+		return nil, fmt.Errorf("import file server TLS: %w", err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	return tls.NewListener(ln, cfg), nil
+}
+
+func startImportServer(ln net.Listener, token string, req importRequest) (string, func() error, <-chan error, error) {
+	prefix := "/" + token + "/"
+	srv := &http.Server{Handler: importHandler(req, prefix)}
+	errCh := make(chan error, 1)
+	go serveImportHTTP(srv, ln, errCh)
+	base, err := importBaseURL(ln.Addr().String(), req.opt, prefix)
+	if err != nil {
+		return "", nil, nil, joinCloseErr(err, "close import file server", closeImportServer(srv))
+	}
+	logf("serving the backup at %s for IMPORT", base)
+	return base, func() error { return closeImportServer(srv) }, errCh, nil
+}
+
+func closeImportServer(srv *http.Server) error {
+	shut, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return srv.Shutdown(shut)
+}
+
+func importBaseURL(bound string, opt RestoreOptions, prefix string) (string, error) {
+	hostport, err := advertisedHostport(bound, opt.ServeAdvertise)
+	if err != nil {
+		return "", err
+	}
+	return importScheme(opt) + "://" + hostport + prefix, nil
+}
+
+func advertisedHostport(bound, advertise string) (string, error) {
+	if advertise == "" {
+		return bound, nil
+	}
+	if _, _, err := net.SplitHostPort(advertise); err == nil {
+		return advertise, nil
+	}
+	_, port, err := net.SplitHostPort(bound)
+	if err != nil {
+		return "", fmt.Errorf("--%s %q: %w", flagServeAdvertise, advertise, err)
+	}
+	return net.JoinHostPort(strings.Trim(advertise, "[]"), port), nil
 }
 
 func importHandler(req importRequest, prefix string) http.Handler {
@@ -907,12 +1200,15 @@ func serveLocalImportFile(w http.ResponseWriter, r *http.Request, req importRequ
 	http.ServeFile(w, r, path)
 }
 
-func serveImportHTTP(srv *http.Server, ln net.Listener, opt RestoreOptions) {
-	if opt.ServeTLSCert != "" || opt.ServeTLSKey != "" {
-		_ = srv.ServeTLS(ln, opt.ServeTLSCert, opt.ServeTLSKey)
+func serveImportHTTP(srv *http.Server, ln net.Listener, errCh chan<- error) {
+	err := srv.Serve(ln)
+	if err == nil || errors.Is(err, http.ErrServerClosed) {
 		return
 	}
-	_ = srv.Serve(ln)
+	select {
+	case errCh <- err:
+	default:
+	}
 }
 
 func importScheme(opt RestoreOptions) string {
@@ -964,9 +1260,22 @@ func importTable(ctx context.Context, req importRequest, httpBase string, table 
 	stmt := importDataStatement(table, uris, req.manifest.Compression)
 	_, err = req.db.exec(ctx, stmt)
 	if err != nil {
-		return fmt.Errorf("IMPORT INTO %s failed. The database node must be able to read the backup URL. For a backup that lives only on this machine, the node must reach --import-listen (%s), or rerun with --load=copy. Error: %s", table.qualified(), req.opt.ImportListen, scrubSecrets(err.Error()))
+		return importReachError(table, req.opt, err)
 	}
 	return nil
+}
+
+func importReachError(table TableEntry, opt RestoreOptions, cause error) error {
+	name, addr := importReachFlag(opt)
+	return fmt.Errorf("IMPORT INTO %s failed. The database node must be able to read the backup URL. For a backup that lives only on this machine, the node must reach %s (%s). Do not switch to --load=copy as a workaround: it has known BYTES, collation and --force=in-place bugs and is not safe. Error: %s",
+		table.qualified(), name, addr, scrubSecrets(cause.Error()))
+}
+
+func importReachFlag(opt RestoreOptions) (string, string) {
+	if opt.ServeAddr != "" {
+		return "--" + flagServeAddr, opt.ServeAddr
+	}
+	return "--" + flagImportListen, opt.ImportListen
 }
 
 func importURIs(ctx context.Context, req importRequest, httpBase string, table TableEntry) ([]string, error) {
