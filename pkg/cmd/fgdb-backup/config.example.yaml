@@ -9,18 +9,23 @@ backup:
   memory_bytes: 0
   file_mode: "0640"
   allow_unsafe_overwrite: false
-  # auto serves files through the tool; implicit is an explicit node choice.
+  # auto, specified, and served all serve files through the tool.
+  # implicit asks the database node to read s3:// itself.
   s3_credential_mode: auto
 
 restore:
   # Use beside-and-swap where the preflight says it is safe.
   swap_restore: true
-  # A plain restore never replaces a non-empty database. --force uses swap;
-  # set in_place only for the explicit --force=in-place last resort.
+  # Read only when --force is not passed. A non-empty database still needs
+  # --force. --force by itself swaps. --force=in-place drops objects in place.
   in_place: false
   retention: 1
+  # Creates a scratch table, copies one row, and drops the table.
+  # It does not turn the S3 probe on or off.
   testing_mode: false
   threads: 0
   memory_bytes: 0
   allow_unsafe_overwrite: false
+  # auto, specified, and served all serve files through the tool.
+  # implicit asks the database node to read s3:// itself.
   s3_credential_mode: auto

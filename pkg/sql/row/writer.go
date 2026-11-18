@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
+	"github.com/cockroachdb/cockroach/pkg/sql/catalog/colinfo"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/rowenc/valueside"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
@@ -142,6 +143,12 @@ func prepareInsertOrUpdateBatch(
 			// Skip any values with a default ID not stored in the primary index,
 			// which can happen if we are adding new columns.
 			if skip := helper.SkipColumnNotInPrimaryIndexValue(family.DefaultColumnID, values[idx]); skip {
+				if overwrite && family.ID != 0 && helper.primaryIndexKeyCols.Contains(family.DefaultColumnID) &&
+					colinfo.CanHaveCompositeKeyEncoding(fetchedCols[idx].GetType()) {
+					// PAR-208: the key now preserves this value, but this compact family
+					// may still hold an older composite representation.
+					insertDelFn(ctx, batch, kvKey, traceKV)
+				}
 				continue
 			}
 			typ := fetchedCols[idx].GetType()

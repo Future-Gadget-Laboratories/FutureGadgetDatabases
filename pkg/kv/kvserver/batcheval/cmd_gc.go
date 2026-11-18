@@ -134,6 +134,33 @@ func mergeAdjacentSpans(spans []roachpb.Span) []roachpb.Span {
 	return spans[0 : j+1]
 }
 
+func checkGCRequestSpans(args *kvpb.GCRequest, desc *roachpb.RangeDescriptor) error {
+	declaredSpan := roachpb.Span{Key: args.Key, EndKey: args.EndKey}
+	rangeSpan := roachpb.Span{Key: desc.StartKey.AsRawKey(), EndKey: desc.EndKey.AsRawKey()}
+	checkSpan := func(start, end roachpb.Key) error {
+		span := roachpb.Span{Key: start, EndKey: end}
+		if !declaredSpan.Contains(span) {
+			return errors.Errorf("GC span %s is outside declared span %s", span, declaredSpan)
+		}
+		if !rangeSpan.Contains(span) {
+			return errors.Errorf("GC span %s is outside range bounds %s", span, rangeSpan)
+		}
+		return nil
+	}
+	for _, rk := range args.RangeKeys {
+		if err := checkSpan(rk.StartKey, rk.EndKey); err != nil {
+			return err
+		}
+	}
+	if cr := args.ClearRange; cr != nil {
+		if err := checkSpan(cr.StartKey, cr.EndKey); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // GC iterates through the list of keys to garbage collect
 // specified in the arguments. MVCCGarbageCollect is invoked on each
 // listed key along with the expiration timestamp. The GC metadata
@@ -143,6 +170,13 @@ func GC(
 ) (result.Result, error) {
 	args := cArgs.Args.(*kvpb.GCRequest)
 	h := cArgs.Header
+	desc := cArgs.EvalCtx.Desc()
+
+	// PAR-200: a split can leave GC body spans outside the current request
+	// header or descriptor. Reject them before any point GC or other writes.
+	if err := checkGCRequestSpans(args, desc); err != nil {
+		return result.Result{}, err
+	}
 
 	// We do not allow GC requests to bump the GC threshold at the same time that
 	// they GC individual keys. This is because performing both of these actions
@@ -207,8 +241,6 @@ func GC(
 			return result.Result{}, err
 		}
 	}
-
-	desc := cArgs.EvalCtx.Desc()
 
 	if cr := args.ClearRange; cr != nil {
 		// Check if we are performing a fast path operation to try to remove all user

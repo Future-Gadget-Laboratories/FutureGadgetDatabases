@@ -32,9 +32,11 @@ looks the way it does.
 1. Merge the workflow onto `main`.
 2. On the self-hosted build runner, install the runner
    in [RUNNER.md](RUNNER.md). Confirm it is Idle with `self-hosted`
-   and the build label from the workflow's `runs-on` line.
+   and the build label. The default `runs-on` (when `FGDB_BUILD_RUNS_ON`
+   is unset) is `["self-hosted","fgdb-build"]`.
 3. Do not send the compile to `ubuntu-latest`. The job runs only on a
-   runner that has both `self-hosted` and that build label.
+   runner that has both labels from that default, or from
+   `FGDB_BUILD_RUNS_ON` if the variable is set.
 
 A cold build needs on the order of 32 GB of RAM and can take a few hours.
 The workflow does not start that build by itself; someone has to dispatch it
@@ -71,7 +73,7 @@ and `macos-latest-xlarge` jobs, because those files are in that tree. The
 publish job refuses to create a release tag on that commit.
 
 The tag push builds `//pkg/cmd/cockroach-oss:cockroach-oss` and
-`//c-deps:libgeos` on the self-hosted build runner, checks that the binary is
+`//c-deps:libgeos` on the selected self-hosted build runner, checks that the binary is
 CCL-free, then uploads the Release and the image.
 
 ### Smoke build without publishing
