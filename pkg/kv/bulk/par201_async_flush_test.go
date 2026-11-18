@@ -38,6 +38,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// par201TablePrefix is a synthetic index prefix used only by the PAR-201 test.
+func par201TablePrefix() roachpb.Key {
+	return keys.SystemSQLCodec.IndexPrefix(4001, 1)
+}
+
+func par201IndexKey(prefix roachpb.Key, i int) roachpb.Key {
+	return encoding.EncodeStringAscending(append([]byte{}, prefix...), fmt.Sprintf("k%d", i))
+}
+
+// par201OverlapsFirstRange reports whether an AddSSTable spans the first
+// test range [prefix, k3). addSSTable retries any non-RangeKeyMismatch
+// error up to 10 times, so the test filter must fail every overlap.
+func par201OverlapsFirstRange(req *kvpb.AddSSTableRequest, prefix, firstRangeEnd roachpb.Key) bool {
+	overlapsPrefix := bytes.HasPrefix(req.Key, prefix) || bytes.HasPrefix(req.EndKey, prefix) ||
+		(req.Key.Compare(prefix) <= 0 && req.EndKey.Compare(prefix) > 0)
+	overlapsFirst := req.Key.Compare(firstRangeEnd) < 0 && req.EndKey.Compare(prefix) > 0
+	return overlapsPrefix && overlapsFirst
+}
+
+func par201FailFirstRangeAddSSTable(
+	armed *atomic.Bool, failed *atomic.Int32, injected error,
+) func(context.Context, *kvpb.BatchRequest) *kvpb.Error {
+	prefix := par201TablePrefix()
+	firstRangeEnd := par201IndexKey(prefix, 3)
+	return func(_ context.Context, ba *kvpb.BatchRequest) *kvpb.Error {
+		if !armed.Load() {
+			return nil
+		}
+		for _, ru := range ba.Requests {
+			req, ok := ru.GetInner().(*kvpb.AddSSTableRequest)
+			if !ok {
+				continue
+			}
+			if par201OverlapsFirstRange(req, prefix, firstRangeEnd) {
+				failed.Add(1)
+				return kvpb.NewError(injected)
+			}
+		}
+		return nil
+	}
+}
+
 // TestPAR201RangeFlushErrorNotSwallowed reproduces the public v23.2.24 /
 // v23.2.26 note "Fixed a rare corruption bug that impacts import and
 // materialized views" on the shared BulkAdder ingest path (IMPORT and
@@ -55,46 +97,19 @@ func TestPAR201RangeFlushErrorNotSwallowed(t *testing.T) {
 	var failed atomic.Int32
 	injected := errors.New("injected AddSSTable failure for PAR-201")
 
-	// addSSTable retries any non-RangeKeyMismatch error up to 10 times
-	// (the AmbiguousResult branch is only the logged case; other errors
-	// fall through the same loop). A one-shot injection is therefore
-	// retried until success and cannot expose a swallowed flush error.
 	// Fail every AddSSTable that overlaps the first range [k0, k3) so
 	// retries cannot succeed, while later ranges can still ingest.
 	s, _, kvDB := serverutils.StartServer(t, base.TestServerArgs{
 		Knobs: base.TestingKnobs{
 			Store: &kvserver.StoreTestingKnobs{
-				TestingRequestFilter: func(_ context.Context, ba *kvpb.BatchRequest) *kvpb.Error {
-					if !armed.Load() {
-						return nil
-					}
-					prefix := keys.SystemSQLCodec.IndexPrefix(4001, 1)
-					firstRangeEnd := encoding.EncodeStringAscending(append([]byte{}, prefix...), "k3")
-					for _, ru := range ba.Requests {
-						req, ok := ru.GetInner().(*kvpb.AddSSTableRequest)
-						if !ok {
-							continue
-						}
-						overlapsPrefix := bytes.HasPrefix(req.Key, prefix) || bytes.HasPrefix(req.EndKey, prefix) ||
-							(req.Key.Compare(prefix) <= 0 && req.EndKey.Compare(prefix) > 0)
-						// Overlaps the first range, not only the second.
-						overlapsFirstRange := req.Key.Compare(firstRangeEnd) < 0 && req.EndKey.Compare(prefix) > 0
-						if overlapsPrefix && overlapsFirstRange {
-							failed.Add(1)
-							return kvpb.NewError(injected)
-						}
-					}
-					return nil
-				},
+				TestingRequestFilter: par201FailFirstRangeAddSSTable(&armed, &failed, injected),
 			},
 		},
 	})
 	defer s.Stopper().Stop(ctx)
 
-	prefix := keys.SystemSQLCodec.IndexPrefix(4001, 1)
-	key := func(i int) roachpb.Key {
-		return encoding.EncodeStringAscending(append([]byte{}, prefix...), fmt.Sprintf("k%d", i))
-	}
+	prefix := par201TablePrefix()
+	key := func(i int) roachpb.Key { return par201IndexKey(prefix, i) }
 	const splitAt = 3
 
 	require.NoError(t, kvDB.AdminSplit(ctx, key(splitAt), hlc.MaxTimestamp))
