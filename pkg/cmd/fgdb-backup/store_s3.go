@@ -80,10 +80,17 @@ func newS3Store(ctx context.Context, loc Location) (*s3Store, error) {
 		st.sse = types.ServerSideEncryptionAwsKms
 		st.kmsKeyID = loc.KMSKeyID
 	}
-	if err := st.checkConditionalWrites(ctx); err != nil {
+	if err := st.maybeProbeConditionalWrites(ctx, loc.ProbeConditionalWrites); err != nil {
 		return nil, err
 	}
 	return st, nil
+}
+
+func (s *s3Store) maybeProbeConditionalWrites(ctx context.Context, probe bool) error {
+	if !probe {
+		return nil
+	}
+	return s.checkConditionalWrites(ctx)
 }
 
 func (s *s3Store) key(rel string) string {
