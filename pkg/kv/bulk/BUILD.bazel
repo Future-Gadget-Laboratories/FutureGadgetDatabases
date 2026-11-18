@@ -44,6 +44,7 @@ go_test(
     srcs = [
         "kv_buf_test.go",
         "main_test.go",
+        "par201_async_flush_test.go",
         "sst_batcher_test.go",
     ],
     args = ["-test.timeout=295s"],
@@ -55,6 +56,7 @@ go_test(
         "//pkg/kv/kvclient/kvcoord",
         "//pkg/kv/kvclient/rangecache",
         "//pkg/kv/kvpb",
+        "//pkg/kv/kvserver",
         "//pkg/kv/kvserver/kvserverbase",
         "//pkg/roachpb",
         "//pkg/security/securityassets",
@@ -72,6 +74,7 @@ go_test(
         "//pkg/util/mon",
         "//pkg/util/randutil",
         "//pkg/util/tracing",
+        "@com_github_cockroachdb_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

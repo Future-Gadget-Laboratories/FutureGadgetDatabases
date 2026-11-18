@@ -258,7 +258,9 @@ func (b *BufferingAdder) doFlush(ctx context.Context, forSize bool) error {
 		b.curBufSummary.Reset()
 		return nil
 	}
-	b.sink.Reset(ctx)
+	if err := b.sink.Reset(ctx); err != nil {
+		return err
+	}
 	b.sink.currentStats.BufferFlushes++
 
 	var before *bulkpb.IngestionPerformanceStats
