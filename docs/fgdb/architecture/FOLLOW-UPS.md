@@ -5,6 +5,8 @@
 
 This queues the numbered questions in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md). It does not close them or claim runtime coverage. The map was reconciled against `main` at `2d2befea10288726b8da5654031a503acfb2b512` on 2026-10-17. Recheck the source and PR heads when work starts.
 
+Drift note (2026-11-18): between that commit and `main` at `4b4784fa552d2eb74e2f2ffb8bef8d5ac24200c9`, 49 files under `pkg/` and `c-deps/` changed. Most are FGL additions under `pkg/fgdbtest/` and `pkg/fgdb/`. The upstream-path changes are in `pkg/sql/sem`, `pkg/sql/export.go`, `pkg/sql/logictest`, `pkg/repstream`, `pkg/ui/workspaces` and `pkg/cmd/dev` (PAR-002 guards, PAR-005 pgcrypto/export and OSS UI work). The map was not re-reconciled. Treat those paths as unverified until the map is checked against them.
+
 The Phase 0 suite is documented in [testing.md](../testing.md) and lives under `fgdb/test/` and `pkg/fgdbtest/`. Extend that suite and its claim registry rather than creating another harness. The `v23.2.15-fgdb.1` release (source commit `56ce139286c504cd61ccc1da1d8e03b644afa131`, tarball sha256 `5f9c36263bdbbfd1d8e6781fe09920fac33d4c608b4743be6681009f4215a379`) and the earlier `v23.2.15-oss` release are recorded in [releases.md](../releases.md). Architecture documentation can land with open verification questions, provided the evidence limits remain explicit.
 
 ## Order and completion evidence
