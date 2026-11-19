@@ -357,6 +357,48 @@ SELECT decrypt_iv(encrypt_iv('abc'::BYTES, 'key'::BYTES, '0123456789abcdef'::BYT
 ----
 true
 
+# OpenSSL conformance vector: AES-128 key length.
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x61'::BYTES, '\x000102030405060708090a0b0c0d0e0f'::BYTES, '\x00000000000000000000000000000000'::BYTES, 'aes'), 'hex')
+----
+fe123486508b0eb503a8468388ef5812
+
+# OpenSSL conformance vector: AES-192 key length.
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x61'::BYTES, '\x000102030405060708090a0b0c0d0e0f1011121314151617'::BYTES, '\x00000000000000000000000000000000'::BYTES, 'aes'), 'hex')
+----
+a9ac66478803de4358f38bc3da782990
+
+# OpenSSL conformance vector: AES-256 key length.
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x61'::BYTES, '\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'::BYTES, '\x00000000000000000000000000000000'::BYTES, 'aes'), 'hex')
+----
+9a75bcec03bcff27da6e4b587201c1ef
+
+# OpenSSL conformance vector: short IV.
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x616263'::BYTES, '\x000102030405060708090a0b0c0d0e0f'::BYTES, '\x010203'::BYTES, 'aes'), 'hex')
+----
+135c8d5c18b86242532ef0583b265db8
+
+# OpenSSL conformance vector: long IV.
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x616263'::BYTES, '\x000102030405060708090a0b0c0d0e0f'::BYTES, '\x000102030405060708090a0b0c0d0e0f10111213'::BYTES, 'aes'), 'hex')
+----
+e717d9be0bd90f750b58e38385f082ab
+
+# OpenSSL conformance vector: aligned pad:none.
+skipif config 3node-tenant-default-configs
+query T
+SELECT encode(encrypt_iv('\x61616161616161616161616161616161'::BYTES, '\x000102030405060708090a0b0c0d0e0f'::BYTES, '\x00000000000000000000000000000000'::BYTES, 'aes-cbc/pad:none'), 'hex')
+----
+b840fba0c5534b7c133becfb1b674df3
+
 # encrypt uses the all-zero IV and is deterministic.
 skipif config 3node-tenant-default-configs
 query B
