@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "auditlog",
+    srcs = ["auditlog.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/fgdb/auditlog",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/fgdb/gate",
+        "//pkg/settings",
+        "//pkg/settings/cluster",
+        "//pkg/sql/auditlogging",
+        "//pkg/util/log",
+        "//pkg/util/uuid",
+    ],
+)
+
+go_test(
+    name = "auditlog_test",
+    size = "medium",
+    srcs = [
+        "auditlog_test.go",
+        "integration_test.go",
+    ],
+    embed = [":auditlog"],
+    deps = [
+        "//pkg/base",
+        "//pkg/security/securityassets",
+        "//pkg/security/securitytest",
+        "//pkg/security/username",
+        "//pkg/server",
+        "//pkg/settings",
+        "//pkg/settings/cluster",
+        "//pkg/sql",
+        "//pkg/sql/auditlogging",
+        "//pkg/testutils",
+        "//pkg/testutils/serverutils",
+        "//pkg/testutils/sqlutils",
+        "//pkg/util/leaktest",
+        "//pkg/util/log",
+        "//pkg/util/log/eventpb",
+        "//pkg/util/log/logpb",
+        "//pkg/util/log/logtestutils",
+        "//pkg/util/uuid",
+        "@com_github_cockroachdb_redact//:redact",
+    ],
+)

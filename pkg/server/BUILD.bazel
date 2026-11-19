@@ -101,6 +101,7 @@ go_library(
         "//pkg/config/zonepb",
         "//pkg/docs",
         "//pkg/featureflag",
+        "//pkg/fgdb/auditlog",
         "//pkg/gossip",
         "//pkg/inspectz",
         "//pkg/inspectz/inspectzpb",
