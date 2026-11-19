@@ -841,6 +841,13 @@ func TestLogic_feature_counts(
 	runLogicTest(t, "feature_counts")
 }
 
+func TestLogic_fgdb_audit(
+	t *testing.T,
+) {
+	defer leaktest.AfterTest(t)()
+	runLogicTest(t, "fgdb_audit")
+}
+
 func TestLogic_fk(
 	t *testing.T,
 ) {

@@ -1,0 +1,58 @@
+# LogicTest: local
+# PAR-210: registration, validation, and SQL behavior with the gate off.
+
+query T
+SELECT variable FROM [SHOW CLUSTER SETTINGS]
+WHERE variable IN ('fgdb.role_audit_log.enabled', 'fgdb.sql.log.user_audit', 'fgdb.sql.log.user_audit.reduced_config.enabled')
+ORDER BY variable
+----
+fgdb.role_audit_log.enabled
+fgdb.sql.log.user_audit
+fgdb.sql.log.user_audit.reduced_config.enabled
+
+query B
+SHOW CLUSTER SETTING fgdb.role_audit_log.enabled
+----
+false
+
+query B
+SHOW CLUSTER SETTING fgdb.sql.log.user_audit.reduced_config.enabled
+----
+false
+
+query B
+SELECT "fgdb.sql.log.user_audit" = '' FROM [SHOW CLUSTER SETTING fgdb.sql.log.user_audit]
+----
+true
+
+statement error unknown statement filter: "SELECT"
+SET CLUSTER SETTING fgdb.sql.log.user_audit = 'test_role SELECT'
+
+statement ok
+CREATE ROLE test_role
+
+statement ok
+GRANT test_role TO testuser
+
+statement ok
+SET CLUSTER SETTING fgdb.sql.log.user_audit = e'test_role ALL\nALL NONE'
+
+user testuser
+
+query I
+SELECT 210
+----
+210
+
+statement error only users with the MODIFYCLUSTERSETTING privilege are allowed to set cluster setting
+SET CLUSTER SETTING fgdb.role_audit_log.enabled = true
+
+user root
+
+statement ok
+RESET CLUSTER SETTING fgdb.sql.log.user_audit
+
+query B
+SHOW CLUSTER SETTING fgdb.role_audit_log.enabled
+----
+false
