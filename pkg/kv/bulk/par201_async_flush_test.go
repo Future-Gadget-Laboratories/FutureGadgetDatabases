@@ -157,6 +157,8 @@ func TestPAR201RangeFlushErrorNotSwallowed(t *testing.T) {
 	armed.Store(false)
 
 	require.Greater(t, failed.Load(), int32(0), "expected the request filter to fail at least one AddSSTable")
+	require.NoError(t, addErr, "Add must not see the async range-flush error; it surfaces at Flush")
+	require.ErrorContains(t, flushErr, injected.Error(), "Flush must report the injected async AddSSTable failure (PAR-201)")
 
 	got, scanErr := kvDB.Scan(ctx, key(0), key(8), 0)
 	require.NoError(t, scanErr)
