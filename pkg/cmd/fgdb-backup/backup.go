@@ -1591,11 +1591,11 @@ func minEffectiveTTL(databases []string, zones []zoneRow) (int, string) {
 			break
 		}
 	}
-	min, obj := lowestTTL(zones, !hasInheritedDatabase)
-	if min == 0 {
+	minVal, obj := lowestTTL(zones, !hasInheritedDatabase)
+	if minVal == 0 {
 		return rangeDefaultTTL(zones)
 	}
-	return min, obj
+	return minVal, obj
 }
 
 func isTargetLevel(level string) bool {
@@ -1608,22 +1608,22 @@ func isTargetLevel(level string) bool {
 }
 
 func lowestTTL(zones []zoneRow, hasTarget bool) (int, string) {
-	min := 0
+	minVal := 0
 	obj := ""
 	for _, z := range zones {
 		if !ttlCandidate(z, hasTarget) {
 			continue
 		}
-		if min != 0 && z.Effective >= min {
+		if minVal != 0 && z.Effective >= minVal {
 			continue
 		}
-		min = z.Effective
+		minVal = z.Effective
 		obj = z.Object
 		if obj == "" {
 			obj = z.Level
 		}
 	}
-	return min, obj
+	return minVal, obj
 }
 
 func ttlCandidate(z zoneRow, hasTarget bool) bool {

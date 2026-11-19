@@ -1,0 +1,485 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-10-20",
+  "source_sha": "2d2befea10288726b8da5654031a503acfb2b512",
+  "baseline": "CockroachDB v23.2-era self-hosted Enterprise observable capabilities",
+  "later_track": "Newer Enterprise capabilities; exact successor release pinned when a slice is scoped",
+  "inventory_complete": false,
+  "parity_claim": "none",
+  "spec_approval": "No feature specification is approved by this planning register",
+  "features": [
+    {
+      "id": "CORE-SQL",
+      "name": "PostgreSQL protocol and SQL transactions",
+      "track": "v23.2-baseline",
+      "fgdb_status": "inherited-needs-conformance",
+      "architecture_area": "pgwire / sql / kvcoord",
+      "source_ids": [
+        "FGDB-CORE"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/pgwire",
+        "pkg/kv/kvclient/kvcoord"
+      ],
+      "acceptance_summary": "Driver matrix; transaction retry and ambiguous outcome histories; catalog and error compatibility.",
+      "planned_slice": "P00",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Enterprise comparison includes shared core behavior; not every row is Enterprise-exclusive."
+    },
+    {
+      "id": "CORE-HA",
+      "name": "Per-range replication and failover",
+      "track": "v23.2-baseline",
+      "fgdb_status": "inherited-needs-conformance",
+      "architecture_area": "kvserver / storage",
+      "source_ids": [
+        "FGDB-CORE"
+      ],
+      "fgdb_evidence": [
+        "pkg/kv/kvserver",
+        "pkg/fgdbtest/scenarios/cluster"
+      ],
+      "acceptance_summary": "Majority/minority faults, restart, split/merge and durable data invariants on multiple nodes.",
+      "planned_slice": "P01",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": ""
+    },
+    {
+      "id": "CORE-TTL",
+      "name": "Row-level TTL",
+      "track": "v23.2-baseline",
+      "fgdb_status": "inherited-needs-conformance",
+      "architecture_area": "jobs / sql/ttl",
+      "source_ids": [
+        "CR-TTL"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/ttl/ttljob",
+        "pkg/sql/ttl/ttlschedule"
+      ],
+      "acceptance_summary": "Expiration, batching, restart, cancellation and no early deletion.",
+      "planned_slice": "P00",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Do not classify TTL as missing just because older comments call it CCL."
+    },
+    {
+      "id": "CORE-IMPORT",
+      "name": "SQL IMPORT data loading",
+      "track": "v23.2-baseline",
+      "fgdb_status": "inherited-partial-evidence",
+      "architecture_area": "sql/importer / jobs",
+      "source_ids": [
+        "FGDB-CORE"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/importer",
+        "PR #24 pinned-binary two-row CSV check"
+      ],
+      "acceptance_summary": "Type coverage, import failures, job re-adoption and exact restored values.",
+      "planned_slice": "B02",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "One successful CSV case is not the entire IMPORT contract."
+    },
+    {
+      "id": "B-FULL",
+      "name": "Full logical backup and restore",
+      "track": "v23.2-baseline",
+      "fgdb_status": "bolt-on-partial",
+      "architecture_area": "fgdb-backup",
+      "source_ids": [
+        "CR-BACKUP",
+        "FGDB-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "pkg/cmd/fgdb-backup"
+      ],
+      "acceptance_summary": "Exact-value/schema round trips; interrupted export; restore refuses before destructive work.",
+      "planned_slice": "B01",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Useful substitute; not native BACKUP/RESTORE SQL or Enterprise artifact compatibility."
+    },
+    {
+      "id": "B-NATIVE",
+      "name": "Native backup and restore SQL/job lifecycle",
+      "track": "v23.2-baseline",
+      "fgdb_status": "absent-gated",
+      "architecture_area": "sql planning / jobs / storage",
+      "source_ids": [
+        "CR-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/opaque.go",
+        "pkg/cmd/cockroach-oss/BUILD.bazel"
+      ],
+      "acceptance_summary": "Authorized SQL contract, durable progress, retries, cancel/resume and backup/restore conformance.",
+      "planned_slice": "N04",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Native job integration is an intermediate milestone; final native SQL semantics need separate acceptance."
+    },
+    {
+      "id": "B-INCR",
+      "name": "Incremental backup chains",
+      "track": "v23.2-baseline",
+      "fgdb_status": "not-implemented",
+      "architecture_area": "MVCC export / job progress",
+      "source_ids": [
+        "CR-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "docs/fgdb/roadmap.md"
+      ],
+      "acceptance_summary": "Changes, deletes, schema changes, chain validation, interrupted layers and bounded retention.",
+      "planned_slice": "P02",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Repeated full snapshots or updated_at polling are not equivalent."
+    },
+    {
+      "id": "B-PITR",
+      "name": "Revision-history point-in-time recovery",
+      "track": "v23.2-baseline",
+      "fgdb_status": "not-implemented",
+      "architecture_area": "MVCC / GC protection / restore",
+      "source_ids": [
+        "CR-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "docs/fgdb/roadmap.md"
+      ],
+      "acceptance_summary": "Restore specified times across writes/deletes/DDL; reject gaps and times outside retained history.",
+      "planned_slice": "P03",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": ""
+    },
+    {
+      "id": "B-SCHED",
+      "name": "Scheduled backups and retention",
+      "track": "v23.2-baseline",
+      "fgdb_status": "external-orchestration-candidate",
+      "architecture_area": "external scheduler then scheduledjobs",
+      "source_ids": [
+        "CR-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "pkg/cmd/fgdb-backup/lock.go",
+        "pkg/scheduledjobs"
+      ],
+      "acceptance_summary": "Overlap, retry, failover, timezone, secrets, protected chains and safe expiry.",
+      "planned_slice": "B03",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Existing CLI lock and old-copy pruning do not establish a native schedule service or backup-chain retention."
+    },
+    {
+      "id": "B-ENCRYPT",
+      "name": "Encrypted backup artifacts and key lifecycle",
+      "track": "v23.2-baseline",
+      "fgdb_status": "bolt-on-partial",
+      "architecture_area": "store adapters / key handling",
+      "source_ids": [
+        "CR-BACKUP",
+        "CR-ENCRYPT"
+      ],
+      "fgdb_evidence": [
+        "pkg/cmd/fgdb-backup/store_s3.go"
+      ],
+      "acceptance_summary": "Authenticated tamper detection, wrong-key refusal, recovery/rotation and no plaintext secrets.",
+      "planned_slice": "B04",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "S3 server-side encryption is present; client-side artifact encryption and passphrase/KMS semantics are separate gaps."
+    },
+    {
+      "id": "B-LOCALITY",
+      "name": "Locality-aware backup destinations",
+      "track": "v23.2-baseline",
+      "fgdb_status": "not-established",
+      "architecture_area": "distributed execution / placement",
+      "source_ids": [
+        "CR-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "pkg/cmd/fgdb-backup"
+      ],
+      "acceptance_summary": "Route execution and destination according to declared localities; measure failure behavior.",
+      "planned_slice": "P04",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "A single client writing S3 is not distributed locality-aware execution."
+    },
+    {
+      "id": "B-CLUSTER",
+      "name": "Whole-cluster operational recovery",
+      "track": "v23.2-baseline",
+      "fgdb_status": "logical-subset-only",
+      "architecture_area": "catalog / security / jobs / restore",
+      "source_ids": [
+        "CR-BACKUP",
+        "FGDB-BACKUP"
+      ],
+      "fgdb_evidence": [
+        "docs/fgdb/backup.md"
+      ],
+      "acceptance_summary": "Explicit scope for principals, privileges, schedules, settings and recovery exclusions.",
+      "planned_slice": "P04",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Current logical tool skips system state/passwords and treats some administrative replay as warnings."
+    },
+    {
+      "id": "C-CDC",
+      "name": "Durable changefeeds to external sinks",
+      "track": "v23.2-baseline",
+      "fgdb_status": "absent-from-oss-release",
+      "architecture_area": "rangefeed / jobs / SQL hooks",
+      "source_ids": [
+        "CR-CDC"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/rowexec/processors.go",
+        "pkg/sql/opaque.go"
+      ],
+      "acceptance_summary": "Initial snapshot plus changes/deletes, resume tokens, duplicates, ordering and schema events.",
+      "planned_slice": "P05",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": ""
+    },
+    {
+      "id": "C-FRONTIER",
+      "name": "Changefeed resolved progress and recovery",
+      "track": "v23.2-baseline",
+      "fgdb_status": "not-established",
+      "architecture_area": "rangefeed / progress tracking",
+      "source_ids": [
+        "CR-CDC"
+      ],
+      "fgdb_evidence": [
+        "pkg/kv/kvclient/rangefeed"
+      ],
+      "acceptance_summary": "No omitted changes across restart, splits and merges; declared ordering/checkpoint semantics.",
+      "planned_slice": "P06",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "An OSS rangefeed substrate is not a complete user-facing changefeed."
+    },
+    {
+      "id": "R-PCR",
+      "name": "Physical cluster replication and cutover",
+      "track": "v23.2-baseline",
+      "fgdb_status": "hooks-without-implementation",
+      "architecture_area": "repstream / tenant / jobs / storage",
+      "source_ids": [
+        "CR-PCR"
+      ],
+      "fgdb_evidence": [
+        "pkg/repstream/api.go"
+      ],
+      "acceptance_summary": "Consistent bootstrap, catchup, cutover, loss budget, failback and target crash recovery.",
+      "planned_slice": "P07",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "v23.2-era capability; later GA status must not be backdated. #24 fixes hook dispatch only."
+    },
+    {
+      "id": "G-REGIONS",
+      "name": "Multi-region table locality and survival policies",
+      "track": "v23.2-baseline",
+      "fgdb_status": "scope-unverified",
+      "architecture_area": "catalog / spanconfig / allocator",
+      "source_ids": [
+        "CR-MULTIREGION"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/region_util.go",
+        "pkg/spanconfig",
+        "pkg/kv/kvserver"
+      ],
+      "acceptance_summary": "Observable region/locality DDL; placement; declared survival and residency under region faults.",
+      "planned_slice": "P08",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Raft's existence and node locality flags do not establish Enterprise multi-region policy semantics."
+    },
+    {
+      "id": "G-FOLLOWER",
+      "name": "Follower-read and bounded-staleness behavior",
+      "track": "v23.2-baseline",
+      "fgdb_status": "scope-unverified",
+      "architecture_area": "closed timestamps / KV routing",
+      "source_ids": [
+        "CR-FOLLOWER"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/sem/builtins/builtinconstants/constants.go",
+        "pkg/kv/kvclient/kvcoord"
+      ],
+      "acceptance_summary": "Actual serving replica, timestamp safety, failover and latency evidence.",
+      "planned_slice": "P08",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Historical reads alone do not prove reads were served by a follower."
+    },
+    {
+      "id": "S-STORE",
+      "name": "Native store encryption and rotation",
+      "track": "v23.2-baseline",
+      "fgdb_status": "not-established",
+      "architecture_area": "engine file/key lifecycle",
+      "source_ids": [
+        "CR-ENCRYPT"
+      ],
+      "fgdb_evidence": [
+        "pkg/storage"
+      ],
+      "acceptance_summary": "Crash-safe rotation, restart, lost-key behavior, logs/temp/WAL coverage and recovery.",
+      "planned_slice": "P09",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "TLS, S3 SSE and filesystem encryption are different guarantees."
+    },
+    {
+      "id": "S-AUDIT",
+      "name": "Role-based SQL audit policy",
+      "track": "v23.2-baseline",
+      "fgdb_status": "oss-noop-hook",
+      "architecture_area": "sql/auditlogging / auth",
+      "source_ids": [
+        "FGDB-AUDIT"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/auditlogging/audit_log.go"
+      ],
+      "acceptance_summary": "Policy matching, role changes, redaction, failure policy and tamper-aware delivery.",
+      "planned_slice": "P10",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Existing structured event logs are not equivalent to role-scoped SQL audit policies."
+    },
+    {
+      "id": "S-SSO",
+      "name": "SQL JWT/enterprise identity integration",
+      "track": "v23.2-baseline",
+      "fgdb_status": "scope-unverified",
+      "architecture_area": "pgwire authentication / identity",
+      "source_ids": [
+        "CR-SSO"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql/pgwire/auth_methods.go"
+      ],
+      "acceptance_summary": "Identity/key rotation, expiry, issuer/audience, tenant/role mapping and refusal tests.",
+      "planned_slice": "P10",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Inventory TLS/password/certificate support before treating all authentication as missing."
+    },
+    {
+      "id": "SQL-COMPAT",
+      "name": "Procedures, UDFs and isolation-level coverage",
+      "track": "v23.2-baseline",
+      "fgdb_status": "inventory-required",
+      "architecture_area": "parser / planner / catalog / execution",
+      "source_ids": [
+        "CR-232-LAUNCH"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql",
+        "pkg/sql/sem/tree"
+      ],
+      "acceptance_summary": "Construct-by-construct SQL and isolation tests; annotate inherited/unsupported cases.",
+      "planned_slice": "P11",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Do not assume all PL/pgSQL behavior is absent or all 23.2 preview behavior is complete."
+    },
+    {
+      "id": "OBS",
+      "name": "Diagnostics and workload observability",
+      "track": "v23.2-baseline",
+      "fgdb_status": "inherited-needs-gap-inventory",
+      "architecture_area": "SQL stats / tracing / metrics / UI",
+      "source_ids": [
+        "FGDB-CORE"
+      ],
+      "fgdb_evidence": [
+        "pkg/util/metric",
+        "pkg/util/tracing",
+        "pkg/ui"
+      ],
+      "acceptance_summary": "Compare named metrics, labels, privilege, retention and overhead requirements.",
+      "planned_slice": "P12",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Separate self-hosted software behavior from vendor-operated monitoring services."
+    },
+    {
+      "id": "NEW-LDR",
+      "name": "Logical cross-cluster replication",
+      "track": "newer-enterprise",
+      "fgdb_status": "not-established",
+      "architecture_area": "CDC / apply / schema / conflicts",
+      "source_ids": [
+        "CR-LDR"
+      ],
+      "fgdb_evidence": [
+        "pkg/repstream/api.go"
+      ],
+      "acceptance_summary": "Bootstrap/change stream, deletes, loop prevention, conflict policy and convergence.",
+      "planned_slice": "L01",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Later capability, separate from v23.2 physical replication and not a baseline completion dependency."
+    },
+    {
+      "id": "NEW-RLS",
+      "name": "Native row-level security policies",
+      "track": "newer-enterprise",
+      "fgdb_status": "inventory-required",
+      "architecture_area": "authorization / optimizer / execution",
+      "source_ids": [
+        "CR-RLS",
+        "PG-RLS"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql"
+      ],
+      "acceptance_summary": "Default deny, role policy combinations, writes, views, prepared plans, backup and CDC boundaries.",
+      "planned_slice": "L02",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "A client-side filtering proxy is not native security parity."
+    },
+    {
+      "id": "NEW-VECTOR",
+      "name": "Vector type and distributed similarity indexes",
+      "track": "newer-enterprise",
+      "fgdb_status": "inventory-required",
+      "architecture_area": "types / optimizer / indexes / KV",
+      "source_ids": [
+        "CR-VECTOR"
+      ],
+      "fgdb_evidence": [
+        "pkg/sql"
+      ],
+      "acceptance_summary": "Exact distance oracle, dimensions/types, recall@k, concurrent mutations, faults and upgrades.",
+      "planned_slice": "L03",
+      "verification": "not_verified_for_parity",
+      "spec_status": "requires_scoped_review",
+      "notes": "Separate exact search, approximate indexes, pgvector API coverage and distributed performance."
+    }
+  ],
+  "change_log": [
+    {
+      "date": "2026-10-20",
+      "change": "Initial public-documentation and permitted-source comparison; current upstream licensing FAQ is unsuitable as a historical feature-entitlement snapshot; no parity row promoted."
+    }
+  ]
+}

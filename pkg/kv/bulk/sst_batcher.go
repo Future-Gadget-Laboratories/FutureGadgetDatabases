@@ -237,7 +237,9 @@ func MakeSSTBatcher(
 	}
 	b.mu.lastFlush = timeutil.Now()
 	b.mu.tracingSpan = tracing.SpanFromContext(ctx)
-	b.Reset(ctx)
+	if err := b.Reset(ctx); err != nil {
+		return nil, err
+	}
 	return b, nil
 }
 
@@ -277,7 +279,9 @@ func MakeStreamSSTBatcher(
 	b.mu.lastFlush = timeutil.Now()
 	b.mu.tracingSpan = tracing.SpanFromContext(ctx)
 	b.SetOnFlush(onFlush)
-	b.Reset(ctx)
+	if err := b.Reset(ctx); err != nil {
+		return nil, err
+	}
 	return b, nil
 }
 
@@ -301,7 +305,9 @@ func MakeTestingSSTBatcher(
 		limiter:        sendLimiter,
 		priority:       admissionpb.BulkNormalPri,
 	}
-	b.Reset(ctx)
+	if err := b.Reset(ctx); err != nil {
+		return nil, err
+	}
 	return b, nil
 }
 
@@ -393,10 +399,12 @@ func (b *SSTBatcher) AddMVCCKey(ctx context.Context, key storage.MVCCKey, value 
 }
 
 // Reset clears all state in the batcher and prepares it for reuse.
-func (b *SSTBatcher) Reset(ctx context.Context) {
-	if err := b.asyncAddSSTs.Wait(); err != nil {
-		log.Warningf(ctx, "closing with flushes in-progress encountered an error: %v", err)
-	}
+// If an asynchronous range-boundary flush is in flight, Reset waits for it
+// and returns any ingest error. The in-memory SST is always cleared so the
+// batcher can be reused after the caller handles the error. Callers must
+// treat a non-nil error as a failed ingest: the flushed keys may be missing.
+func (b *SSTBatcher) Reset(ctx context.Context) error {
+	waitErr := b.asyncAddSSTs.Wait()
 	b.asyncAddSSTs = ctxgroup.Group{}
 
 	b.sstWriter.Close()
@@ -428,6 +436,7 @@ func (b *SSTBatcher) Reset(ctx context.Context) {
 	if b.mu.totalStats.SendWaitByStore == nil {
 		b.mu.totalStats.SendWaitByStore = make(map[roachpb.StoreID]time.Duration)
 	}
+	return waitErr
 }
 
 const (
@@ -462,8 +471,7 @@ func (b *SSTBatcher) flushIfNeeded(ctx context.Context, nextKey roachpb.Key) err
 		if err := b.doFlush(ctx, rangeFlush); err != nil {
 			return err
 		}
-		b.Reset(ctx)
-		return nil
+		return b.Reset(ctx)
 	}
 
 	if b.sstWriter.DataSize >= ingestFileSize(b.settings) {
@@ -487,8 +495,7 @@ func (b *SSTBatcher) flushIfNeeded(ctx context.Context, nextKey roachpb.Key) err
 		if err := b.doFlush(ctx, sizeFlush); err != nil {
 			return err
 		}
-		b.Reset(ctx)
-		return nil
+		return b.Reset(ctx)
 	}
 	return nil
 }
