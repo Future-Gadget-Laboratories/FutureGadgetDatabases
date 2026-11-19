@@ -19,7 +19,8 @@ go_library(
 
 go_test(
     name = "pgcrypto_test",
-    srcs = ["cipher_test.go"],
+    srcs = ["cipher_test.go", "cipher_vectors_test.go"],
+    embedsrcs = ["conformance/vectors.tsv"],
     embed = [":pgcrypto"],
     deps = [
         "//pkg/settings/cluster",
