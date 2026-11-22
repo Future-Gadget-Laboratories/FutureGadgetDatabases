@@ -49,11 +49,11 @@ Use these proposed rules to review every FGDb feature PR. Copy the checklist int
 
 ## Gated or off-by-default features
 
-**FGDB-GATE-1.** Put new FGDb database features behind a `SystemVisible` cluster setting named `fgdb.<feature>.enabled`, default `false`, using `settings.RegisterBoolSetting`. Check the setting before FGDb-specific work. When off, take the existing OSS path with the same results, errors, SQLSTATE, and job state. Test both states and follow the proposed release-compatibility and rollback requirements for activation.
+**FGDB-GATE-1.** Put new FGDb features behind a boolean setting that defaults to `false`. Use `fgdb.<feature>.enabled` (prefer `gate.SettingName`) unless an approved spec fixes another name; cite that spec when it does. Match the setting class to the layer where the feature runs: use `ApplicationLevel` for per-tenant SQL features and `SystemVisible` or `SystemOnly` for KV/storage features. Check the setting before FGDb-specific work. When off, take the existing OSS path with the same results, errors, SQLSTATE, and job state. Test both states. Release-compatibility and activation checks remain proposed, where the feature changes persisted state or wire format.
 
 **Rationale.** Existing workloads retain OSS behavior until an operator enables the feature on a compatible cluster.
 
-**How it is checked.** Review the setting and entry points. Run gate-off parity and gate-on conformance tests, including activation checks where applicable. See [version gating](version-gating.md) and [gate unit tests](../../pkg/fgdb/gate/gate_test.go).
+**How it is checked.** Review the setting name and class against the approved spec and feature layer, and inspect the gated entry points. Run gate-off parity and gate-on conformance tests. For features that change persisted state or wire format, include the proposed release-compatibility and activation checks. See [version gating](version-gating.md) and [gate unit tests](../../pkg/fgdb/gate/gate_test.go).
 
 ## Cleanroom/licensing
 
