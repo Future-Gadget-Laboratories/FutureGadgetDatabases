@@ -8,6 +8,8 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 
+// Package pgcrypto provides the SQL cipher builtin hooks.
+// See docs/fgdb/features/pgcrypto.md.
 package pgcrypto
 
 import (

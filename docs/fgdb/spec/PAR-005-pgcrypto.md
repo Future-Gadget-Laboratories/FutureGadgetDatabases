@@ -3,6 +3,8 @@
 
 # PAR-005 — pgcrypto-compatible builtins on `cockroach-oss`
 
+See the [pgcrypto cipher feature documentation](../features/pgcrypto.md) for the implementation and test evidence.
+
 | Field | Value |
 | --- | --- |
 | Spec id | PAR-005 (pgcrypto lane) |
