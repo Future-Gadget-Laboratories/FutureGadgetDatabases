@@ -15,6 +15,7 @@ This chart tracks FGDb additions and proposed work alongside a practical introdu
 | Strict CCL checks by default | tentative | [#38](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/38) |
 | EXPORT capability checks | tentative | [#42](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/42) |
 | pgcrypto raw encrypt/decrypt (`feature.pgcrypto_ciphers.enabled`, default off) | tentative | [#43](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/43) |
+| Role-based SQL audit logging | tentative (gated, default off) | [Feature guide](features/role-audit-log.md), [PAR-210](spec/PAR-210-role-audit-log.md) |
 | Workload IMPORT loader | planned | [#41](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/41) |
 | Version-gating and feature-flag contract | planned | [#33](https://github.com/Future-Gadget-Laboratories/FutureGadgetDatabases/pull/33) |
 
