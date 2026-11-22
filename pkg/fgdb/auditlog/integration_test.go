@@ -31,6 +31,12 @@ import (
 	"github.com/cockroachdb/redact"
 )
 
+const (
+	testRole         = "test_role"
+	noAuditRole      = ""
+	emptyAuditConfig = ""
+)
+
 func TestMain(m *testing.M) {
 	securityassets.SetLoader(securitytest.EmbeddedAssets)
 	serverutils.InitTestServerFactory(server.TestServerFactory)
@@ -56,20 +62,20 @@ func TestRoleAuditEvents(t *testing.T) {
 	t.Cleanup(log.InterceptWith(ctx, spy))
 
 	session := newAuditSession(t, ctx, s.ApplicationLayer())
-	t.Run("gate off", func(t *testing.T) { checkRoleAuditEvents(t, session, spy, "") })
+	t.Run("gate off", func(t *testing.T) { checkRoleAuditEvents(t, session, spy, noAuditRole) })
 	setAuditEnabled(t, setup, st, true)
-	t.Run("enabled role event", func(t *testing.T) { checkRoleAuditEvents(t, session, spy, "test_role") })
+	t.Run("enabled role event", func(t *testing.T) { checkRoleAuditEvents(t, session, spy, testRole) })
 	t.Run("live config NONE", func(t *testing.T) {
 		setAuditConfig(t, setup, execCfg.AuditConfig, "test_role NONE\nALL ALL")
-		checkRoleAuditEvents(t, session, spy, "")
+		checkRoleAuditEvents(t, session, spy, noAuditRole)
 	})
 	t.Run("live config ALL", func(t *testing.T) {
 		setAuditConfig(t, setup, execCfg.AuditConfig, "ALL ALL\ntest_role NONE")
 		checkRoleAuditEvents(t, session, spy, "all")
 	})
 	t.Run("enabled empty", func(t *testing.T) {
-		setAuditConfig(t, setup, execCfg.AuditConfig, "")
-		checkRoleAuditEvents(t, session, spy, "")
+		setAuditConfig(t, setup, execCfg.AuditConfig, emptyAuditConfig)
+		checkRoleAuditEvents(t, session, spy, noAuditRole)
 	})
 	t.Run("reduced config caches per session", func(t *testing.T) {
 		checkReducedAuditConfigCachesPerSession(t, ctx, s.ApplicationLayer(), setup, spy)
@@ -155,7 +161,7 @@ func checkRoleAuditEvents(
 	session.CheckQueryResults(t, "SELECT 210", [][]string{{"210"}})
 	log.FlushAllSync()
 	events := spy.GetLogs(logpb.Channel_SENSITIVE_ACCESS)[before:]
-	if wantRole == "" {
+	if wantRole == noAuditRole {
 		if len(events) != 0 {
 			t.Fatalf("unexpected audit events: %v", events)
 		}
@@ -188,17 +194,17 @@ func checkReducedAuditConfigCachesPerSession(
 		return nil
 	})
 	cached := newAuditSession(t, ctx, app)
-	checkRoleAuditEvents(t, cached, spy, "test_role")
+	checkRoleAuditEvents(t, cached, spy, testRole)
 	setAuditConfig(t, setup, execCfg.AuditConfig, "ALL NONE")
-	checkRoleAuditEvents(t, cached, spy, "test_role")
-	setAuditConfig(t, setup, execCfg.AuditConfig, "")
-	checkRoleAuditEvents(t, cached, spy, "")
+	checkRoleAuditEvents(t, cached, spy, testRole)
+	setAuditConfig(t, setup, execCfg.AuditConfig, emptyAuditConfig)
+	checkRoleAuditEvents(t, cached, spy, noAuditRole)
 	setAuditConfig(t, setup, execCfg.AuditConfig, "ALL NONE")
 	excluded := newAuditSession(t, ctx, app)
-	checkRoleAuditEvents(t, excluded, spy, "")
+	checkRoleAuditEvents(t, excluded, spy, noAuditRole)
 	setAuditConfig(t, setup, execCfg.AuditConfig, "ALL ALL")
-	checkRoleAuditEvents(t, excluded, spy, "")
+	checkRoleAuditEvents(t, excluded, spy, noAuditRole)
 	checkRoleAuditEvents(t, newAuditSession(t, ctx, app), spy, "all")
 	setAuditEnabled(t, setup, st, false)
-	checkRoleAuditEvents(t, cached, spy, "")
+	checkRoleAuditEvents(t, cached, spy, noAuditRole)
 }

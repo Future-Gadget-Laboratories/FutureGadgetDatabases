@@ -15,6 +15,14 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 )
 
+const (
+	testRole         = "test_role"
+	testUser         = "audit_user"
+	allRole          = "all"
+	auditAllConfig   = "ALL ALL"
+	emptyAuditConfig = ""
+)
+
 func TestSettingNamesAndDefaults(t *testing.T) {
 	st := cluster.MakeTestingClusterSettings()
 	for _, tc := range []struct {
@@ -22,7 +30,7 @@ func TestSettingNamesAndDefaults(t *testing.T) {
 		value string
 	}{
 		{"fgdb.role_audit_log.enabled", "false"},
-		{"fgdb.sql.log.user_audit", ""},
+		{"fgdb.sql.log.user_audit", emptyAuditConfig},
 		{"fgdb.sql.log.user_audit.reduced_config.enabled", "false"},
 	} {
 		t.Run(string(tc.name), func(t *testing.T) {
@@ -48,9 +56,9 @@ func TestValidation(t *testing.T) {
 		name, config string
 		valid        bool
 	}{
-		{"empty", "", true},
+		{"empty", emptyAuditConfig, true},
 		{"ordered rows", "test_role ALL\nALL NONE", true},
-		{"missing filter", "test_role", false},
+		{"missing filter", testRole, false},
 		{"invalid filter", "test_role SELECT", false},
 		{"extra field", "test_role ALL extra", false},
 		{"duplicate role", "test_role ALL\ntest_role NONE", false},
@@ -74,10 +82,10 @@ func TestHookSemantics(t *testing.T) {
 		config string
 		want   bool
 	}{
-		{"disabled empty", false, "", false},
-		{"disabled configured", false, "ALL ALL", false},
-		{"enabled empty", true, "", false},
-		{"enabled configured", true, "ALL ALL", true},
+		{"disabled empty", false, emptyAuditConfig, false},
+		{"disabled configured", false, auditAllConfig, false},
+		{"enabled empty", true, emptyAuditConfig, false},
+		{"enabled configured", true, auditAllConfig, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := cluster.MakeTestingClusterSettings()
@@ -102,13 +110,13 @@ func TestConfigureAndOnChange(t *testing.T) {
 	userAudit.Override(ctx, &st.SV, "test_role ALL\nALL NONE")
 	acl := &auditlogging.AuditConfigLock{Config: auditlogging.EmptyAuditConfig()}
 	auditlogging.ConfigureRoleBasedAuditClusterSettings(ctx, acl, st, &st.SV)
-	role := username.MakeSQLUsernameFromPreNormalizedString("test_role")
-	user := username.MakeSQLUsernameFromPreNormalizedString("audit_user")
+	role := username.MakeSQLUsernameFromPreNormalizedString(testRole)
+	user := username.MakeSQLUsernameFromPreNormalizedString(testUser)
 	roles := map[username.SQLUsername]bool{role: false}
-	assertMatch(t, acl, roles, user, "test_role", true)
+	assertMatch(t, acl, roles, user, testRole, true)
 	userAudit.Override(ctx, &st.SV, "ALL NONE")
-	assertMatch(t, acl, roles, user, "all", false)
-	userAudit.Override(ctx, &st.SV, "")
+	assertMatch(t, acl, roles, user, allRole, false)
+	userAudit.Override(ctx, &st.SV, emptyAuditConfig)
 	if got := acl.GetMatchingAuditSetting(roles, user); got != nil {
 		t.Fatalf("empty config matched %v", got)
 	}
@@ -119,7 +127,7 @@ func TestBadRuntimeConfigKeepsPrevious(t *testing.T) {
 	// Exercise the runtime application boundary directly: settings validation
 	// normally prevents an invalid value from reaching the change callback.
 	acl.Lock()
-	if err := applyConfig(acl, "ALL ALL"); err != nil {
+	if err := applyConfig(acl, auditAllConfig); err != nil {
 		acl.Unlock()
 		t.Fatal(err)
 	}
@@ -133,20 +141,20 @@ func TestBadRuntimeConfigKeepsPrevious(t *testing.T) {
 	if !retained {
 		t.Fatal("invalid runtime config replaced previous configuration")
 	}
-	assertMatch(t, acl, nil, username.RootUserName(), "all", true)
+	assertMatch(t, acl, nil, username.RootUserName(), allRole, true)
 }
 
 func TestMatchingRules(t *testing.T) {
-	user := username.MakeSQLUsernameFromPreNormalizedString("audit_user")
-	role := username.MakeSQLUsernameFromPreNormalizedString("test_role")
+	user := username.MakeSQLUsernameFromPreNormalizedString(testUser)
+	role := username.MakeSQLUsernameFromPreNormalizedString(testRole)
 	for _, tc := range []struct {
 		name, config, role string
 		include            bool
 	}{
-		{"first match wins", "test_role NONE\naudit_user ALL\nALL ALL", "test_role", false},
-		{"username first", "audit_user ALL\ntest_role NONE", "audit_user", true},
-		{"ALL role row", "ALL ALL\ntest_role NONE", "all", true},
-		{"NONE filter", "ALL NONE", "all", false},
+		{"first match wins", "test_role NONE\naudit_user ALL\nALL ALL", testRole, false},
+		{"username first", "audit_user ALL\ntest_role NONE", testUser, true},
+		{"ALL role row", "ALL ALL\ntest_role NONE", allRole, true},
+		{"NONE filter", "ALL NONE", allRole, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := cluster.MakeTestingClusterSettings()

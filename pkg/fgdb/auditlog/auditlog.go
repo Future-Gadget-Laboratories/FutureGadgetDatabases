@@ -3,6 +3,7 @@
 // that can be found in the LICENSE file.
 
 // Package auditlog installs FGDb's gated role-based SQL audit settings.
+// See docs/fgdb/features/role-audit-log.md.
 package auditlog
 
 import (
@@ -16,6 +17,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 )
 
+// See docs/fgdb/features/role-audit-log.md.
 var enabled = func() *settings.BoolSetting {
 	name, err := gate.SettingName("role_audit_log")
 	if err != nil {
@@ -25,6 +27,7 @@ var enabled = func() *settings.BoolSetting {
 		"enable FGDb role-based SQL audit logging", false, settings.WithPublic)
 }()
 
+// See docs/fgdb/features/role-audit-log.md.
 var userAudit = settings.RegisterStringSetting(
 	settings.ApplicationLevel, "fgdb.sql.log.user_audit",
 	"ordered user or role and ALL/NONE statement filters for FGDb SQL audit logging", "",
@@ -35,6 +38,7 @@ var userAudit = settings.RegisterStringSetting(
 	}),
 )
 
+// See docs/fgdb/features/role-audit-log.md.
 var reducedConfig = settings.RegisterBoolSetting(
 	settings.ApplicationLevel, "fgdb.sql.log.user_audit.reduced_config.enabled",
 	"cache the matching FGDb audit rule at the first audited SQL event per session", false,

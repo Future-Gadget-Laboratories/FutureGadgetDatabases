@@ -9,6 +9,8 @@ and the allowed OSS tree. Maintainer review and build-host conformance remain
 pending; this document records the supplied requirements, not an independently
 approved expansion of their scope. See [CLEANROOM.md](../CLEANROOM.md).
 
+See the [role-based SQL audit logging feature guide](../features/role-audit-log.md) for implementation details and test evidence.
+
 ## Settings and gate
 
 All three settings are public application-level settings, listed by
