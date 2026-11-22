@@ -12,6 +12,7 @@ import (
 // featurePgcryptoCiphersEnabled gates the encrypt, encrypt_iv, decrypt and
 // decrypt_iv builtins. It is read on every call so that changing it takes
 // effect without a restart.
+// See docs/fgdb/features/pgcrypto.md.
 var featurePgcryptoCiphersEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"feature.pgcrypto_ciphers.enabled",

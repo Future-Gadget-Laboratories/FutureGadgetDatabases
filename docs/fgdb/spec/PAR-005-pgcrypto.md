@@ -3,6 +3,8 @@
 
 # PAR-005 — pgcrypto-compatible builtins on `cockroach-oss`
 
+See the [pgcrypto cipher feature documentation](../features/pgcrypto.md) for the implementation and test evidence.
+
 | Field | Value |
 | --- | --- |
 | Spec id | PAR-005 (pgcrypto lane) |
@@ -114,7 +116,7 @@ GOCACHE=/tmp/gocache-par005 GOTMPDIR=/tmp \
 
 (`local-mixed-23.1` bootstraps cluster version 23.1 but still uses this OSS binary and the same `pgcrypto_builtins` file.)
 
-**TBD oracle gate.** The additional success-oracle source and approval are pending. Before implementation or handoff, the maintainer must approve its provenance and the aligned and unaligned `pad:none` vectors for both directions and `_iv` variants. Record the source, version/distribution, approver, approval date and approval reference in a versioned `fgdb/test/conformance/par005-pgcrypto/README.md`, alongside reproducible inputs and captured results. The gate remains open until the source, approval record and vectors exist.
+**TBD oracle gate.** The additional success-oracle source and approval are pending. Before implementation or handoff, the maintainer must approve its provenance and the aligned and unaligned `pad:none` vectors for both directions and `_iv` variants. Record the source, version/distribution, approver, approval date and approval reference in a versioned `fgdb/test/conformance/par005-pgcrypto/README.md`, alongside reproducible inputs and captured results. The gate remains open until the source, approval record and vectors exist. The approved OpenSSL-based cipher success vectors and remaining proposed gates are recorded in [`pgcrypto cipher conformance`](../../../pkg/sql/sem/builtins/pgcrypto/conformance/README.md).
 
 **Conformance (oracle on approved success oracle).**
 

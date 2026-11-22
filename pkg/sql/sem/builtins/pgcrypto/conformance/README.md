@@ -2,43 +2,34 @@
 
 Licensed under the Apache License, Version 2.0. See licenses/APL.txt. -->
 
-# pgcrypto cipher conformance vectors: PENDING
+# pgcrypto cipher conformance vectors
 
-**Status: PENDING. Approved success oracle captures have not been recorded.**
+**Status: RECORDED and APPROVED (D41, Vincent, 2026-11-18 8:43 PM MT); default stays OFF.**
 
-Stock CockroachDB v23.2.15 OSS returns the CCL-required error for these
-builtins, so it cannot provide the flag-on success oracle. The flag-off
-behavior is the behavior checked against stock. Success vectors currently use
-NIST SP 800-38A; captures from an approved success oracle are pending. PAR-005
-requires those captures and maintainer approval before handoff. The cipher
-setting defaults to off pending those captures and approval.
+`vectors.tsv` records deterministic AES-CBC known-answer inputs and outputs for
+this implementation. Regenerate it from this directory with
+`./gen-vectors.sh`; the script uses fixed inputs and the OpenSSL CLI only for
+cipher operations. Recorded oracle version: OpenSSL 3.0.13 30 Jan 2024
+(`OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)`).
 
-The implementation and spec use an all-zero IV for `encrypt` and `decrypt`
-without `_iv`; this behavior awaits confirmation by an approved success oracle.
-Encryption is deterministic and not semantically secure; use `encrypt_iv` with
-a random IV instead.
+| Source | Version | Date | Use / regeneration |
+| --- | --- | --- | --- |
+| NIST SP 800-38A, F.2 | SP 800-38A | 2001 | Existing NIST known-answer tests in `cipher_test.go`; AES-CBC behavior reference. |
+| OpenSSL CLI | 3.0.13 | 2024-01-30 | Independent AES-CBC cipher oracle; `./gen-vectors.sh` regenerates `vectors.tsv`. |
+| PostgreSQL pgcrypto documentation | Current online docs | accessed 2026-11-18 | Semantics reference: [Raw Encryption Functions](https://www.postgresql.org/docs/current/pgcrypto.html#PGCRYPTO-RAW-ENCRYPTION-FUNCTIONS). |
+| Vincent D41 decision | approval | 2026-11-18 8:43 PM MT | Vector set approved; default remains off. |
 
-What is in place instead:
+The TSV covers AES-128/192/256 with PKCS padding and `pad:none`, supported type
+spellings, PKCS plaintext lengths 0/1/15/16/17/32, aligned unpadded lengths
+16/32, encrypt/decrypt round trips, normalized 5/20/30-byte keys, short/exact/
+long IVs, zero-IV equivalence, invalid type, key over 32 bytes, and unaligned
+`pad:none` failure. Error text is taken from `cipher.go`, not an error oracle.
 
-- `cipher_test.go` checks AES-CBC without padding against the public NIST
-  SP 800-38A F.2 vectors (AES-128, AES-192, AES-256), plus round-trip,
-  padding, key-length and IV-length checks.
-- `pkg/sql/logictest/testdata/logic_test/pgcrypto_builtins` (`cipher_builtins`
-  subtest) checks one NIST vector, round-trips, zero-IV equivalence, and the
-  cipher error cases. The flag-on error texts come from the implementation,
-  not from an oracle capture. The `3node-tenant-default-configs` configurations
-  skip the flag-on cases because their tenant settings cannot be changed with
-  these SQL statements; they exercise the default flag-off checks.
+PostgreSQL documents IV clipping/zero-padding, the type grammar with default
+CBC/PKCS behavior, and zero IV for calls without an IV. The implementation's
+key zero-padding is an implementation-specific behavior not established by the
+cited PostgreSQL documentation.
 
-Still to do with an approved success oracle:
-
-1. Record `encrypt`/`decrypt` and `encrypt_iv`/`decrypt_iv` outputs for the
-   supported type strings and key lengths.
-2. Record SQLSTATE and message for bad type, bad key length, and `pad:none`
-   with unaligned data, then compare them with the messages in `cipher.go`.
-3. Confirm whether the oracle `encrypt` is deterministic (the implementation uses a
-   zero IV, so it is deterministic and keeps `Immutable`).
-4. Confirm key zero-padding and over-length key behaviour, and IV handling for
-   IVs shorter than one block.
-
-Record the provenance of each oracle capture as required by PAR-005.
+Still **Proposed, pending**: parity of cipher failure SQLSTATE/messages against
+a stock PostgreSQL server, and any default-setting flip. No PostgreSQL server
+was used as an oracle. The setting remains `false` by default.
