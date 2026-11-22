@@ -99,8 +99,12 @@ function render(data) {
   // Add synthetic client numbers
   const tag2ClientId = {}
   // `tags` is a collection of strings, so we do want to sort lexicographically
-  // eslint-disable-next-line unicorn/require-array-sort-compare
-  const sortedTags = [...tags].toSorted()
+  const sortedTags = [...tags].toSorted((a, b) => {
+    if (a === b) {
+      return 0
+    }
+    return a < b ? -1 : 1
+  })
   for (const tag of sortedTags) {
     maxClient += 1
     tag2ClientId[tag] = maxClient

@@ -21,6 +21,8 @@ These pages describe FutureGadgetDatabases. The product brief that you can paste
 | [backup.md](backup.md) | Logical backup and restore to a directory or S3 |
 | [backup-config.md](backup-config.md) | Backup configuration file and flags |
 | [contributing.md](contributing.md) | A first evening on the project |
+| [CODING-RULES.md](CODING-RULES.md) | Proposed coding rules and feature PR checklist |
+| [features/README.md](features/README.md) | Feature documentation index and template |
 | [security.md](security.md) | How to report a vulnerability |
 | [roadmap.md](roadmap.md) | v23.2.15 pin, then cleanroom work, then naming |
 | [spec/PAR-004-benchmark-harness.md](spec/PAR-004-benchmark-harness.md) | Proposed benchmark harness, result schema, and baseline gates |
