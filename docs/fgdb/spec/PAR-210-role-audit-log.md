@@ -20,7 +20,7 @@ through the normal cluster-setting privileges.
 | Setting | Type | Default | Behavior |
 | --- | --- | --- | --- |
 | `fgdb.role_audit_log.enabled` | boolean | `false` | Enables this FGDb feature when the configuration string is also nonempty. |
-| `fgdb.sql.log.user_audit` | string | empty | Ordered, newline-separated `USER/ROLE STATEMENT_FILTER` rows. Invalid input is rejected by `SET CLUSTER SETTING` using the existing OSS parser. |
+| `fgdb.sql.log.user_audit` | string | empty | Ordered, newline-separated `USER/ROLE STATEMENT_FILTER` rows. Setting validation and runtime loading reject values over 64 KiB or 1,000 non-empty rows with SQLSTATE `53400`. The existing OSS parser validates values within both limits. |
 | `fgdb.sql.log.user_audit.reduced_config.enabled` | boolean | `false` | Caches the matching rule once per session, at its first eligible SQL audit event. |
 
 With the gate off, SQL execution retains its OSS behavior and emits no

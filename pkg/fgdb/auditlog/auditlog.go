@@ -8,13 +8,21 @@ package auditlog
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/fgdb/gate"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/auditlogging"
+	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
+	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
+)
+
+const (
+	maxUserAuditConfigBytes = 64 << 10
+	maxUserAuditConfigRows  = 1000
 )
 
 // See docs/fgdb/features/role-audit-log.md.
@@ -33,7 +41,7 @@ var userAudit = settings.RegisterStringSetting(
 	"ordered user or role and ALL/NONE statement filters for FGDb SQL audit logging", "",
 	settings.WithPublic,
 	settings.WithValidateString(func(_ *settings.Values, value string) error {
-		_, err := auditlogging.Parse(value)
+		_, err := parseUserAuditConfig(value)
 		return err
 	}),
 )
@@ -78,10 +86,33 @@ func configure(
 // applyConfig replaces only successfully parsed configurations. The caller must
 // hold acl's write lock, including while obtaining the current setting value.
 func applyConfig(acl *auditlogging.AuditConfigLock, value string) error {
-	config, err := auditlogging.Parse(value)
+	config, err := parseUserAuditConfig(value)
 	if err != nil {
 		return err
 	}
 	acl.Config = config
 	return nil
+}
+
+func parseUserAuditConfig(value string) (*auditlogging.AuditConfig, error) {
+	if len(value) > maxUserAuditConfigBytes {
+		return nil, pgerror.Newf(pgcode.ConfigurationLimitExceeded,
+			"fgdb.sql.log.user_audit exceeds the limit of %d bytes", maxUserAuditConfigBytes)
+	}
+
+	// Bound the ordered scan performed for each eligible statement.
+	rows := 0
+	for remaining := value; remaining != ""; {
+		var line string
+		line, remaining, _ = strings.Cut(remaining, "\n")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		rows++
+		if rows > maxUserAuditConfigRows {
+			return nil, pgerror.Newf(pgcode.ConfigurationLimitExceeded,
+				"fgdb.sql.log.user_audit exceeds the limit of %d non-empty rows", maxUserAuditConfigRows)
+		}
+	}
+	return auditlogging.Parse(value)
 }

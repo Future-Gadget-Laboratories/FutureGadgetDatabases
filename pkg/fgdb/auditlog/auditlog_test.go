@@ -6,12 +6,16 @@ package auditlog
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/security/username"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/auditlogging"
+	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
+	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 )
 
@@ -21,6 +25,11 @@ const (
 	allRole          = "all"
 	auditAllConfig   = "ALL ALL"
 	emptyAuditConfig = ""
+)
+
+const (
+	userAuditByteLimit = 64 << 10
+	userAuditRowLimit  = 1000
 )
 
 func TestSettingNamesAndDefaults(t *testing.T) {
@@ -72,6 +81,57 @@ func TestValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUserAuditConfigLimits(t *testing.T) {
+	roleRow := testRole + " ALL"
+	atRowLimit := makeUserAuditRows(userAuditRowLimit)
+	atByteLimit := roleRow + strings.Repeat(" ", userAuditByteLimit-len(roleRow))
+	for _, tc := range []struct {
+		name, config, wantLimit string
+	}{
+		{"exact row limit with blank lines", "\n \t\r\n" + atRowLimit, ""},
+		{"over row limit", makeUserAuditRows(userAuditRowLimit + 1), "1000 non-empty rows"},
+		{"over row limit with duplicate role", atRowLimit + testRole + "_0 ALL", "1000 non-empty rows"},
+		{"exact byte limit", atByteLimit, ""},
+		{"over byte limit", atByteLimit + " ", "65536 bytes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := cluster.MakeTestingClusterSettings()
+			err := userAudit.Validate(&st.SV, tc.config)
+			if tc.wantLimit != "" {
+				assertUserAuditLimitError(t, err, tc.wantLimit)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func assertUserAuditLimitError(t *testing.T, err error, wantLimit string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("oversized configuration was accepted")
+	}
+	if code := pgerror.GetPGCode(err); code != pgcode.ConfigurationLimitExceeded {
+		t.Errorf("SQLSTATE = %s, want %s", code, pgcode.ConfigurationLimitExceeded)
+	}
+	if strings.Contains(err.Error(), testRole) {
+		t.Error("limit error exposed the submitted role")
+	}
+	if !strings.Contains(err.Error(), wantLimit) {
+		t.Errorf("limit error did not name the limit %q", wantLimit)
+	}
+}
+
+func makeUserAuditRows(count int) string {
+	var config strings.Builder
+	for i := 0; i < count; i++ {
+		config.WriteString(fmt.Sprintf("%s_%d ALL\n", testRole, i))
+	}
+	return config.String()
 }
 
 func TestHookSemantics(t *testing.T) {
@@ -142,6 +202,24 @@ func TestBadRuntimeConfigKeepsPrevious(t *testing.T) {
 		t.Fatal("invalid runtime config replaced previous configuration")
 	}
 	assertMatch(t, acl, nil, username.RootUserName(), allRole, true)
+}
+
+func TestOversizedRuntimeConfigKeepsPrevious(t *testing.T) {
+	acl := &auditlogging.AuditConfigLock{Config: auditlogging.EmptyAuditConfig()}
+	acl.Lock()
+	defer acl.Unlock()
+	if err := applyConfig(acl, auditAllConfig); err != nil {
+		t.Fatal(err)
+	}
+	previous := acl.Config
+	oversized := auditAllConfig + strings.Repeat(" ", userAuditByteLimit)
+	err := applyConfig(acl, oversized)
+	if code := pgerror.GetPGCode(err); code != pgcode.ConfigurationLimitExceeded {
+		t.Errorf("SQLSTATE = %s, want %s", code, pgcode.ConfigurationLimitExceeded)
+	}
+	if acl.Config != previous {
+		t.Error("oversized runtime config replaced previous configuration")
+	}
 }
 
 func TestMatchingRules(t *testing.T) {
