@@ -116,12 +116,13 @@ The round 2 builder compiled `auditlog.go` and `auditlog_test.go` with Go
 before the change. All eight unit tests passed with the limits in place.
 The `fgdb_audit` fixture declares the `local` config and is registered by
 [`TestLogic_fgdb_audit`](../../../pkg/sql/logictest/tests/local/generated_test.go#L844).
-Round 2 build-host results are pending.
+On the build host at head `8792062a` (Nov 22 2026), both Bazel targets below
+passed.
 
 | Orchestrator target | Build-host command | Result |
 | --- | --- | --- |
-| `//pkg/fgdb/auditlog:auditlog_test` | `bazel test //pkg/fgdb/auditlog:auditlog_test` | Pending for round 2. Covers configuration limits, the hook and parser integration, and an actual SQL session with captured logs. |
-| Logictest `fgdb_audit`, config `local` | `bazel test //pkg/sql/logictest/tests/local:local_test --test_filter=TestLogic_fgdb_audit` | Pending. Covers discovery, defaults, validation, authorization, and query success with configured rules and the gate off. |
+| `//pkg/fgdb/auditlog:auditlog_test` | `bazel test //pkg/fgdb/auditlog:auditlog_test` | Passed at `8792062a` (Nov 22 2026). All unit tests passed, including `TestUserAuditConfigLimits`, `TestOversizedRuntimeConfigKeepsPrevious`, and `TestRoleAuditEvents` including `gate_off`. |
+| Logictest `fgdb_audit`, config `local` | `bazel test //pkg/sql/logictest/tests/local:local_test --test_filter=TestLogic_fgdb_audit` | Passed at `8792062a` (Nov 22 2026). |
 
 The Go integration test checks the absence of role-based events both before
 enabling and after disabling the gate on a session with a cached inclusive rule.
@@ -143,4 +144,4 @@ the gate off. Event absence is asserted by the Go test.
 
 - 2026-11-22, PAR-210 / PR #59. Documented the initial default-off feature, its
   FGDb settings, and the corresponding test evidence. Build-host conformance
-  remains pending.
+  passed at `8792062a` (Nov 22 2026).

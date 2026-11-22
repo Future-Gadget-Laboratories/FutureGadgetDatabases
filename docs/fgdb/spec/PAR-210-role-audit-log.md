@@ -5,9 +5,10 @@
 
 Version: v2, 2026-11-18. Behavior authority: the maintainer-provided PAR-210
 packet task. Implementation and this behavior record: Codex, using that handoff
-and the allowed OSS tree. Maintainer review and build-host conformance remain
-pending; this document records the supplied requirements, not an independently
-approved expansion of their scope. See [CLEANROOM.md](../CLEANROOM.md).
+and the allowed OSS tree. Maintainer review remains pending; build-host
+conformance passed at `8792062a` (Nov 22 2026). This document records the
+supplied requirements, not an independently approved expansion of their scope.
+See [CLEANROOM.md](../CLEANROOM.md).
 
 See the [role-based SQL audit logging feature guide](../features/role-audit-log.md) for implementation details and test evidence.
 
@@ -110,7 +111,7 @@ bazel test //pkg/sql/logictest/tests/local:local_test --test_filter=TestLogic_fg
 ```
 
 The local logic-test registration is included in this change. The direct Bazel
-target runs it without regenerating wrappers. On Nitrogen at head `8792062a`
+target runs it without regenerating wrappers. On the build host at head `8792062a`
 (Nov 22 2026), `bazel test //pkg/fgdb/auditlog:auditlog_test` and logictest
 `fgdb_audit` (config `local`) passed.
 
