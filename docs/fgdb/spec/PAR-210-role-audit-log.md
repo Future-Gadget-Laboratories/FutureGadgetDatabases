@@ -83,7 +83,11 @@ new event format, persistent audit store, or additional statement filters.
 - `TestHookSemantics`: disabled/configured combinations, enabled-but-empty, and
   the reduced-configuration boolean.
 - `TestConfigureAndOnChange`: initial configuration, live replacement, and clearing.
+- `TestUserAuditConfigLimits`: setting validation rejects configurations over
+  64 KiB or 1,000 non-empty rows.
 - `TestBadRuntimeConfigKeepsPrevious`: invalid runtime input retains the previous rule.
+- `TestOversizedRuntimeConfigKeepsPrevious`: oversized runtime input retains
+  the previous configuration.
 - `TestMatchingRules`: first matching role, username precedence, `ALL`, and `NONE`.
 - `TestRoleAuditEvents`: a real user with role membership; sensitive-access event
   contents; gate off; immediate config updates on an existing session; empty
@@ -106,8 +110,9 @@ bazel test //pkg/sql/logictest/tests/local:local_test --test_filter=TestLogic_fg
 ```
 
 The local logic-test registration is included in this change. The direct Bazel
-target runs it without regenerating wrappers. No Bazel or Go tests were run in
-the builder workspace under the packet rules; these commands are for the build host.
+target runs it without regenerating wrappers. On Nitrogen at head `8792062a`
+(Nov 22 2026), `bazel test //pkg/fgdb/auditlog:auditlog_test` and logictest
+`fgdb_audit` (config `local`) passed.
 
 ## Cleanroom sources
 
