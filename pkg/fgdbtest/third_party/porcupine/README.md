@@ -10,6 +10,8 @@ Keep local changes minimal and record them here. When updating the upstream copy
 
 In `visualization/index.js`, `render` no longer sorts a timestamp snapshot that was overwritten before use. The remaining numeric sort runs after endpoint adjustments and includes the added epsilon timestamps. Syntax was checked locally; runtime validation remains pending.
 
+The annotation-tag sort in `render` now uses an explicit string comparator for `javascript:S2871`. It preserves the default UTF-16 code-unit order (for example, `"10"` precedes `"2"`). The comparator satisfies `unicorn/require-array-sort-compare`, so its ESLint directive was removed.
+
 ## Sonar triage
 
 The root `sonar-project.properties` narrowly excludes cognitive complexity findings in these pinned files and rules. These algorithms and rendering closures are retained to avoid a larger behavioral fork; bug and security rules remain enabled. Reevaluate the exceptions when updating this copy.
@@ -19,6 +21,4 @@ The root `sonar-project.properties` narrowly excludes cognitive complexity findi
 - `go:S3776` in `visualization.go`: `computeVisualizationData` reconstructs and annotates visualization data.
 - `javascript:S3776` in `visualization/index.js`: `render` and its `handleMouseMove` closure handle layout and interaction.
 
-In `visualization/index.js`, `render` sorts `sortedTags` with the default string ordering. Annotation tags are strings, and lexical ordering is intentional (for example, `"10"` precedes `"2"`). The `javascript:S2871` finding at that expression should be marked false positive individually; numeric timestamp sorts use a numeric comparator. No file-wide suppression of this rule is intended.
-
-The scanner must later confirm that it loads these exact-file exceptions and that the individual false-positive disposition is applied.
+The scanner must later confirm that it loads these exact-file exceptions and that the annotation-tag sort clears `javascript:S2871`.

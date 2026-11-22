@@ -5,6 +5,8 @@
 
 The rules are in [CONTRIBUTING.md](../../CONTRIBUTING.md). This page is a short path for a first change.
 
+The proposed feature PR review checklist is in [FGDb coding rules](CODING-RULES.md).
+
 ## A useful first change
 
 Pick a sentence in `docs/fgdb/` that confused you. Fix that sentence. A docs change does not need a Bazel build.
